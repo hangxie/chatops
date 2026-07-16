@@ -1,0 +1,40 @@
+name: Build Action
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          # switch to go.sum once the module has dependencies
+          cache-dependency-path: go.mod
+      - name: Installing Dependencies
+        run: make deps
+      - name: Running format
+        run: make format
+      - name: Running lint
+        run: make lint
+      - name: Running tests
+        run: make test
+      - name: Checking uncommitted changes
+        run: |
+          git status -s > /tmp/git-status.log
+          if [ -s /tmp/git-status.log ] ; then
+            echo There are uncommitted changes
+            cat /tmp/git-status.log
+            false
+          fi
+      - name: Ensure build
+        run: make build
+      - name: Smoke test
+        run: |
+          ./build/chatops version
