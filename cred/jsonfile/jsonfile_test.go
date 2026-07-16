@@ -57,10 +57,16 @@ func Test_Open_cancelled_context(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func Test_Open_via_registered_scheme(t *testing.T) {
+// testRegistry wires the backend into a cred.Registry the way a
+// caller is expected to.
+func testRegistry() *cred.Registry {
+	return cred.NewRegistry(cred.Backend{Scheme: Scheme, Opener: Opener})
+}
+
+func Test_Open_via_registry(t *testing.T) {
 	path := writeFile(t, `{"db-password": "hunter2"}`)
 
-	store, err := cred.Open(context.Background(), "json-file://"+path)
+	store, err := testRegistry().Open(context.Background(), "json-file://"+path)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -71,12 +77,12 @@ func Test_Open_via_registered_scheme(t *testing.T) {
 	require.Equal(t, "hunter2", value)
 }
 
-func Test_Open_via_registered_scheme_relative_path(t *testing.T) {
+func Test_Open_via_registry_relative_path(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "creds.json"), []byte(`{"api-token": "abc123"}`), 0o600))
 	t.Chdir(dir)
 
-	store, err := cred.Open(context.Background(), "json-file://creds.json")
+	store, err := testRegistry().Open(context.Background(), "json-file://creds.json")
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())

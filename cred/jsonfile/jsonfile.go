@@ -1,7 +1,8 @@
 // Package jsonfile implements a cred.Store backed by a JSON file.
 //
-// Importing this package registers the "json-file" URL scheme with
-// cred.Open; the rest of the URL is the file path:
+// The package exports Scheme and Opener for wiring the backend into a
+// cred.Registry under the "json-file" URL scheme; the rest of the URL
+// is the file path:
 //
 //	json-file:///etc/chatops/creds.json
 //	json-file://relative/path/creds.json
@@ -25,12 +26,15 @@ import (
 	"github.com/hangxie/chatops/cred"
 )
 
-func init() {
-	cred.Register("json-file", func(ctx context.Context, u *url.URL) (cred.Store, error) {
-		// Rejoin host and path so both json-file:///abs/path and
-		// json-file://relative/path resolve to a usable file path.
-		return Open(ctx, u.Host+u.Path)
-	})
+// Scheme is the URL scheme this backend serves in a cred.Registry.
+const Scheme = "json-file"
+
+// Opener is the cred.OpenerFunc for this backend: the URL locates the
+// JSON file.
+func Opener(ctx context.Context, u *url.URL) (cred.Store, error) {
+	// Rejoin host and path so both json-file:///abs/path and
+	// json-file://relative/path resolve to a usable file path.
+	return Open(ctx, u.Host+u.Path)
 }
 
 // Store is a cred.Store backed by a JSON file. The file is read once

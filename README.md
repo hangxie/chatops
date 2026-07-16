@@ -25,8 +25,10 @@ $ chatops version --all --json
 
 The `cred` package provides a generic way to access credentials from
 pluggable backends. The top-level package defines the interface; each
-backend lives in its own sub-package and registers a URL scheme when
-imported:
+backend lives in its own sub-package and exports the URL scheme it
+serves plus an opener, which callers wire into a registry (no `init()`
+side effects — supported backends are always visible at the wiring
+site):
 
 ```go
 type Store interface {
@@ -57,8 +59,8 @@ and documented per backend below.
 
 ### Usage
 
-Import the backends you want (a blank import registers the scheme),
-open the store by URL, then retrieve credentials by key:
+Build a registry from the backends you want, open the store by URL,
+then retrieve credentials by key:
 
 ```go
 import (
@@ -66,10 +68,13 @@ import (
 	"errors"
 
 	"github.com/hangxie/chatops/cred"
-	_ "github.com/hangxie/chatops/cred/jsonfile" // registers "json-file"
+	"github.com/hangxie/chatops/cred/jsonfile"
 )
 
-store, err := cred.Open(context.Background(), "json-file:///etc/chatops/creds.json")
+reg := cred.NewRegistry(
+	cred.Backend{Scheme: jsonfile.Scheme, Opener: jsonfile.Opener},
+)
+store, err := reg.Open(context.Background(), "json-file:///etc/chatops/creds.json")
 if err != nil {
 	// handle error
 }
@@ -111,20 +116,22 @@ object mapping credential keys to string values:
    Take credentials for the store from the backend's standard
    environment variables (prefer the official SDK's default
    configuration chain); never accept them as parameters.
-4. Register a URL scheme in `init()` so `cred.Open` can construct the
-   backend from a URL:
+4. Export the scheme and an opener so callers can wire the backend
+   into a `cred.Registry` (backends never self-register via `init()`):
 
    ```go
-   func init() {
-   	cred.Register("my-backend", func(ctx context.Context, u *url.URL) (cred.Store, error) {
-   		return Open(ctx, u.Host+u.Path)
-   	})
+   // Scheme is the URL scheme this backend serves in a cred.Registry.
+   const Scheme = "my-backend"
+
+   // Opener is the cred.OpenerFunc for this backend.
+   func Opener(ctx context.Context, u *url.URL) (cred.Store, error) {
+   	return Open(ctx, u.Host+u.Path)
    }
    ```
 
 5. Add a test file with table-driven tests covering `Open` failures,
-   existing keys, missing keys, context cancellation, and opening via
-   `cred.Open` with the registered scheme.
+   existing keys, missing keys, context cancellation, and opening
+   through a `cred.Registry` with the exported scheme.
 6. List the backend in the table above and document its store layout
    in a section like the json-file one.
 
