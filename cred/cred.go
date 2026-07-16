@@ -1,12 +1,14 @@
 // Package cred provides a generic interface for accessing credentials
 // from pluggable credential store backends.
 //
-// Each backend lives in its own sub-package and registers a URL
-// scheme when imported, so a store can be opened from a single URL:
+// Each backend lives in its own sub-package and exports its URL
+// scheme and opener; callers wire the backends they support into a
+// Registry, so a store can be opened from a single URL:
 //
-//	import _ "github.com/hangxie/chatops/cred/jsonfile"
-//
-//	store, err := cred.Open(ctx, "json-file:///etc/chatops/creds.json")
+//	reg := cred.NewRegistry(
+//		cred.Backend{Scheme: jsonfile.Scheme, Opener: jsonfile.Opener},
+//	)
+//	store, err := reg.Open(ctx, "json-file:///etc/chatops/creds.json")
 //
 // Backends also expose a typed Open function for direct programmatic
 // use. Credentials for accessing a store itself are never part of the
