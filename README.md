@@ -268,3 +268,134 @@ identity, so `Message.Sender` is empty.
    `chat.Registry` with the exported scheme.
 6. List the backend in the table above and document its protocol and
    conversation ID scheme in a section like the telnet one.
+
+## Tools (`tool`)
+
+The `tool` package provides a generic way to invoke operational tools
+(kubernetes, proxmox, harbor, a dummy ping tool, ...). The top-level
+package defines the interface; each tool lives in its own sub-package
+and exports the URL scheme it serves plus an opener, which callers
+wire into a registry (no `init()` side effects — supported tools are
+always visible at the wiring site):
+
+```go
+type Tool interface {
+    // Invoke performs the operation described by call and returns its
+    // outcome. It returns an error wrapping ErrUnknownAction when
+    // call.Action is not one the tool supports.
+    Invoke(ctx context.Context, call Call) (Result, error)
+
+    // Close releases any resources held by the tool.
+    Close() error
+}
+```
+
+A call carries enough detail for the tool to act, without prescribing
+how it maps to actual API calls or commands: an **action** (the verb,
+e.g. `restart`), a **target** (what it applies to, e.g.
+`deployment/web`; may be empty), and optional key-value
+**parameters**. The result carries **text** — the human-readable
+outcome, composed by the tool and ready to post to chat as-is — plus
+optional machine-readable key-value **details**; callers never need
+the details to render a reply.
+
+A tool instance is identified by a single URL — the scheme selects the
+implementation, host/port/path locate the endpoint it operates on, and
+query parameters carry further instance configuration. Credential
+*values* are **never** part of the URL; tools resolve them from the
+`cred.Store` passed to `Open`. Each tool defines conventional key
+names prefixed by its name (e.g. `k8s-ca`/`k8s-cert`/`k8s-key`,
+`proxmox-ssh-user`/`proxmox-ssh-key`, `harbor-user`/`harbor-password`),
+and the prefix can be overridden per instance with the `cred-prefix`
+query parameter so multiple instances of the same tool can use
+distinct credentials:
+
+```
+kubernetes://prod.example.com:6443?cred-prefix=k8s-prod
+```
+
+Available tools:
+
+| Scheme | Sub-package | Tool URL  |
+| ------ | ----------- | --------- |
+| `ping` | `tool/ping` | `ping://` |
+
+### Usage
+
+Build a registry from the tools you want, open the tool by URL with a
+credential store, then invoke actions:
+
+```go
+import (
+    "context"
+    "fmt"
+
+    "github.com/hangxie/chatops/tool"
+    "github.com/hangxie/chatops/tool/ping"
+)
+
+reg := tool.NewRegistry(
+    tool.Backend{Scheme: ping.Scheme, Opener: ping.Opener},
+)
+tl, err := reg.Open(context.Background(), "ping://", nil) // creds not needed by ping
+if err != nil {
+    // handle error
+}
+defer tl.Close()
+
+result, err := tl.Invoke(context.Background(), tool.Call{Action: "ping"})
+if err != nil {
+    // handle error
+}
+fmt.Println(result.Text) // "pong"
+```
+
+Tools also expose a typed `Open` function for direct use, e.g.
+`ping.Open(ctx)`.
+
+### ping tool
+
+A dummy tool that answers `pong` to the `ping` action, useful as a
+liveness check and as the reference implementation of the interface.
+It has no endpoint and takes no credentials, so the URL is a bare
+`ping://` (anything beyond the scheme — host, path, query, userinfo,
+or non-empty fragment — is rejected; a bare trailing `#` parses
+identically to the bare URL and is accepted). The only supported
+action is `ping`; `Target` and `Parameters` are ignored, and any other
+action reports an error wrapping `tool.ErrUnknownAction`.
+
+### Adding a new tool
+
+1. Create a sub-package under `tool/` named after the tool (e.g.
+   `tool/kubernetes`).
+2. Define a `Tool` type implementing the `tool.Tool` interface:
+   - `Invoke` maps the call's action/target/parameters onto the tool's
+     API, wrapping `tool.ErrUnknownAction` (with `%w`) when the action
+     is not supported so callers can detect it with `errors.Is`.
+   - Compose `Result.Text` as the complete human-readable answer; put
+     supplementary machine-readable output in `Result.Details`.
+   - `Close` releases connections or other resources.
+3. Provide an `Open` function taking `context.Context` plus
+   tool-specific parameters and returning `(*Tool, error)`. Resolve
+   credentials from the `cred.Store` using the tool's conventional key
+   names (document them), honoring the `cred-prefix` override; never
+   accept credential values as parameters or URL elements.
+4. Export the scheme and an opener so callers can wire the tool into a
+   `tool.Registry` (tools never self-register via `init()`):
+
+   ```go
+   // Scheme is the URL scheme this tool serves in a tool.Registry.
+   const Scheme = "my-tool"
+
+   // Opener is the tool.OpenerFunc for this tool.
+   func Opener(ctx context.Context, u *url.URL, creds cred.Store) (tool.Tool, error) {
+       return Open(ctx, u.Host, creds)
+   }
+   ```
+
+5. Add a test file with table-driven tests covering `Open` failures,
+   supported and unknown actions, context cancellation, `Close`
+   semantics, and opening through a `tool.Registry` with the exported
+   scheme.
+6. List the tool in the table above and document its actions and
+   credential key names in a section like the ping one.
