@@ -57,9 +57,12 @@ type Call struct {
 // Result is the outcome of a successfully invoked Call.
 type Result struct {
 	// Text is the human-readable outcome, composed by the tool and
-	// suitable for posting to chat as-is. It is always the complete
-	// answer for a human; callers never need Details to render a
-	// reply.
+	// suitable for posting to chat as-is. It is the complete answer
+	// for a human; callers never need Details to render a reply. It
+	// is empty only when the tool has already delivered the outcome
+	// to the human itself (for example the reply tool, whose action
+	// is posting into chat), so callers relay non-empty Text and
+	// stay silent on empty Text.
 	Text string
 
 	// Details carries optional machine-readable key-value output
