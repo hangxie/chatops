@@ -297,7 +297,10 @@ e.g. `restart`), a **target** (what it applies to, e.g.
 **parameters**. The result carries **text** — the human-readable
 outcome, composed by the tool and ready to post to chat as-is — plus
 optional machine-readable key-value **details**; callers never need
-the details to render a reply.
+the details to render a reply. Text is empty only when the tool has
+already delivered the outcome to the human itself (like the reply
+tool, whose action is posting into chat), so callers relay non-empty
+text and stay silent on empty text.
 
 A tool instance is identified by a single URL — the scheme selects the
 implementation, host/port/path locate the endpoint it operates on, and
@@ -316,9 +319,10 @@ kubernetes://prod.example.com:6443?cred-prefix=k8s-prod
 
 Available tools:
 
-| Scheme | Sub-package | Tool URL  |
-| ------ | ----------- | --------- |
-| `ping` | `tool/ping` | `ping://` |
+| Scheme  | Sub-package  | Tool URL                        |
+| ------- | ------------ | ------------------------------- |
+| `ping`  | `tool/ping`  | `ping://`                       |
+| `reply` | `tool/reply` | `reply://` (no registry opener) |
 
 ### Usage
 
@@ -364,6 +368,30 @@ identically to the bare URL and is accepted). The only supported
 action is `ping`; `Target` and `Parameters` are ignored, and any other
 action reports an error wrapping `tool.ErrUnknownAction`.
 
+### reply tool
+
+A tool that posts text back into a chat conversation, so a planner
+(see below) can express "say this to the requester" as an ordinary
+tool step alongside operational tool calls. Unlike other tools it is
+bound to a live `chat.Conn` — the connection the message being
+answered arrived on — rather than to an endpoint of its own, so it has
+**no `Opener`** and cannot be opened through a `tool.Registry`.
+Callers open it directly and make it available to plan execution under
+the conventional bare URL `reply://`:
+
+```go
+import "github.com/hangxie/chatops/tool/reply"
+
+rt, err := reply.Open(ctx, conn) // conn is the chat.Conn messages arrive on
+```
+
+The only supported action is `send`: `Target` is the conversation ID
+to post into (the `ConversationID` of the message being answered) and
+`Parameters["text"]` is the text to post. Sending is the whole
+outcome, so `Result.Text` stays empty — callers that post non-empty
+`Result.Text` back to chat will not double-post. The tool never closes
+the connection; that stays with the caller.
+
 ### Adding a new tool
 
 1. Create a sub-package under `tool/` named after the tool (e.g.
@@ -399,3 +427,190 @@ action reports an error wrapping `tool.ErrUnknownAction`.
    scheme.
 6. List the tool in the table above and document its actions and
    credential key names in a section like the ping one.
+
+## Planners (`planner`)
+
+The `planner` package provides a generic way to turn free-form chat
+messages into executable plans, backed by pluggable planner backends —
+LLM providers such as OpenAI and Anthropic (planned), or the dummy
+ping planner. The top-level package defines the interface; each
+backend lives in its own sub-package and exports the URL scheme it
+serves plus an opener, which callers wire into a registry (no `init()`
+side effects — supported backends are always visible at the wiring
+site):
+
+```go
+type Planner interface {
+    // Plan decides what to do about one inbound message and returns
+    // the steps to execute. Asking the requester a clarifying question
+    // is expressed as a step invoking the reply tool, not as an error.
+    Plan(ctx context.Context, req Request) (Plan, error)
+
+    // Close releases any resources held by the planner.
+    Close() error
+}
+```
+
+A request carries the message **text**, the **conversation ID** and
+**sender** (both as computed by the chat backend, see `chat.Message`),
+and a caller-assigned **connection ID**; planners use the connection
+and conversation IDs together to keep per-conversation context across
+requests. The connection ID exists because conversation IDs are only
+unique within one `chat.Conn` (every telnet connection reports the
+same one, for example): a caller serving several connections from one
+planner must give each connection a distinct opaque ID, while a caller
+with a single connection may leave it empty. The returned plan is a
+sequence of **steps**, each naming a tool by the URL it is opened from
+(see the `tool` package) plus the `tool.Call` to invoke on it.
+Replying to the requester is itself a step — one invoking the
+`reply://` tool — so a clarifying question and an operational action
+have the same shape, mirroring how LLM tool-use APIs treat text output
+and tool calls as peers in one turn.
+
+Steps name tools by URL only, so a plan is **not self-contained**: the
+caller executes it in the context of the request that produced it. In
+particular, `reply://` resolves to the reply tool bound to the chat
+connection that request arrived on — a caller serving several
+connections keeps one reply tool per connection rather than sharing
+one — which is what keeps replies on the right connection even when
+conversation IDs collide across connections.
+
+A planner is identified by a single URL — the scheme selects the
+backend, host/port/path locate the endpoint it talks to (empty for
+providers with a well-known API endpoint), and query parameters carry
+further configuration such as the model (e.g. `openai://?model=gpt-5`,
+`anthropic://?model=claude-fable-5`). As with `tool`, credential
+*values* are **never** part of the URL; backends resolve them (e.g.
+API keys) from the `cred.Store` passed to `Open`, under conventional
+key names prefixed by the backend name (e.g. `openai-api-key`,
+`anthropic-api-key`), overridable per instance with the `cred-prefix`
+query parameter.
+
+Available backends:
+
+| Scheme | Sub-package    | Planner URL |
+| ------ | -------------- | ----------- |
+| `ping` | `planner/ping` | `ping://`   |
+
+### Usage
+
+Build a registry from the backends you want, open the planner by URL
+with a credential store, then plan inbound messages and execute the
+steps:
+
+```go
+import (
+    "context"
+
+    "github.com/hangxie/chatops/planner"
+    "github.com/hangxie/chatops/planner/ping"
+)
+
+reg := planner.NewRegistry(
+    planner.Backend{Scheme: ping.Scheme, Opener: ping.Opener},
+)
+p, err := reg.Open(context.Background(), "ping://", nil) // creds not needed by ping
+if err != nil {
+    // handle error
+}
+defer p.Close()
+
+plan, err := p.Plan(context.Background(), planner.Request{
+    Text:           msg.Text,
+    ConversationID: msg.ConversationID,
+    Sender:         msg.Sender,
+})
+if err != nil {
+    // handle error
+}
+for _, step := range plan.Steps {
+    // resolve step.Tool ("ping://", "reply://", ...) to an opened
+    // tool.Tool — "reply://" to the reply tool bound to the
+    // connection msg arrived on — invoke step.Call on it, and post
+    // any non-empty Result.Text back into the conversation
+}
+```
+
+Backends also expose a typed `Open` function for direct use, e.g.
+`ping.Open(ctx)`.
+
+### ping planner
+
+A dummy planner that recognizes only the ping intent, useful as a
+wiring check and as the reference implementation of the interface. It
+talks to no LLM endpoint and takes no credentials, so the URL is a
+bare `ping://` (anything beyond the scheme is rejected, same rules as
+the ping tool).
+
+- A message that is exactly `ping` (ignoring case and surrounding
+  whitespace) plans an invocation of the ping tool.
+- A message that merely contains `ping` as a standalone word (so
+  `can you ping the box?` counts, `pinging` or `shipping` do not)
+  plans a reply asking `do you want me to ping? (yes/no)` and
+  remembers the pending question for that conversation.
+- The next message in that conversation answers it: `yes`/`y` plans
+  the ping, `no`/`n` plans an acknowledging reply, and anything else
+  drops the pending confirmation without pinging and is handled as a
+  fresh message. Each conversation — scoped by connection and
+  conversation ID, so the same conversation ID on another chat
+  connection cannot answer the question — holds at most one pending
+  confirmation (a repeated ask just renews it), and conversations do
+  not affect each other.
+- Pending confirmations are bounded state: an unanswered confirmation
+  expires after ten minutes, and at most 1024 conversations'
+  confirmations are remembered at once (asking past the cap evicts
+  the oldest).
+- Everything unrecognized plans a reply saying
+  `sorry, I don't understand`.
+
+A typical exchange:
+
+```text
+user> can you ping the box?
+bot>  do you want me to ping? (yes/no)
+user> yes
+bot>  pong
+```
+
+### Adding a new backend
+
+1. Create a sub-package under `planner/` named after the backend
+   (e.g. `planner/openai`, `planner/anthropic`).
+2. Define a `Planner` type implementing the `planner.Planner`
+   interface:
+   - `Plan` turns one inbound message into steps; express replies and
+     clarifying questions as steps invoking the `reply://` tool with
+     the request's `ConversationID` as the call target. Keep any
+     per-conversation context keyed by the `(ConnectionID,
+     ConversationID)` pair — never by `ConversationID` alone, which
+     collides across chat connections — and make the planner safe for
+     concurrent use.
+   - `Close` releases connections or other resources.
+3. Provide an `Open` function taking `context.Context` plus
+   backend-specific parameters and returning `(*Planner, error)`.
+   Resolve credentials (e.g. API keys) from the `cred.Store` using the
+   backend's conventional key names (document them), honoring the
+   `cred-prefix` override; never accept credential values as
+   parameters or URL elements.
+4. Export the scheme and an opener so callers can wire the backend
+   into a `planner.Registry` (backends never self-register via
+   `init()`):
+
+   ```go
+   // Scheme is the URL scheme this backend serves in a planner.Registry.
+   const Scheme = "my-llm"
+
+   // Opener is the planner.OpenerFunc for this backend.
+   func Opener(ctx context.Context, u *url.URL, creds cred.Store) (planner.Planner, error) {
+       return Open(ctx, u.Query().Get("model"), creds)
+   }
+   ```
+
+5. Add a test file with table-driven tests covering `Open` failures,
+   representative message-to-plan mappings (including multi-message
+   sequences when the backend keeps conversation context, and
+   isolation across conversations and across connections), context
+   cancellation, `Close` semantics, and opening through a
+   `planner.Registry` with the exported scheme.
+6. List the backend in the table above and document its URL
+   parameters and credential key names in a section like the ping one.
