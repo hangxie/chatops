@@ -32,12 +32,12 @@ site):
 
 ```go
 type Store interface {
-	// Get retrieves the credential identified by key. It returns an
-	// error wrapping cred.ErrNotFound when the key does not exist.
-	Get(ctx context.Context, key string) (string, error)
+    // Get retrieves the credential identified by key. It returns an
+    // error wrapping cred.ErrNotFound when the key does not exist.
+    Get(ctx context.Context, key string) (string, error)
 
-	// Close releases any resources held by the store.
-	Close() error
+    // Close releases any resources held by the store.
+    Close() error
 }
 ```
 
@@ -64,25 +64,25 @@ then retrieve credentials by key:
 
 ```go
 import (
-	"context"
-	"errors"
+    "context"
+    "errors"
 
-	"github.com/hangxie/chatops/cred"
-	"github.com/hangxie/chatops/cred/jsonfile"
+    "github.com/hangxie/chatops/cred"
+    "github.com/hangxie/chatops/cred/jsonfile"
 )
 
 reg := cred.NewRegistry(
-	cred.Backend{Scheme: jsonfile.Scheme, Opener: jsonfile.Opener},
+    cred.Backend{Scheme: jsonfile.Scheme, Opener: jsonfile.Opener},
 )
 store, err := reg.Open(context.Background(), "json-file:///etc/chatops/creds.json")
 if err != nil {
-	// handle error
+    // handle error
 }
 defer store.Close()
 
 secret, err := store.Get(context.Background(), "db-password")
 if errors.Is(err, cred.ErrNotFound) {
-	// credential does not exist
+    // credential does not exist
 }
 ```
 
@@ -125,7 +125,7 @@ object mapping credential keys to string values:
 
    // Opener is the cred.OpenerFunc for this backend.
    func Opener(ctx context.Context, u *url.URL) (cred.Store, error) {
-   	return Open(ctx, u.Host+u.Path)
+       return Open(ctx, u.Host+u.Path)
    }
    ```
 
@@ -146,19 +146,19 @@ backends are always visible at the wiring site):
 
 ```go
 type Conn interface {
-	// Receive returns the next inbound message. It blocks until a
-	// message arrives, ctx is done, the connection is lost, or Close
-	// is called. After Close it reports an error wrapping ErrClosed.
-	Receive(ctx context.Context) (Message, error)
+    // Receive returns the next inbound message. It blocks until a
+    // message arrives, ctx is done, the connection is lost, or Close
+    // is called. After Close it reports an error wrapping ErrClosed.
+    Receive(ctx context.Context) (Message, error)
 
-	// Send posts msg.Text into the conversation identified by
-	// msg.ConversationID. It returns an error wrapping
-	// ErrUnknownConversation when the ID does not map to a
-	// conversation the backend knows.
-	Send(ctx context.Context, msg Message) error
+    // Send posts msg.Text into the conversation identified by
+    // msg.ConversationID. It returns an error wrapping
+    // ErrUnknownConversation when the ID does not map to a
+    // conversation the backend knows.
+    Send(ctx context.Context, msg Message) error
 
-	// Close terminates the connection, unblocking any pending Receive.
-	Close() error
+    // Close terminates the connection, unblocking any pending Receive.
+    Close() error
 }
 ```
 
@@ -189,30 +189,30 @@ URL, then receive and reply:
 
 ```go
 import (
-	"context"
+    "context"
 
-	"github.com/hangxie/chatops/chat"
-	"github.com/hangxie/chatops/chat/telnet"
+    "github.com/hangxie/chatops/chat"
+    "github.com/hangxie/chatops/chat/telnet"
 )
 
 reg := chat.NewRegistry(
-	chat.Backend{Scheme: telnet.Scheme, Opener: telnet.Opener},
+    chat.Backend{Scheme: telnet.Scheme, Opener: telnet.Opener},
 )
 conn, err := reg.Open(context.Background(), "telnet://chat.example.com:6023")
 if err != nil {
-	// handle error
+    // handle error
 }
 defer conn.Close()
 
 for {
-	msg, err := conn.Receive(context.Background())
-	if err != nil {
-		break // connection closed or lost
-	}
-	reply := chat.Message{ConversationID: msg.ConversationID, Text: "on it"}
-	if err := conn.Send(context.Background(), reply); err != nil {
-		// handle error
-	}
+    msg, err := conn.Receive(context.Background())
+    if err != nil {
+        break // connection closed or lost
+    }
+    reply := chat.Message{ConversationID: msg.ConversationID, Text: "on it"}
+    if err := conn.Send(context.Background(), reply); err != nil {
+        // handle error
+    }
 }
 ```
 
@@ -258,7 +258,7 @@ identity, so `Message.Sender` is empty.
 
    // Opener is the chat.OpenerFunc for this backend.
    func Opener(ctx context.Context, u *url.URL) (chat.Conn, error) {
-   	return Open(ctx, u.Host)
+       return Open(ctx, u.Host)
    }
    ```
 
