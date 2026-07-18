@@ -9,6 +9,7 @@ Usage: chatops <command>
 Commands:
   version    Show build version.
 ```
+
 ### version
 
 Prints build version, optionally with build time and source, in plain text or JSON:
@@ -23,12 +24,7 @@ $ chatops version --all --json
 
 ## Credential store (`cred`)
 
-The `cred` package provides a generic way to access credentials from
-pluggable backends. The top-level package defines the interface; each
-backend lives in its own sub-package and exports the URL scheme it
-serves plus an opener, which callers wire into a registry (no `init()`
-side effects — supported backends are always visible at the wiring
-site):
+The `cred` package provides a generic way to access credentials from pluggable backends. The top-level package defines the interface; each backend lives in its own sub-package and exports the URL scheme it serves plus an opener, which callers wire into a registry (no `init()` side effects — supported backends are always visible at the wiring site):
 
 ```go
 type Store interface {
@@ -41,26 +37,19 @@ type Store interface {
 }
 ```
 
-A store is identified by a single URL — the scheme selects the
-backend and the rest of the URL locates the store. Credentials for
-accessing the store itself are **never** part of the URL; each backend
-takes them from its standard environment variables (for example
-`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `VAULT_TOKEN`), resolved
-through the backend SDK's default configuration chain.
+A store is identified by a single URL — the scheme selects the backend and the rest of the URL locates the store. Credentials for accessing the store itself are **never** part of the URL; each backend takes them from its standard environment variables (for example `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `VAULT_TOKEN`), resolved through the backend SDK's default configuration chain.
 
 Available backends:
 
-| Scheme       | Sub-package     | Store URL                        |
-| ------------ | --------------- | -------------------------------- |
-| `json-file`  | `cred/jsonfile` | `json-file:///path/to/file.json` |
+| Scheme      | Sub-package     | Store URL                        |
+| ----------- | --------------- | -------------------------------- |
+| `json-file` | `cred/jsonfile` | `json-file:///path/to/file.json` |
 
-How each backend lays out credentials in its store is backend-specific
-and documented per backend below.
+How each backend lays out credentials in its store is backend-specific and documented per backend below.
 
 ### Usage
 
-Build a registry from the backends you want, open the store by URL,
-then retrieve credentials by key:
+Build a registry from the backends you want, open the store by URL, then retrieve credentials by key:
 
 ```go
 import (
@@ -86,14 +75,11 @@ if errors.Is(err, cred.ErrNotFound) {
 }
 ```
 
-Backends also expose a typed `Open` function for direct use, e.g.
-`jsonfile.Open(ctx, "/etc/chatops/creds.json")`.
+Backends also expose a typed `Open` function for direct use, e.g. `jsonfile.Open(ctx, "/etc/chatops/creds.json")`.
 
 ### json-file backend
 
-The store URL is the file path (relative paths work too:
-`json-file://relative/path.json`). The file must contain a single JSON
-object mapping credential keys to string values:
+The store URL is the file path (relative paths work too: `json-file://relative/path.json`). The file must contain a single JSON object mapping credential keys to string values:
 
 ```json
 {
@@ -104,20 +90,12 @@ object mapping credential keys to string values:
 
 ### Adding a new backend
 
-1. Create a sub-package under `cred/` named after the backend (e.g.
-   `cred/vault`).
+1. Create a sub-package under `cred/` named after the backend (e.g. `cred/vault`).
 2. Define a `Store` type implementing the `cred.Store` interface:
-   - `Get` returns the credential for a key, wrapping
-     `cred.ErrNotFound` (with `%w`) when the key does not exist so
-     callers can detect it with `errors.Is`.
+   - `Get` returns the credential for a key, wrapping `cred.ErrNotFound` (with `%w`) when the key does not exist so callers can detect it with `errors.Is`.
    - `Close` releases connections or other resources.
-3. Provide an `Open` function taking `context.Context` plus
-   backend-specific location parameters and returning `(*Store, error)`.
-   Take credentials for the store from the backend's standard
-   environment variables (prefer the official SDK's default
-   configuration chain); never accept them as parameters.
-4. Export the scheme and an opener so callers can wire the backend
-   into a `cred.Registry` (backends never self-register via `init()`):
+3. Provide an `Open` function taking `context.Context` plus backend-specific location parameters and returning `(*Store, error)`. Take credentials for the store from the backend's standard environment variables (prefer the official SDK's default configuration chain); never accept them as parameters.
+4. Export the scheme and an opener so callers can wire the backend into a `cred.Registry` (backends never self-register via `init()`):
 
    ```go
    // Scheme is the URL scheme this backend serves in a cred.Registry.
@@ -129,20 +107,12 @@ object mapping credential keys to string values:
    }
    ```
 
-5. Add a test file with table-driven tests covering `Open` failures,
-   existing keys, missing keys, context cancellation, and opening
-   through a `cred.Registry` with the exported scheme.
-6. List the backend in the table above and document its store layout
-   in a section like the json-file one.
+5. Add a test file with table-driven tests covering `Open` failures, existing keys, missing keys, context cancellation, and opening through a `cred.Registry` with the exported scheme.
+6. List the backend in the table above and document its store layout in a section like the json-file one.
 
 ## Chat backends (`chat`)
 
-The `chat` package provides a generic way for the bot to talk to chat
-backends (Slack, Discord, Mattermost, a naive telnet chat, ...). The
-top-level package defines the interface; each backend lives in its own
-sub-package and exports the URL scheme it serves plus an opener, which
-callers wire into a registry (no `init()` side effects — supported
-backends are always visible at the wiring site):
+The `chat` package provides a generic way for the bot to talk to chat backends (Slack, Discord, Mattermost, a naive telnet chat, ...). The top-level package defines the interface; each backend lives in its own sub-package and exports the URL scheme it serves plus an opener, which callers wire into a registry (no `init()` side effects — supported backends are always visible at the wiring site):
 
 ```go
 type Conn interface {
@@ -162,19 +132,9 @@ type Conn interface {
 }
 ```
 
-Messages are grouped into **conversations** — the topic or thread a
-piece of work is about. Each backend computes a stable conversation ID
-from its native addressing (e.g. a Slack backend derives it from
-channel and thread; telnet has a single conversation) and translates
-it back on send. Callers treat `Message.ConversationID` as an opaque
-string scoped to one `Conn`: to reply, send with the `ConversationID`
-of the message being answered.
+Messages are grouped into **conversations** — the topic or thread a piece of work is about. Each backend computes a stable conversation ID from its native addressing (e.g. a Slack backend derives it from channel and thread; telnet has a single conversation) and translates it back on send. Callers treat `Message.ConversationID` as an opaque string scoped to one `Conn`: to reply, send with the `ConversationID` of the message being answered.
 
-A connection is identified by a single URL — the scheme selects the
-backend and the rest of the URL locates the server. As with `cred`,
-credentials for the backend itself are **never** part of the URL; each
-backend takes them from its standard environment variables (for
-example `SLACK_BOT_TOKEN`).
+A connection is identified by a single URL — the scheme selects the backend and the rest of the URL locates the server. As with `cred`, credentials for the backend itself are **never** part of the URL; each backend takes them from its standard environment variables (for example `SLACK_BOT_TOKEN`).
 
 Available backends:
 
@@ -184,8 +144,7 @@ Available backends:
 
 ### Usage
 
-Build a registry from the backends you want, open the connection by
-URL, then receive and reply:
+Build a registry from the backends you want, open the connection by URL, then receive and reply:
 
 ```go
 import (
@@ -216,41 +175,22 @@ for {
 }
 ```
 
-Backends also expose a typed `Open` function for direct use, e.g.
-`telnet.Open(ctx, "chat.example.com:6023")`.
+Backends also expose a typed `Open` function for direct use, e.g. `telnet.Open(ctx, "chat.example.com:6023")`.
 
 ### telnet backend
 
-The connection URL is the server address; the port defaults to the
-telnet port 23 (`telnet://chat.example.com` ≡
-`telnet://chat.example.com:23`). The wire protocol is bare lines of
-text: every newline-terminated line received is one inbound message
-(blank lines are ignored), and `Send` writes the message text followed
-by a newline. Telnet option negotiation (IAC sequences) is not
-performed.
+The connection URL is the server address; the port defaults to the telnet port 23 (`telnet://chat.example.com` ≡ `telnet://chat.example.com:23`). The wire protocol is bare lines of text: every newline-terminated line received is one inbound message (blank lines are ignored), and `Send` writes the message text followed by a newline. Telnet option negotiation (IAC sequences) is not performed.
 
-The connection carries a single conversation whose ID is the
-`telnet.ConversationID` constant; the protocol has no notion of
-identity, so `Message.Sender` is empty.
+The connection carries a single conversation whose ID is the `telnet.ConversationID` constant; the protocol has no notion of identity, so `Message.Sender` is empty.
 
 ### Adding a new backend
 
-1. Create a sub-package under `chat/` named after the backend (e.g.
-   `chat/slack`).
+1. Create a sub-package under `chat/` named after the backend (e.g. `chat/slack`).
 2. Define a `Conn` type implementing the `chat.Conn` interface:
-   - Compute `Message.ConversationID` on receive from the backend's
-     native addressing (e.g. Slack channel + thread), and translate it
-     back on send. Wrap `chat.ErrUnknownConversation` (with `%w`) when
-     a sent ID does not map to a conversation.
-   - After `Close`, `Receive` and `Send` report an error wrapping
-     `chat.ErrClosed`; `Close` must also unblock a pending `Receive`.
-3. Provide an `Open` function taking `context.Context` plus
-   backend-specific location parameters and returning `(*Conn, error)`.
-   Take credentials from the backend's standard environment variables;
-   never accept them as parameters or URL elements.
-4. Export the scheme and an opener so callers can wire the backend
-   into a `chat.Registry` (backends never self-register via `init()`),
-   and add it to the CLI's registry in `cmd/chat`:
+   - Compute `Message.ConversationID` on receive from the backend's native addressing (e.g. Slack channel + thread), and translate it back on send. Wrap `chat.ErrUnknownConversation` (with `%w`) when a sent ID does not map to a conversation.
+   - After `Close`, `Receive` and `Send` report an error wrapping `chat.ErrClosed`; `Close` must also unblock a pending `Receive`.
+3. Provide an `Open` function taking `context.Context` plus backend-specific location parameters and returning `(*Conn, error)`. Take credentials from the backend's standard environment variables; never accept them as parameters or URL elements.
+4. Export the scheme and an opener so callers can wire the backend into a `chat.Registry` (backends never self-register via `init()`), and add it to the CLI's registry in `cmd/chat`:
 
    ```go
    // Scheme is the URL scheme this backend serves in a chat.Registry.
@@ -262,21 +202,12 @@ identity, so `Message.Sender` is empty.
    }
    ```
 
-5. Add a test file with table-driven tests covering `Open` failures,
-   receive/send round-trips, conversation ID mapping, context
-   cancellation, `Close` semantics, and opening through a
-   `chat.Registry` with the exported scheme.
-6. List the backend in the table above and document its protocol and
-   conversation ID scheme in a section like the telnet one.
+5. Add a test file with table-driven tests covering `Open` failures, receive/send round-trips, conversation ID mapping, context cancellation, `Close` semantics, and opening through a `chat.Registry` with the exported scheme.
+6. List the backend in the table above and document its protocol and conversation ID scheme in a section like the telnet one.
 
 ## Tools (`tool`)
 
-The `tool` package provides a generic way to invoke operational tools
-(kubernetes, proxmox, harbor, a dummy ping tool, ...). The top-level
-package defines the interface; each tool lives in its own sub-package
-and exports the URL scheme it serves plus an opener, which callers
-wire into a registry (no `init()` side effects — supported tools are
-always visible at the wiring site):
+The `tool` package provides a generic way to invoke operational tools (kubernetes, proxmox, harbor, a dummy ping tool, ...). The top-level package defines the interface; each tool lives in its own sub-package and exports the URL scheme it serves plus an opener, which callers wire into a registry (no `init()` side effects — supported tools are always visible at the wiring site):
 
 ```go
 type Tool interface {
@@ -290,28 +221,9 @@ type Tool interface {
 }
 ```
 
-A call carries enough detail for the tool to act, without prescribing
-how it maps to actual API calls or commands: an **action** (the verb,
-e.g. `restart`), a **target** (what it applies to, e.g.
-`deployment/web`; may be empty), and optional key-value
-**parameters**. The result carries **text** — the human-readable
-outcome, composed by the tool and ready to post to chat as-is — plus
-optional machine-readable key-value **details**; callers never need
-the details to render a reply. Text is empty only when the tool has
-already delivered the outcome to the human itself (like the reply
-tool, whose action is posting into chat), so callers relay non-empty
-text and stay silent on empty text.
+A call carries enough detail for the tool to act, without prescribing how it maps to actual API calls or commands: an **action** (the verb, e.g. `restart`), a **target** (what it applies to, e.g. `deployment/web`; may be empty), and optional key-value **parameters**. The result carries **text** — the human-readable outcome, composed by the tool and ready to post to chat as-is — plus optional machine-readable key-value **details**; callers never need the details to render a reply. Text is empty only when the tool has already delivered the outcome to the human itself (like the reply tool, whose action is posting into chat), so callers relay non-empty text and stay silent on empty text.
 
-A tool instance is identified by a single URL — the scheme selects the
-implementation, host/port/path locate the endpoint it operates on, and
-query parameters carry further instance configuration. Credential
-*values* are **never** part of the URL; tools resolve them from the
-`cred.Store` passed to `Open`. Each tool defines conventional key
-names prefixed by its name (e.g. `k8s-ca`/`k8s-cert`/`k8s-key`,
-`proxmox-ssh-user`/`proxmox-ssh-key`, `harbor-user`/`harbor-password`),
-and the prefix can be overridden per instance with the `cred-prefix`
-query parameter so multiple instances of the same tool can use
-distinct credentials:
+A tool instance is identified by a single URL — the scheme selects the implementation, host/port/path locate the endpoint it operates on, and query parameters carry further instance configuration. Credential *values* are **never** part of the URL; tools resolve them from the `cred.Store` passed to `Open`. Each tool defines conventional key names prefixed by its name (e.g. `k8s-ca`/`k8s-cert`/`k8s-key`, `proxmox-ssh-user`/`proxmox-ssh-key`, `harbor-user`/`harbor-password`), and the prefix can be overridden per instance with the `cred-prefix` query parameter so multiple instances of the same tool can use distinct credentials:
 
 ```
 kubernetes://prod.example.com:6443?cred-prefix=k8s-prod
@@ -326,8 +238,7 @@ Available tools:
 
 ### Usage
 
-Build a registry from the tools you want, open the tool by URL with a
-credential store, then invoke actions:
+Build a registry from the tools you want, open the tool by URL with a credential store, then invoke actions:
 
 ```go
 import (
@@ -354,30 +265,15 @@ if err != nil {
 fmt.Println(result.Text) // "pong"
 ```
 
-Tools also expose a typed `Open` function for direct use, e.g.
-`ping.Open(ctx)`.
+Tools also expose a typed `Open` function for direct use, e.g. `ping.Open(ctx)`.
 
 ### ping tool
 
-A dummy tool that answers `pong` to the `ping` action, useful as a
-liveness check and as the reference implementation of the interface.
-It has no endpoint and takes no credentials, so the URL is a bare
-`ping://` (anything beyond the scheme — host, path, query, userinfo,
-or non-empty fragment — is rejected; a bare trailing `#` parses
-identically to the bare URL and is accepted). The only supported
-action is `ping`; `Target` and `Parameters` are ignored, and any other
-action reports an error wrapping `tool.ErrUnknownAction`.
+A dummy tool that answers `pong` to the `ping` action, useful as a liveness check and as the reference implementation of the interface. It has no endpoint and takes no credentials, so the URL is a bare `ping://` (anything beyond the scheme — host, path, query, userinfo, or non-empty fragment — is rejected; a bare trailing `#` parses identically to the bare URL and is accepted). The only supported action is `ping`; `Target` and `Parameters` are ignored, and any other action reports an error wrapping `tool.ErrUnknownAction`.
 
 ### reply tool
 
-A tool that posts text back into a chat conversation, so a planner
-(see below) can express "say this to the requester" as an ordinary
-tool step alongside operational tool calls. Unlike other tools it is
-bound to a live `chat.Conn` — the connection the message being
-answered arrived on — rather than to an endpoint of its own, so it has
-**no `Opener`** and cannot be opened through a `tool.Registry`.
-Callers open it directly and make it available to plan execution under
-the conventional bare URL `reply://`:
+A tool that posts text back into a chat conversation, so a planner (see below) can express "say this to the requester" as an ordinary tool step alongside operational tool calls. Unlike other tools it is bound to a live `chat.Conn` — the connection the message being answered arrived on — rather than to an endpoint of its own, so it has **no `Opener`** and cannot be opened through a `tool.Registry`. Callers open it directly and make it available to plan execution under the conventional bare URL `reply://`:
 
 ```go
 import "github.com/hangxie/chatops/tool/reply"
@@ -385,31 +281,17 @@ import "github.com/hangxie/chatops/tool/reply"
 rt, err := reply.Open(ctx, conn) // conn is the chat.Conn messages arrive on
 ```
 
-The only supported action is `send`: `Target` is the conversation ID
-to post into (the `ConversationID` of the message being answered) and
-`Parameters["text"]` is the text to post. Sending is the whole
-outcome, so `Result.Text` stays empty — callers that post non-empty
-`Result.Text` back to chat will not double-post. The tool never closes
-the connection; that stays with the caller.
+The only supported action is `send`: `Target` is the conversation ID to post into (the `ConversationID` of the message being answered) and `Parameters["text"]` is the text to post. Sending is the whole outcome, so `Result.Text` stays empty — callers that post non-empty `Result.Text` back to chat will not double-post. The tool never closes the connection; that stays with the caller.
 
 ### Adding a new tool
 
-1. Create a sub-package under `tool/` named after the tool (e.g.
-   `tool/kubernetes`).
+1. Create a sub-package under `tool/` named after the tool (e.g. `tool/kubernetes`).
 2. Define a `Tool` type implementing the `tool.Tool` interface:
-   - `Invoke` maps the call's action/target/parameters onto the tool's
-     API, wrapping `tool.ErrUnknownAction` (with `%w`) when the action
-     is not supported so callers can detect it with `errors.Is`.
-   - Compose `Result.Text` as the complete human-readable answer; put
-     supplementary machine-readable output in `Result.Details`.
+   - `Invoke` maps the call's action/target/parameters onto the tool's API, wrapping `tool.ErrUnknownAction` (with `%w`) when the action is not supported so callers can detect it with `errors.Is`.
+   - Compose `Result.Text` as the complete human-readable answer; put supplementary machine-readable output in `Result.Details`.
    - `Close` releases connections or other resources.
-3. Provide an `Open` function taking `context.Context` plus
-   tool-specific parameters and returning `(*Tool, error)`. Resolve
-   credentials from the `cred.Store` using the tool's conventional key
-   names (document them), honoring the `cred-prefix` override; never
-   accept credential values as parameters or URL elements.
-4. Export the scheme and an opener so callers can wire the tool into a
-   `tool.Registry` (tools never self-register via `init()`):
+3. Provide an `Open` function taking `context.Context` plus tool-specific parameters and returning `(*Tool, error)`. Resolve credentials from the `cred.Store` using the tool's conventional key names (document them), honoring the `cred-prefix` override; never accept credential values as parameters or URL elements.
+4. Export the scheme and an opener so callers can wire the tool into a `tool.Registry` (tools never self-register via `init()`):
 
    ```go
    // Scheme is the URL scheme this tool serves in a tool.Registry.
@@ -421,23 +303,12 @@ the connection; that stays with the caller.
    }
    ```
 
-5. Add a test file with table-driven tests covering `Open` failures,
-   supported and unknown actions, context cancellation, `Close`
-   semantics, and opening through a `tool.Registry` with the exported
-   scheme.
-6. List the tool in the table above and document its actions and
-   credential key names in a section like the ping one.
+5. Add a test file with table-driven tests covering `Open` failures, supported and unknown actions, context cancellation, `Close` semantics, and opening through a `tool.Registry` with the exported scheme.
+6. List the tool in the table above and document its actions and credential key names in a section like the ping one.
 
 ## Planners (`planner`)
 
-The `planner` package provides a generic way to turn free-form chat
-messages into executable plans, backed by pluggable planner backends —
-LLM providers such as OpenAI and Anthropic (planned), or the dummy
-ping planner. The top-level package defines the interface; each
-backend lives in its own sub-package and exports the URL scheme it
-serves plus an opener, which callers wire into a registry (no `init()`
-side effects — supported backends are always visible at the wiring
-site):
+The `planner` package provides a generic way to turn free-form chat messages into executable plans, backed by pluggable planner backends — LLM providers such as OpenAI and Anthropic (planned), or the dummy ping planner. The top-level package defines the interface; each backend lives in its own sub-package and exports the URL scheme it serves plus an opener, which callers wire into a registry (no `init()` side effects — supported backends are always visible at the wiring site):
 
 ```go
 type Planner interface {
@@ -451,40 +322,11 @@ type Planner interface {
 }
 ```
 
-A request carries the message **text**, the **conversation ID** and
-**sender** (both as computed by the chat backend, see `chat.Message`),
-and a caller-assigned **connection ID**; planners use the connection
-and conversation IDs together to keep per-conversation context across
-requests. The connection ID exists because conversation IDs are only
-unique within one `chat.Conn` (every telnet connection reports the
-same one, for example): a caller serving several connections from one
-planner must give each connection a distinct opaque ID, while a caller
-with a single connection may leave it empty. The returned plan is a
-sequence of **steps**, each naming a tool by the URL it is opened from
-(see the `tool` package) plus the `tool.Call` to invoke on it.
-Replying to the requester is itself a step — one invoking the
-`reply://` tool — so a clarifying question and an operational action
-have the same shape, mirroring how LLM tool-use APIs treat text output
-and tool calls as peers in one turn.
+A request carries the message **text**, the **conversation ID** and **sender** (both as computed by the chat backend, see `chat.Message`), and a caller-assigned **connection ID**; planners use the connection and conversation IDs together to keep per-conversation context across requests. The connection ID exists because conversation IDs are only unique within one `chat.Conn` (every telnet connection reports the same one, for example): a caller serving several connections from one planner must give each connection a distinct opaque ID, while a caller with a single connection may leave it empty. The returned plan is a sequence of **steps**, each naming a tool by the URL it is opened from (see the `tool` package) plus the `tool.Call` to invoke on it. Replying to the requester is itself a step — one invoking the `reply://` tool — so a clarifying question and an operational action have the same shape, mirroring how LLM tool-use APIs treat text output and tool calls as peers in one turn.
 
-Steps name tools by URL only, so a plan is **not self-contained**: the
-caller executes it in the context of the request that produced it. In
-particular, `reply://` resolves to the reply tool bound to the chat
-connection that request arrived on — a caller serving several
-connections keeps one reply tool per connection rather than sharing
-one — which is what keeps replies on the right connection even when
-conversation IDs collide across connections.
+Steps name tools by URL only, so a plan is **not self-contained**: the caller executes it in the context of the request that produced it. In particular, `reply://` resolves to the reply tool bound to the chat connection that request arrived on — a caller serving several connections keeps one reply tool per connection rather than sharing one — which is what keeps replies on the right connection even when conversation IDs collide across connections.
 
-A planner is identified by a single URL — the scheme selects the
-backend, host/port/path locate the endpoint it talks to (empty for
-providers with a well-known API endpoint), and query parameters carry
-further configuration such as the model (e.g. `openai://?model=gpt-5`,
-`anthropic://?model=claude-fable-5`). As with `tool`, credential
-*values* are **never** part of the URL; backends resolve them (e.g.
-API keys) from the `cred.Store` passed to `Open`, under conventional
-key names prefixed by the backend name (e.g. `openai-api-key`,
-`anthropic-api-key`), overridable per instance with the `cred-prefix`
-query parameter.
+A planner is identified by a single URL — the scheme selects the backend, host/port/path locate the endpoint it talks to (empty for providers with a well-known API endpoint), and query parameters carry further configuration such as the model (e.g. `openai://?model=gpt-5`, `anthropic://?model=claude-fable-5`). As with `tool`, credential *values* are **never** part of the URL; backends resolve them (e.g. API keys) from the `cred.Store` passed to `Open`, under conventional key names prefixed by the backend name (e.g. `openai-api-key`, `anthropic-api-key`), overridable per instance with the `cred-prefix` query parameter.
 
 Available backends:
 
@@ -494,9 +336,7 @@ Available backends:
 
 ### Usage
 
-Build a registry from the backends you want, open the planner by URL
-with a credential store, then plan inbound messages and execute the
-steps:
+Build a registry from the backends you want, open the planner by URL with a credential store, then plan inbound messages and execute the steps:
 
 ```go
 import (
@@ -531,37 +371,17 @@ for _, step := range plan.Steps {
 }
 ```
 
-Backends also expose a typed `Open` function for direct use, e.g.
-`ping.Open(ctx)`.
+Backends also expose a typed `Open` function for direct use, e.g. `ping.Open(ctx)`.
 
 ### ping planner
 
-A dummy planner that recognizes only the ping intent, useful as a
-wiring check and as the reference implementation of the interface. It
-talks to no LLM endpoint and takes no credentials, so the URL is a
-bare `ping://` (anything beyond the scheme is rejected, same rules as
-the ping tool).
+A dummy planner that recognizes only the ping intent, useful as a wiring check and as the reference implementation of the interface. It talks to no LLM endpoint and takes no credentials, so the URL is a bare `ping://` (anything beyond the scheme is rejected, same rules as the ping tool).
 
-- A message that is exactly `ping` (ignoring case and surrounding
-  whitespace) plans an invocation of the ping tool.
-- A message that merely contains `ping` as a standalone word (so
-  `can you ping the box?` counts, `pinging` or `shipping` do not)
-  plans a reply asking `do you want me to ping? (yes/no)` and
-  remembers the pending question for that conversation.
-- The next message in that conversation answers it: `yes`/`y` plans
-  the ping, `no`/`n` plans an acknowledging reply, and anything else
-  drops the pending confirmation without pinging and is handled as a
-  fresh message. Each conversation — scoped by connection and
-  conversation ID, so the same conversation ID on another chat
-  connection cannot answer the question — holds at most one pending
-  confirmation (a repeated ask just renews it), and conversations do
-  not affect each other.
-- Pending confirmations are bounded state: an unanswered confirmation
-  expires after ten minutes, and at most 1024 conversations'
-  confirmations are remembered at once (asking past the cap evicts
-  the oldest).
-- Everything unrecognized plans a reply saying
-  `sorry, I don't understand`.
+- A message that is exactly `ping` (ignoring case and surrounding whitespace) plans an invocation of the ping tool.
+- A message that merely contains `ping` as a standalone word (so `can you ping the box?` counts, `pinging` or `shipping` do not) plans a reply asking `do you want me to ping? (yes/no)` and remembers the pending question for that conversation.
+- The next message in that conversation answers it: `yes`/`y` plans the ping, `no`/`n` plans an acknowledging reply, and anything else drops the pending confirmation without pinging and is handled as a fresh message. Each conversation — scoped by connection and conversation ID, so the same conversation ID on another chat connection cannot answer the question — holds at most one pending confirmation (a repeated ask just renews it), and conversations do not affect each other.
+- Pending confirmations are bounded state: an unanswered confirmation expires after ten minutes, and at most 1024 conversations' confirmations are remembered at once (asking past the cap evicts the oldest).
+- Everything unrecognized plans a reply saying `sorry, I don't understand`.
 
 A typical exchange:
 
@@ -574,27 +394,12 @@ bot>  pong
 
 ### Adding a new backend
 
-1. Create a sub-package under `planner/` named after the backend
-   (e.g. `planner/openai`, `planner/anthropic`).
-2. Define a `Planner` type implementing the `planner.Planner`
-   interface:
-   - `Plan` turns one inbound message into steps; express replies and
-     clarifying questions as steps invoking the `reply://` tool with
-     the request's `ConversationID` as the call target. Keep any
-     per-conversation context keyed by the `(ConnectionID,
-     ConversationID)` pair — never by `ConversationID` alone, which
-     collides across chat connections — and make the planner safe for
-     concurrent use.
+1. Create a sub-package under `planner/` named after the backend (e.g. `planner/openai`, `planner/anthropic`).
+2. Define a `Planner` type implementing the `planner.Planner` interface:
+   - `Plan` turns one inbound message into steps; express replies and clarifying questions as steps invoking the `reply://` tool with the request's `ConversationID` as the call target. Keep any per-conversation context keyed by the `(ConnectionID, ConversationID)` pair — never by `ConversationID` alone, which collides across chat connections — and make the planner safe for concurrent use.
    - `Close` releases connections or other resources.
-3. Provide an `Open` function taking `context.Context` plus
-   backend-specific parameters and returning `(*Planner, error)`.
-   Resolve credentials (e.g. API keys) from the `cred.Store` using the
-   backend's conventional key names (document them), honoring the
-   `cred-prefix` override; never accept credential values as
-   parameters or URL elements.
-4. Export the scheme and an opener so callers can wire the backend
-   into a `planner.Registry` (backends never self-register via
-   `init()`):
+3. Provide an `Open` function taking `context.Context` plus backend-specific parameters and returning `(*Planner, error)`. Resolve credentials (e.g. API keys) from the `cred.Store` using the backend's conventional key names (document them), honoring the `cred-prefix` override; never accept credential values as parameters or URL elements.
+4. Export the scheme and an opener so callers can wire the backend into a `planner.Registry` (backends never self-register via `init()`):
 
    ```go
    // Scheme is the URL scheme this backend serves in a planner.Registry.
@@ -606,11 +411,5 @@ bot>  pong
    }
    ```
 
-5. Add a test file with table-driven tests covering `Open` failures,
-   representative message-to-plan mappings (including multi-message
-   sequences when the backend keeps conversation context, and
-   isolation across conversations and across connections), context
-   cancellation, `Close` semantics, and opening through a
-   `planner.Registry` with the exported scheme.
-6. List the backend in the table above and document its URL
-   parameters and credential key names in a section like the ping one.
+5. Add a test file with table-driven tests covering `Open` failures, representative message-to-plan mappings (including multi-message sequences when the backend keeps conversation context, and isolation across conversations and across connections), context cancellation, `Close` semantics, and opening through a `planner.Registry` with the exported scheme.
+6. List the backend in the table above and document its URL parameters and credential key names in a section like the ping one.

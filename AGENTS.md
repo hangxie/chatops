@@ -40,6 +40,7 @@ to the chatops Go project.
 - Output formats (plain text, JSON) should be consistent and stable.
 - Documentation (`README.md`) must reflect all behavioral changes.
 - User examples should be runnable and tested.
+- Markdown prose must not use hard line breaks: keep each paragraph and list item on a single line and let renderers wrap. Code blocks and tables are exempt. Markdown files must not contain tabs; indent Go code inside code blocks with 4 spaces.
 
 ---
 
