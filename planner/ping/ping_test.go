@@ -12,6 +12,7 @@ import (
 	"github.com/hangxie/chatops/planner"
 	"github.com/hangxie/chatops/planner/ping"
 	"github.com/hangxie/chatops/tool"
+	"github.com/hangxie/chatops/tool/reply"
 )
 
 // pingPlan is the plan invoking the ping tool.
@@ -24,7 +25,7 @@ func pingPlan() planner.Plan {
 // replyPlan is the plan posting text back into conversation conv.
 func replyPlan(conv, text string) planner.Plan {
 	return planner.Plan{Steps: []planner.Step{
-		{Tool: "reply://", Call: tool.Call{
+		{Tool: reply.URL, Call: tool.Call{
 			Action:     "send",
 			Target:     conv,
 			Parameters: map[string]string{"text": text},
