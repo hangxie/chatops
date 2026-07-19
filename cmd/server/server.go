@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/hangxie/chatops/chat"
+	chatslack "github.com/hangxie/chatops/chat/slack"
 	"github.com/hangxie/chatops/chat/telnet"
 	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/cred/jsonfile"
@@ -20,7 +21,7 @@ import (
 
 // Cmd contains all configuration for one engine server.
 type Cmd struct {
-	ChatURL        string `name:"chat" required:"" help:"Chat backend URL (for example, telnet://localhost:6023)."`
+	ChatURL        string `name:"chat" required:"" help:"Chat backend URL (for example, slack:// or telnet://localhost:6023)."`
 	PlannerURL     string `name:"planner" required:"" help:"Planner backend URL (for example, ping://)."`
 	CredentialsURL string `name:"credentials" help:"Optional credential store URL for planners and tools."`
 	ConnectionID   string `name:"connection-id" default:"default" help:"Stable ID used to scope planner conversation state."`
@@ -78,7 +79,10 @@ func credentialRegistry() *cred.Registry {
 }
 
 func chatRegistry() *chat.Registry {
-	return chat.NewRegistry(chat.Backend{Scheme: telnet.Scheme, Opener: telnet.Opener})
+	return chat.NewRegistry(
+		chat.Backend{Scheme: chatslack.Scheme, Opener: chatslack.Opener},
+		chat.Backend{Scheme: telnet.Scheme, Opener: telnet.Opener},
+	)
 }
 
 func plannerRegistry() *planner.Registry {
