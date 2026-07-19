@@ -150,4 +150,5 @@ func Test_Close_does_not_close_conn(t *testing.T) {
 func Test_Tool_implements_tool_Tool(t *testing.T) {
 	var _ tool.Tool = &reply.Tool{}
 	require.Equal(t, "reply", reply.Scheme)
+	require.Equal(t, "reply://", reply.URL)
 }

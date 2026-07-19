@@ -51,7 +51,7 @@ const Scheme = "ping"
 // by the tools themselves.
 const (
 	pingToolURL  = toolping.Scheme + "://"
-	replyToolURL = reply.Scheme + "://"
+	replyToolURL = reply.URL
 )
 
 // Reply texts the planner posts back to the requester.

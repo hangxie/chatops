@@ -12,6 +12,8 @@
 //
 //	reply://
 //
+// URL exports that canonical spelling for planners and executors.
+//
 // The only supported action is "send": Call.Target is the
 // conversation ID to post into (chat.Message.ConversationID of the
 // message being answered) and Call.Parameters["text"] is the text to
@@ -29,10 +31,13 @@ import (
 	"github.com/hangxie/chatops/tool"
 )
 
-// Scheme names the conventional URL ("reply://") under which callers
-// make an opened reply tool available to plan execution. There is no
-// tool.OpenerFunc for it; see the package documentation.
+// Scheme names the reply tool URL scheme. There is no tool.OpenerFunc for it;
+// see the package documentation.
 const Scheme = "reply"
+
+// URL is the canonical bare URL under which callers make an opened reply tool
+// available to plan execution.
+const URL = Scheme + "://"
 
 // Tool posts text into conversations of one chat connection.
 type Tool struct {

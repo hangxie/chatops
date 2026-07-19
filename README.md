@@ -7,8 +7,30 @@ $ chatops --help
 Usage: chatops <command>
 
 Commands:
+  server     Run the ChatOps server.
   version    Show build version.
 ```
+
+### server
+
+Connects a chat backend, planner, and tools, then processes messages until interrupted:
+
+```bash
+$ chatops server --chat telnet://localhost:6023 --planner ping://
+```
+
+The `--chat` and `--planner` flags are required backend URLs. `--credentials` optionally selects a credential store for planners and tools, `--connection-id` supplies a stable identifier for scoping planner conversation state (default `default`), and `--max-concurrency` bounds the number of conversations processed at once (default `8`, maximum `256`):
+
+```bash
+$ chatops server \
+    --chat telnet://chat.example.com:6023 \
+    --planner ping:// \
+    --credentials json-file:///etc/chatops/credentials.json \
+    --connection-id operations \
+    --max-concurrency 8
+```
+
+The initial server build wires the `telnet` chat backend, `ping` planner, `ping` tool, `reply` tool, and `json-file` credential store. Add new backends to the registries in `cmd/server` as their implementations become available. The first `SIGINT` or `SIGTERM` cancels in-flight work, closes the planner and chat connection, and then closes the credential store; default signal handling is restored before cancellation, so a second signal can terminate a process stuck during shutdown.
 
 ### version
 
@@ -21,6 +43,30 @@ v0.1.0
 $ chatops version --all --json
 {"Version":"v0.1.0","BuildTime":"2026-07-15T22:04:35-0700","Source":"github"}
 ```
+
+## Engine (`engine`)
+
+The `engine` package joins the component interfaces into the server loop. It receives messages from one `chat.Conn`, passes each message and its connection metadata to a `planner.Planner`, executes the returned tool steps in order, and sends every non-empty tool result back to the originating conversation. A planner asks for clarification or confirmation by returning a `reply://` step, so multi-message interaction state stays in the planner instead of the engine.
+
+```go
+e, err := engine.New(engine.Config{
+    ConnectionID: "operations",
+    Chat:         conn,
+    Planner:      p,
+    Tools:        tools,
+    Credentials:  credentials,
+})
+if err != nil {
+    // handle error
+}
+if err := e.Run(ctx); err != nil {
+    // handle processing or cleanup error
+}
+```
+
+`Run` preserves message order within each conversation while processing independent conversations concurrently through a fixed-size worker pool. The pool and its bounded backlog prevent messages from creating unbounded worker goroutines; `Config.MaxConcurrency` controls the worker count and defaults to `engine.DefaultMaxConcurrency`. The engine is deliberately fail-fast: a planner, tool step, or result-delivery failure stops the server and returns the error to its caller instead of continuing with potentially incomplete work. A panic from a planner or tool is recovered at the message boundary and returned as a processing error so cleanup can finish. Context cancellation and a connection deliberately closed through `chat.Conn.Close` are graceful outcomes. A remote disconnect such as telnet EOF is a connection failure and is returned, allowing the caller or service supervisor to decide whether to reconnect or restart.
+
+The engine owns and closes the chat connection and planner after `New` succeeds, while the caller retains ownership of the credential store. It intentionally opens and closes each operational tool around one plan step, favoring isolated ownership and simple cleanup over engine-level instance reuse. A backend with expensive setup should implement safe pooling behind its opener rather than relying on the engine to retain stateful tool instances. Reply steps are different: the engine binds their destination to the originating conversation and accepts only the canonical `reply.URL`, preventing planner output from redirecting a reply or silently attaching unsupported URL configuration.
 
 ## Credential store (`cred`)
 
@@ -273,7 +319,7 @@ A dummy tool that answers `pong` to the `ping` action, useful as a liveness chec
 
 ### reply tool
 
-A tool that posts text back into a chat conversation, so a planner (see below) can express "say this to the requester" as an ordinary tool step alongside operational tool calls. Unlike other tools it is bound to a live `chat.Conn` — the connection the message being answered arrived on — rather than to an endpoint of its own, so it has **no `Opener`** and cannot be opened through a `tool.Registry`. Callers open it directly and make it available to plan execution under the conventional bare URL `reply://`:
+A tool that posts text back into a chat conversation, so a planner (see below) can express "say this to the requester" as an ordinary tool step alongside operational tool calls. Unlike other tools it is bound to a live `chat.Conn` — the connection the message being answered arrived on — rather than to an endpoint of its own, so it has **no `Opener`** and cannot be opened through a `tool.Registry`. Callers open it directly and make it available to plan execution under the conventional bare URL exported as `reply.URL` (`reply://`):
 
 ```go
 import "github.com/hangxie/chatops/tool/reply"
