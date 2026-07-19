@@ -61,7 +61,7 @@ Available settings:
 
 | Flag | Required | Default | Description |
 | --- | --- | --- | --- |
-| `--chat` | Yes | — | Chat backend URL, such as `telnet://localhost:6023`. |
+| `--chat` | Yes | — | Chat backend URL, such as `slack://` or `telnet://localhost:6023`. |
 | `--planner` | Yes | — | Planner backend URL, such as `ping://`. |
 | `--credentials` | No | None | Credential store URL used by planners and tools. |
 | `--connection-id` | No | `default` | Stable identifier used to scope planner conversation state. |
@@ -82,11 +82,31 @@ The current server supports these URLs:
 
 | Component | Scheme | URL form | Notes |
 | --- | --- | --- | --- |
+| Chat | `slack` | `slack://` | Uses Socket Mode with `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`; replies are threaded. |
 | Chat | `telnet` | `telnet://host:port` | Port defaults to `23`; the protocol is newline-delimited text without telnet option negotiation. |
 | Planner | `ping` | `ping://` | Recognizes ping requests and requires no credentials. |
 | Credentials | `json-file` | `json-file:///path/to/file.json` | Optional JSON object mapping credential names to string values. |
 
 The server also wires the `ping://` operational tool and its internal `reply://` tool. The first SIGINT or SIGTERM cancels in-flight work and closes resources gracefully; a second signal uses the operating system's default handling.
+
+### Slack
+
+The Slack backend uses Socket Mode, so the server does not need a public HTTP endpoint. Create a Slack app with Socket Mode enabled, generate an app-level token with the `connections:write` scope, and install the app to obtain its bot OAuth token. Give the bot the `chat:write` scope plus the read scopes required by the events you subscribe to. At startup, the backend calls `auth.test` with the bot token to validate authentication and obtain the exact bot user ID; this method requires no additional bot scope.
+
+Subscribe to the `app_mention` bot event and add `app_mentions:read`. To receive mentioned commands from direct messages too, subscribe to `message.im` and add `im:history`. The backend can also consume `message.channels`, `message.groups`, or `message.mpim` when their corresponding history scopes are granted, but unmentioned messages are ignored. Invite the bot to each channel it should serve.
+
+Set both tokens and start the server with the configuration-free `slack://` URL:
+
+```bash
+export SLACK_BOT_TOKEN=xoxb-...
+export SLACK_APP_TOKEN=xapp-...
+
+chatops server --chat slack:// --planner ping://
+```
+
+Every command must start by mentioning the bot, including follow-up answers such as `@chatops yes`. Slack represents that recipient as a stable user-ID mention in the event payload; the backend requires that the leading mention exactly match the authenticated bot ID and strips it before passing `yes` to the planner. Mentions of other users do not authorize commands, and an `app_mention` with the bot mention later in its text is ignored. Renaming the bot from `@chatops` to `@bot` requires no server configuration change.
+
+Each root message starts a ChatOps conversation. The bot posts its response in that message's Slack thread, and mentioned human replies in the same thread retain planner state. Native channel/thread routes expire after 24 hours without inbound or outbound activity, and at most 4,096 routes are retained; when the cache is full, the earliest-expiring route is evicted. An indexed expiry heap keeps route refresh and eviction logarithmic instead of scanning every cached route. Unmentioned messages, bot messages, message subtypes such as edits and deletes, and empty messages are ignored to prevent accidental commands, reply loops, and processing of Slack system events.
 
 ### Credential file
 
