@@ -144,6 +144,7 @@ Available backends:
 
 | Scheme   | Sub-package   | Connection URL       |
 | -------- | ------------- | -------------------- |
+| `slack`  | `chat/slack`  | `slack://`            |
 | `telnet` | `chat/telnet` | `telnet://host:port` |
 
 ### Usage
@@ -180,6 +181,12 @@ for {
 ```
 
 Backends also expose a typed `Open` function for direct use, e.g. `telnet.Open(ctx, "chat.example.com:6023")`.
+
+### Slack backend
+
+The Slack backend uses the Events API over Socket Mode for inbound messages and `chat.postMessage` for outbound replies. Its `slack://` URL takes no host, path, or query configuration. `SLACK_BOT_TOKEN` supplies the bot OAuth token and `SLACK_APP_TOKEN` supplies an app-level token with `connections:write`; see the user guide for the required app event subscriptions and bot scopes. Startup calls `auth.test` to validate the bot token and obtain its user ID before opening Socket Mode.
+
+Every accepted Socket Mode envelope is acknowledged before its event is processed. Human message and `app_mention` events become `chat.Message` values only when their text starts with the exact `<@USERID>` obtained for the authenticated bot. The backend strips that stable bot identity before planning, so changing the bot's display name requires no ChatOps configuration. Mentions of other users, bot mentions later in the text, unmentioned messages, bot messages, message subtypes, events without a sender, and empty commands are ignored. The conversation ID combines the Slack channel ID with the root message timestamp. A root message and all replies in its thread therefore share one engine conversation, and `Send` posts back into that thread. Routing entries refresh on receive and send, expire after 24 hours of inactivity, and are limited to 4,096 entries. An indexed min-heap makes refresh, expiry, and capacity eviction O(log n); reaching capacity evicts the earliest-expiring route.
 
 ### telnet backend
 
