@@ -14,6 +14,8 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/stretchr/testify/require"
+
+	chatslack "github.com/hangxie/chatops/chat/slack"
 )
 
 func Test_Cmd_parse(t *testing.T) {
@@ -161,6 +163,13 @@ func Test_run_reports_open_errors(t *testing.T) {
 			require.ErrorContains(t, err, tc.errMsg)
 		})
 	}
+}
+
+func Test_chatRegistry_supports_slack(t *testing.T) {
+	t.Setenv(chatslack.BotTokenEnv, "")
+	t.Setenv(chatslack.AppTokenEnv, "")
+	_, err := chatRegistry().Open(context.Background(), "slack://")
+	require.ErrorContains(t, err, chatslack.BotTokenEnv)
 }
 
 type closer struct{ err error }
