@@ -1,0 +1,35 @@
+{
+  "display_information": {
+    "name": "chatops",
+    "description": "ChatOps bot that routes mentioned commands to a planner and operational tools."
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "chatops",
+      "always_online": true
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "chat:write",
+        "im:history"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "app_mention",
+        "message.im"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "socket_mode_enabled": true,
+    "org_deploy_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
