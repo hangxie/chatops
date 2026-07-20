@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	chatslack "github.com/hangxie/chatops/chat/slack"
+	"github.com/hangxie/chatops/tool"
 )
 
 func Test_Cmd_parse(t *testing.T) {
@@ -140,6 +141,17 @@ func Test_run_opens_and_closes_credentials(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
 	command := Cmd{CredentialsURL: "json-file://" + path, ChatURL: "unknown://", PlannerURL: "ping://"}
 	require.ErrorContains(t, command.run(context.Background()), "open chat")
+}
+
+func Test_toolRegistry_opens_status_tool(t *testing.T) {
+	tl, err := toolRegistry().Open(context.Background(), "status://", nil)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, tl.Close()) }()
+
+	result, err := tl.Invoke(context.Background(), tool.Call{Action: "list"})
+	require.NoError(t, err)
+	require.Contains(t, result.Text, "github")
+	require.Contains(t, result.Text, "docker-hub")
 }
 
 func Test_run_reports_open_errors(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 	plannerping "github.com/hangxie/chatops/planner/ping"
 	"github.com/hangxie/chatops/tool"
 	toolping "github.com/hangxie/chatops/tool/ping"
+	toolstatus "github.com/hangxie/chatops/tool/status"
 )
 
 // Cmd contains all configuration for one engine server.
@@ -90,7 +91,10 @@ func plannerRegistry() *planner.Registry {
 }
 
 func toolRegistry() *tool.Registry {
-	return tool.NewRegistry(tool.Backend{Scheme: toolping.Scheme, Opener: toolping.Opener})
+	return tool.NewRegistry(
+		tool.Backend{Scheme: toolping.Scheme, Opener: toolping.Opener},
+		tool.Backend{Scheme: toolstatus.Scheme, Opener: toolstatus.Opener},
+	)
 }
 
 func closeNamed(name string, closer io.Closer) error {
