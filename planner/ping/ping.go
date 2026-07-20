@@ -85,11 +85,12 @@ const (
 )
 
 // Opener is the planner.OpenerFunc for this planner: the URL carries
-// no endpoint or configuration, and creds is ignored. Any host, path,
-// query, userinfo, or non-empty fragment is rejected; a bare trailing
-// "#" is parsed by net/url identically to the bare URL and is
-// therefore accepted.
-func Opener(ctx context.Context, u *url.URL, _ cred.Store) (planner.Planner, error) {
+// no endpoint or configuration, and creds is ignored. The ping planner
+// plans a fixed set of steps, so the enabled tool set is ignored too.
+// Any host, path, query, userinfo, or non-empty fragment is rejected;
+// a bare trailing "#" is parsed by net/url identically to the bare URL
+// and is therefore accepted.
+func Opener(ctx context.Context, u *url.URL, _ cred.Store, _ *tool.Registry) (planner.Planner, error) {
 	if u.Host != "" || u.Path != "" || u.RawQuery != "" || u.ForceQuery ||
 		u.Opaque != "" || u.User != nil || u.Fragment != "" {
 		return nil, fmt.Errorf("ping: URL %q takes no endpoint or configuration", u.String())

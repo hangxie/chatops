@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/hangxie/chatops/cred"
+	"github.com/hangxie/chatops/tool"
 )
 
 // OpenerFunc opens the planner backend described by u, resolving any
@@ -16,7 +17,13 @@ import (
 // one for wiring into a Registry; the URL scheme has already been
 // matched, and interpretation of the rest of the URL is
 // backend-specific. Backends that need no credentials ignore creds.
-type OpenerFunc func(ctx context.Context, u *url.URL, creds cred.Store) (Planner, error)
+//
+// tools is the set of operational tools the caller has enabled, so an
+// LLM-backed backend can offer them to the model as callable
+// functions; backends emit plan steps naming these tools by their URL
+// scheme. It is never nil, though it may be empty. Backends that plan
+// a fixed set of steps (such as the ping backend) ignore it.
+type OpenerFunc func(ctx context.Context, u *url.URL, creds cred.Store, tools *tool.Registry) (Planner, error)
 
 // Backend pairs a URL scheme with the opener serving it, for wiring
 // into NewRegistry.
@@ -74,7 +81,11 @@ func (r *Registry) Schemes() []string {
 // names in the package documentation, never taken from the URL. creds
 // may be nil when every wired backend takes no credentials; openers
 // that need credentials must report an error.
-func (r *Registry) Open(ctx context.Context, rawURL string, creds cred.Store) (Planner, error) {
+//
+// tools is the set of operational tools the caller has enabled, passed
+// through to the backend so an LLM-backed planner can offer them to
+// the model. A nil tools is treated as the empty set.
+func (r *Registry) Open(ctx context.Context, rawURL string, creds cred.Store, tools *tool.Registry) (Planner, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("planner: parse planner URL: %w", err)
@@ -83,5 +94,8 @@ func (r *Registry) Open(ctx context.Context, rawURL string, creds cred.Store) (P
 	if !ok {
 		return nil, fmt.Errorf("planner: unknown planner scheme %q", u.Scheme)
 	}
-	return opener(ctx, u, creds)
+	if tools == nil {
+		tools = tool.NewRegistry()
+	}
+	return opener(ctx, u, creds, tools)
 }

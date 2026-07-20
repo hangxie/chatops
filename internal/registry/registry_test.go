@@ -30,7 +30,7 @@ func Test_Credential_opens_jsonfile(t *testing.T) {
 func Test_Planner_opens_ping(t *testing.T) {
 	require.Equal(t, []string{"ping"}, registry.Planner().Schemes())
 
-	p, err := registry.Planner().Open(context.Background(), "ping://", nil)
+	p, err := registry.Planner().Open(context.Background(), "ping://", nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, p)
 }

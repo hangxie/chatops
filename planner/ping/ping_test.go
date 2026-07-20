@@ -72,7 +72,7 @@ func Test_Opener_via_registry(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			p, err := reg.Open(context.Background(), tc.url, nil)
+			p, err := reg.Open(context.Background(), tc.url, nil, nil)
 			if tc.errMsg != "" {
 				require.ErrorContains(t, err, tc.errMsg)
 				return
