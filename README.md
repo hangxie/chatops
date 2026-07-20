@@ -149,6 +149,14 @@ export SLACK_CONFIG_ACCESS_TOKEN=xoxe.xoxp-...
 ./scripts/create-slack-app.sh
 ```
 
+The app is named `chatops` by default. Pass a different name as an argument (or set `SLACK_APP_NAME`) to override both the app display name and the bot user name; the manifest itself is left unchanged:
+
+```bash
+./scripts/create-slack-app.sh opsbot
+```
+
+When pasting the manifest by hand instead, edit the `name` fields in [`scripts/slack-app-manifest.json`](scripts/slack-app-manifest.json) before pasting.
+
 Both paths finish with the same two manual steps, because Slack does not expose these credentials through the manifest API: install the app to your workspace to obtain the bot token (`SLACK_BOT_TOKEN`, `xoxb-…`), and generate an app-level token with the `connections:write` scope for the Socket Mode token (`SLACK_APP_TOKEN`, `xapp-…`). The script prints the exact links for both. To serve channels beyond direct messages, add the matching `message.*` events and history scopes to the manifest before creating the app, and invite the bot to each channel.
 
 Set both tokens and start the server with the configuration-free `slack://` URL:
