@@ -8,6 +8,11 @@
 # from installing the app to a workspace and the app-level token is generated
 # in the browser. Both are printed as follow-up links when the app is created.
 #
+# Usage: create-slack-app.sh [app-name]
+#
+# The optional app-name overrides the "chatops" name in the manifest (both the
+# app display name and the bot user name); it can also be set with SLACK_APP_NAME.
+#
 # Requirements: curl, jq, and a configuration access token exported as
 # SLACK_CONFIG_ACCESS_TOKEN. Generate the token (valid 12 hours) at
 # https://api.slack.com/reference/manifests#config-tokens
@@ -15,6 +20,7 @@
 set -euo pipefail
 
 MANIFEST="$(cd "$(dirname "$0")" && pwd)/slack-app-manifest.json"
+APP_NAME="${1:-${SLACK_APP_NAME:-}}"
 
 if [[ -z "${SLACK_CONFIG_ACCESS_TOKEN:-}" ]]; then
     echo "error: SLACK_CONFIG_ACCESS_TOKEN is not set" >&2
@@ -34,9 +40,17 @@ if [[ ! -f "${MANIFEST}" ]]; then
     exit 1
 fi
 
+if [[ -n "${APP_NAME}" ]]; then
+    manifest="$(jq -c --arg name "${APP_NAME}" \
+        '.display_information.name = $name | .features.bot_user.display_name = $name' \
+        "${MANIFEST}")"
+else
+    manifest="$(jq -c . "${MANIFEST}")"
+fi
+
 response="$(curl -sS -X POST https://slack.com/api/apps.manifest.create \
     -H "Authorization: Bearer ${SLACK_CONFIG_ACCESS_TOKEN}" \
-    --data-urlencode "manifest=$(jq -c . "${MANIFEST}")")"
+    --data-urlencode "manifest=${manifest}")"
 
 if [[ "$(jq -r '.ok' <<<"${response}")" != "true" ]]; then
     echo "error: Slack API rejected the request:" >&2
