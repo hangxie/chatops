@@ -56,8 +56,57 @@ func Test_NewRegistry_invalid_arguments(t *testing.T) {
 
 func Test_NewRegistry_empty_is_valid(t *testing.T) {
 	reg := tool.NewRegistry()
+	require.Empty(t, reg.Schemes())
 	_, err := reg.Open(context.Background(), "ping://", nil)
 	require.ErrorContains(t, err, `unknown tool scheme "ping"`)
+}
+
+func Test_Registry_Schemes_returns_sorted_copy(t *testing.T) {
+	reg := tool.NewRegistry(
+		tool.Backend{Scheme: "Zulu", Opener: fakeOpener(nil, nil)},
+		tool.Backend{Scheme: "alpha", Opener: fakeOpener(nil, nil)},
+		tool.Backend{Scheme: "Middle", Opener: fakeOpener(nil, nil)},
+	)
+
+	schemes := reg.Schemes()
+	require.Equal(t, []string{"alpha", "middle", "zulu"}, schemes)
+
+	schemes[0] = "changed"
+	require.Equal(t, []string{"alpha", "middle", "zulu"}, reg.Schemes())
+}
+
+func Test_Registry_Select(t *testing.T) {
+	reg := tool.NewRegistry(
+		tool.Backend{Scheme: "ping", Opener: fakeOpener(&fakeTool{}, nil)},
+		tool.Backend{Scheme: "status", Opener: fakeOpener(&fakeTool{}, nil)},
+	)
+	testCases := map[string]struct {
+		selected []string
+		want     []string
+		errMsg   string
+	}{
+		"filtered":   {selected: []string{"status"}, want: []string{"status"}},
+		"repeated":   {selected: []string{"status", "ping"}, want: []string{"ping", "status"}},
+		"duplicate":  {selected: []string{"ping", "ping"}, want: []string{"ping"}},
+		"mixed-case": {selected: []string{"PING"}, want: []string{"ping"}},
+		"invalid": {
+			selected: []string{"ping", "bogus"},
+			errMsg:   `tool: unknown tool "bogus"; available tools: ping, status`,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			selected, err := reg.Select(tc.selected...)
+			if tc.errMsg != "" {
+				require.Nil(t, selected)
+				require.EqualError(t, err, tc.errMsg)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, selected.Schemes())
+		})
+	}
 }
 
 func Test_Registry_normalizes_scheme_to_lowercase(t *testing.T) {

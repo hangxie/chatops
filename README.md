@@ -48,6 +48,7 @@ Commands:
   chats      List available chat backends.
   planners   List available planner backends.
   server     Run the ChatOps server.
+  tools      List available tools.
   version    Show build version.
 ```
 
@@ -68,6 +69,7 @@ Available settings:
 | `--credentials` | No | None | Credential store URL used by planners and tools. |
 | `--connection-id` | No | `default` | Stable identifier used to scope planner conversation state. |
 | `--max-concurrency` | No | `8` | Maximum conversations processed concurrently; the maximum value is `256`. |
+| `--tool` | No | All selectable tools | Tool to expose to planners; repeat the flag to expose multiple tools. |
 
 A fully configured invocation looks like this:
 
@@ -77,7 +79,9 @@ chatops server \
     --planner ping:// \
     --credentials json-file:///etc/chatops/credentials.json \
     --connection-id operations \
-    --max-concurrency 8
+    --max-concurrency 8 \
+    --tool ping \
+    --tool status
 ```
 
 The current server supports these URLs:
@@ -89,7 +93,9 @@ The current server supports these URLs:
 | Planner | `ping` | `ping://` | Recognizes ping requests and requires no credentials. |
 | Credentials | `json-file` | `json-file:///path/to/file.json` | Optional JSON object mapping credential names to string values. |
 
-The server also wires the `ping://` and `status://` operational tools and its internal `reply://` tool. The first SIGINT or SIGTERM cancels in-flight work and closes resources gracefully; a second signal uses the operating system's default handling.
+With no `--tool` flag, the server exposes every compiled-in selectable tool, preserving the default behavior. Repeat `--tool` to expose an explicit allowlist; for example, `--tool ping --tool status` exposes exactly `ping://` and `status://`. An unknown name prevents startup and reports the available choices. A planner that attempts to use a compiled-in tool omitted from the allowlist receives the same unknown-tool error as any unavailable tool.
+
+The server's internal `reply://` tool is bound directly to each live chat conversation and is therefore neither listed nor controlled by `--tool`. The first SIGINT or SIGTERM cancels in-flight work and closes resources gracefully; a second signal uses the operating system's default handling.
 
 ### Service status tool
 
@@ -212,6 +218,19 @@ ping
 
 $ chatops planners --json
 ["ping"]
+```
+
+### Tools
+
+List the selectable operational tools the binary knows about, one scheme per line. These are the names accepted by `server --tool`. Add `--json` (`-j`) for a machine-readable array:
+
+```console
+$ chatops tools
+ping
+status
+
+$ chatops tools --json
+["ping","status"]
 ```
 
 ### Version

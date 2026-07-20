@@ -29,6 +29,8 @@ func Test_Cmd_parse(t *testing.T) {
 				"--credentials", "json-file:///etc/chatops/credentials.json",
 				"--connection-id", "operations",
 				"--max-concurrency", "3",
+				"--tool", "ping",
+				"--tool", "status",
 			},
 			command: Cmd{
 				ChatURL:        "telnet://localhost:6023",
@@ -36,6 +38,7 @@ func Test_Cmd_parse(t *testing.T) {
 				CredentialsURL: "json-file:///etc/chatops/credentials.json",
 				ConnectionID:   "operations",
 				MaxConcurrency: 3,
+				Tools:          []string{"ping", "status"},
 			},
 		},
 		"required-chat": {
@@ -62,6 +65,11 @@ func Test_Cmd_parse(t *testing.T) {
 			require.Equal(t, tc.command, command)
 		})
 	}
+}
+
+func Test_run_rejects_invalid_tool_before_opening_backends(t *testing.T) {
+	command := Cmd{ChatURL: "unknown://", PlannerURL: "unknown://", Tools: []string{"bogus"}}
+	require.EqualError(t, command.run(context.Background()), `server: configure tools: tool: unknown tool "bogus"; available tools: ping, status`)
 }
 
 func Test_run_ping_round_trip_and_graceful_cancellation(t *testing.T) {
