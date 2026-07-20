@@ -10,14 +10,16 @@ import (
 	"github.com/alecthomas/kong"
 
 	"github.com/hangxie/chatops/cmd/chats"
+	"github.com/hangxie/chatops/cmd/planners"
 	"github.com/hangxie/chatops/cmd/server"
 	"github.com/hangxie/chatops/cmd/version"
 )
 
 var cli struct {
-	Chats   chats.Cmd   `cmd:"" help:"List available chat backends."`
-	Server  server.Cmd  `cmd:"" help:"Run the ChatOps server."`
-	Version version.Cmd `cmd:"" help:"Show build version."`
+	Chats    chats.Cmd    `cmd:"" help:"List available chat backends."`
+	Planners planners.Cmd `cmd:"" help:"List available planner backends."`
+	Server   server.Cmd   `cmd:"" help:"Run the ChatOps server."`
+	Version  version.Cmd  `cmd:"" help:"Show build version."`
 }
 
 func main() {

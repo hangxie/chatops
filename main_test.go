@@ -23,6 +23,8 @@ func Test_cli_parse(t *testing.T) {
 		"version-json":      {args: []string{"version", "--json"}, command: "version"},
 		"chats":             {args: []string{"chats"}, command: "chats"},
 		"chats-json":        {args: []string{"chats", "--json"}, command: "chats"},
+		"planners":          {args: []string{"planners"}, command: "planners"},
+		"planners-json":     {args: []string{"planners", "--json"}, command: "planners"},
 		"server":            {args: []string{"server", "--chat", "telnet://localhost:6023", "--planner", "ping://"}, command: "server"},
 		"server-no-chat":    {args: []string{"server", "--planner", "ping://"}, errMsg: "--chat"},
 		"server-no-planner": {args: []string{"server", "--chat", "telnet://localhost:6023"}, errMsg: "--planner"},
@@ -78,6 +80,14 @@ func Test_cli_run_version(t *testing.T) {
 		require.NoError(t, runCLI(newParser(), []string{"version"}, context.Background()))
 	})
 	require.NotEmpty(t, stdout)
+	require.Empty(t, stderr)
+}
+
+func Test_cli_run_planners(t *testing.T) {
+	stdout, stderr := testutils.CaptureStdoutStderr(func() {
+		require.NoError(t, runCLI(newParser(), []string{"planners"}, context.Background()))
+	})
+	require.Equal(t, "ping\n", stdout)
 	require.Empty(t, stderr)
 }
 

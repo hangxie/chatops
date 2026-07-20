@@ -56,8 +56,23 @@ func Test_NewRegistry_invalid_arguments(t *testing.T) {
 
 func Test_NewRegistry_empty_is_valid(t *testing.T) {
 	reg := planner.NewRegistry()
+	require.Empty(t, reg.Schemes())
 	_, err := reg.Open(context.Background(), "openai://", nil)
 	require.ErrorContains(t, err, `unknown planner scheme "openai"`)
+}
+
+func Test_Registry_Schemes_returns_sorted_copy(t *testing.T) {
+	reg := planner.NewRegistry(
+		planner.Backend{Scheme: "Zulu", Opener: fakeOpener(nil, nil)},
+		planner.Backend{Scheme: "alpha", Opener: fakeOpener(nil, nil)},
+		planner.Backend{Scheme: "Middle", Opener: fakeOpener(nil, nil)},
+	)
+
+	schemes := reg.Schemes()
+	require.Equal(t, []string{"alpha", "middle", "zulu"}, schemes)
+
+	schemes[0] = "changed"
+	require.Equal(t, []string{"alpha", "middle", "zulu"}, reg.Schemes())
 }
 
 func Test_Registry_normalizes_scheme_to_lowercase(t *testing.T) {

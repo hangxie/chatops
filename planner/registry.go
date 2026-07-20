@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/hangxie/chatops/cred"
@@ -54,6 +55,17 @@ func NewRegistry(backends ...Backend) *Registry {
 		openers[scheme] = b.Opener
 	}
 	return &Registry{openers: openers}
+}
+
+// Schemes returns the registered planner URL schemes in lexical order.
+// The returned slice is a copy and may be modified by the caller.
+func (r *Registry) Schemes() []string {
+	schemes := make([]string, 0, len(r.openers))
+	for scheme := range r.openers {
+		schemes = append(schemes, scheme)
+	}
+	sort.Strings(schemes)
+	return schemes
 }
 
 // Open opens the planner backend identified by rawURL, such as
