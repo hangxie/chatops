@@ -41,6 +41,12 @@ var ErrClosed = errors.New("connection closed")
 // errors.Is.
 var ErrUnknownConversation = errors.New("unknown conversation")
 
+// Choice is one response that a backend may render as an interactive control.
+type Choice struct {
+	Label string
+	Value string
+}
+
 // Message is a single chat message received from or sent to a
 // backend.
 type Message struct {
@@ -64,6 +70,10 @@ type Message struct {
 	// backend, or the local receive time for backends that do not
 	// report one. It is ignored on send.
 	Timestamp time.Time
+
+	// Choices optionally provides interactive responses to Text. Backends that
+	// do not support interactive controls ignore it and send Text unchanged.
+	Choices []Choice
 }
 
 // Conn is an open connection to a chat backend.
@@ -76,8 +86,8 @@ type Conn interface {
 	// is called. After Close it reports an error wrapping ErrClosed.
 	Receive(ctx context.Context) (Message, error)
 
-	// Send posts msg.Text into the conversation identified by
-	// msg.ConversationID. It returns an error wrapping
+	// Send posts msg.Text and, when supported, msg.Choices into the conversation
+	// identified by msg.ConversationID. It returns an error wrapping
 	// ErrUnknownConversation when the ID does not map to a
 	// conversation the backend knows, and an error wrapping
 	// ErrClosed after Close.

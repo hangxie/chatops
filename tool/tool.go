@@ -36,6 +36,14 @@ import (
 // context, so check for it with errors.Is.
 var ErrUnknownAction = errors.New("unknown action")
 
+// Choice is one response a tool call offers to the human receiving its result.
+// Chat backends may render choices as interactive controls and otherwise retain
+// the message text as a plain-text fallback.
+type Choice struct {
+	Label string
+	Value string
+}
+
 // Call describes one operation to perform. It carries enough detail
 // for the tool to act but does not prescribe how the tool maps it to
 // actual API calls or commands.
@@ -52,6 +60,10 @@ type Call struct {
 	// Parameters carries optional key-value arguments for the action
 	// (e.g. "replicas": "3"). It may be nil.
 	Parameters map[string]string
+
+	// Choices optionally presents a bounded set of responses to the human. It is
+	// currently used by the reply tool for confirmation questions.
+	Choices []Choice
 }
 
 // Result is the outcome of a successfully invoked Call.

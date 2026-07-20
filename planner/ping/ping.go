@@ -61,6 +61,11 @@ const (
 	unknownText = "sorry, I don't understand"
 )
 
+var confirmationChoices = []tool.Choice{
+	{Label: "Yes", Value: "yes"},
+	{Label: "No", Value: "no"},
+}
+
 // pingWordRE matches "ping" as a standalone word — not adjoining a
 // letter, digit, or underscore — so "can you ping the box?" asks for
 // confirmation while "pinging", "shipping", or "pingé" do not. Go's
@@ -152,7 +157,7 @@ func (p *Planner) Plan(ctx context.Context, req planner.Request) (planner.Plan, 
 	if pingWordRE.MatchString(text) {
 		p.evictStale(now)
 		p.pending[key] = now
-		return replyPlan(conv, askText), nil
+		return confirmationPlan(conv), nil
 	}
 	return replyPlan(conv, unknownText), nil
 }
@@ -203,4 +208,10 @@ func replyPlan(conv, text string) planner.Plan {
 			Parameters: map[string]string{"text": text},
 		}},
 	}}
+}
+
+func confirmationPlan(conv string) planner.Plan {
+	plan := replyPlan(conv, askText)
+	plan.Steps[0].Call.Choices = append([]tool.Choice(nil), confirmationChoices...)
+	return plan
 }

@@ -6,11 +6,21 @@ import (
 	"strings"
 	"time"
 
+	slackapi "github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/hangxie/chatops/chat"
 )
+
+const choiceActionIDPrefix = "chatops.choice."
+
+type choiceInteraction struct {
+	channel          string
+	messageTimestamp string
+	displayText      string
+	message          chat.Message
+}
 
 func messageFromEvent(event socketmode.Event, botUserID string) (chat.Message, conversation, bool) {
 	if event.Type != socketmode.EventTypeEventsAPI {
@@ -52,6 +62,60 @@ func messageFromEvent(event socketmode.Event, botUserID string) (chat.Message, c
 		Text:           text,
 		Timestamp:      sentAt,
 	}, conversation{channel: channel, thread: thread}, true
+}
+
+func choiceFromEvent(event socketmode.Event) (choiceInteraction, bool) {
+	if event.Type != socketmode.EventTypeInteractive {
+		return choiceInteraction{}, false
+	}
+	callback, ok := event.Data.(slackapi.InteractionCallback)
+	if !ok || callback.Type != slackapi.InteractionTypeBlockActions ||
+		callback.User.ID == "" || len(callback.ActionCallback.BlockActions) != 1 {
+		return choiceInteraction{}, false
+	}
+	action := callback.ActionCallback.BlockActions[0]
+	if action == nil || !isChoiceActionID(action.ActionID) || action.Value == "" {
+		return choiceInteraction{}, false
+	}
+	channel := callback.Container.ChannelID
+	if channel == "" {
+		channel = callback.Channel.ID
+	}
+	messageTimestamp := callback.Container.MessageTs
+	if messageTimestamp == "" {
+		messageTimestamp = callback.Message.Timestamp
+	}
+	if channel == "" || messageTimestamp == "" {
+		return choiceInteraction{}, false
+	}
+	sentAt, err := parseTimestamp(action.ActionTs)
+	if err != nil {
+		return choiceInteraction{}, false
+	}
+	displayText := callback.Message.Text
+	if displayText == "" {
+		displayText = action.Value
+	}
+	return choiceInteraction{
+		channel:          channel,
+		messageTimestamp: messageTimestamp,
+		displayText:      displayText,
+		message: chat.Message{
+			Sender:    callback.User.ID,
+			Text:      action.Value,
+			Timestamp: sentAt,
+		},
+	}, true
+}
+
+func choiceActionID(index int) string {
+	return choiceActionIDPrefix + strconv.Itoa(index)
+}
+
+func isChoiceActionID(actionID string) bool {
+	suffix := strings.TrimPrefix(actionID, choiceActionIDPrefix)
+	index, err := strconv.ParseUint(suffix, 10, 64)
+	return err == nil && strconv.FormatUint(index, 10) == suffix
 }
 
 func stripRecipientMention(text, botUserID string) (string, bool) {

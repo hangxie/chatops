@@ -6,6 +6,7 @@
 //
 // Each root message starts a conversation. Replies in the same Slack thread
 // share its conversation ID, and outbound messages are posted to that thread.
+// Optional chat.Message choices are rendered as one-shot Block Kit buttons.
 package slack
 
 import (
@@ -39,7 +40,8 @@ type socketClient interface {
 
 type messageAPI interface {
 	BotUserID(ctx context.Context) (string, error)
-	PostMessage(ctx context.Context, channel, thread, text string) error
+	PostMessage(ctx context.Context, channel, thread string, msg chat.Message) (string, error)
+	ClearChoices(ctx context.Context, channel, timestamp, text string) error
 }
 
 type clientFactory func(botToken, appToken string) (socketClient, messageAPI)
@@ -65,13 +67,22 @@ func (a *webAPI) BotUserID(ctx context.Context) (string, error) {
 	return identity.UserID, nil
 }
 
-func (a *webAPI) PostMessage(ctx context.Context, channel, thread, text string) error {
-	_, _, err := a.client.PostMessageContext(
-		ctx,
-		channel,
-		slackapi.MsgOptionText(text, false),
-		slackapi.MsgOptionTS(thread),
-	)
+func (a *webAPI) PostMessage(ctx context.Context, channel, thread string, msg chat.Message) (string, error) {
+	options := []slackapi.MsgOption{slackapi.MsgOptionText(msg.Text, false), slackapi.MsgOptionTS(thread)}
+	if len(msg.Choices) > 0 {
+		blocks, err := messageBlocks(msg)
+		if err != nil {
+			return "", err
+		}
+		options = append(options, slackapi.MsgOptionBlocks(blocks...))
+	}
+	_, timestamp, err := a.client.PostMessageContext(ctx, channel, options...)
+	return timestamp, err
+}
+
+func (a *webAPI) ClearChoices(ctx context.Context, channel, timestamp, text string) error {
+	_, _, _, err := a.client.UpdateMessageContext(ctx, channel, timestamp,
+		slackapi.MsgOptionText(text, false), slackapi.MsgOptionBlocks())
 	return err
 }
 
@@ -90,7 +101,8 @@ type Conn struct {
 	closeOnce sync.Once
 	readErr   error
 
-	routes *routeCache
+	routes  *routeCache
+	prompts *routeCache
 
 	startup     chan error
 	startupOnce sync.Once
@@ -162,6 +174,7 @@ func newConn(socket socketClient, api messageAPI, botID string) *Conn {
 		msgs:      make(chan chat.Message, 50),
 		done:      make(chan struct{}),
 		routes:    newRouteCache(defaultConversationTTL, defaultMaxConversationRoutes),
+		prompts:   newRouteCache(defaultPromptTTL, defaultMaxPrompts),
 		startup:   make(chan error, 1),
 		runResult: make(chan error, 1),
 	}
@@ -198,11 +211,14 @@ func (c *Conn) readLoop() {
 					return
 				}
 			}
-			msg, route, ok := messageFromEvent(event, c.botID)
+			msg, ok, err := c.messageFromSocketEvent(event)
+			if err != nil {
+				c.readErr = err
+				return
+			}
 			if !ok {
 				continue
 			}
-			c.routes.Remember(msg.ConversationID, route)
 			select {
 			case c.msgs <- msg:
 			case <-c.ctx.Done():
@@ -211,6 +227,27 @@ func (c *Conn) readLoop() {
 			}
 		}
 	}
+}
+
+func (c *Conn) messageFromSocketEvent(event socketmode.Event) (chat.Message, bool, error) {
+	msg, route, ok := messageFromEvent(event, c.botID)
+	if ok {
+		c.routes.Remember(msg.ConversationID, route)
+		return msg, true, nil
+	}
+	choice, ok := choiceFromEvent(event)
+	if !ok {
+		return chat.Message{}, false, nil
+	}
+	route, ok = c.prompts.TakeChoice(promptID(choice.channel, choice.messageTimestamp), choice.message.Text)
+	if !ok || route.channel != choice.channel {
+		return chat.Message{}, false, nil
+	}
+	choice.message.ConversationID = conversationID(route.channel, route.thread)
+	if err := c.api.ClearChoices(c.ctx, choice.channel, choice.messageTimestamp, choice.displayText); err != nil {
+		return chat.Message{}, false, fmt.Errorf("slack: clear choices: %w", err)
+	}
+	return choice.message, true, nil
 }
 
 func (c *Conn) signalStartup(err error) {
@@ -236,7 +273,7 @@ func (c *Conn) Receive(ctx context.Context) (chat.Message, error) {
 	}
 }
 
-// Send posts msg.Text as a reply in the mapped Slack thread.
+// Send posts msg.Text and any interactive choices in the mapped Slack thread.
 func (c *Conn) Send(ctx context.Context, msg chat.Message) error {
 	if c.closed.Load() {
 		return fmt.Errorf("slack: %w", chat.ErrClosed)
@@ -248,10 +285,48 @@ func (c *Conn) Send(ctx context.Context, msg chat.Message) error {
 	if !ok {
 		return fmt.Errorf("slack: conversation %q: %w", msg.ConversationID, chat.ErrUnknownConversation)
 	}
-	if err := c.api.PostMessage(ctx, target.channel, target.thread, msg.Text); err != nil {
+	if len(msg.Choices) > 0 {
+		if _, err := messageBlocks(msg); err != nil {
+			return fmt.Errorf("slack: send: %w", err)
+		}
+	}
+	timestamp, err := c.api.PostMessage(ctx, target.channel, target.thread, msg)
+	if err != nil {
 		return fmt.Errorf("slack: send: %w", err)
 	}
+	if len(msg.Choices) > 0 {
+		if timestamp == "" {
+			return fmt.Errorf("slack: send choices: empty message timestamp")
+		}
+		values := make([]string, len(msg.Choices))
+		for i, choice := range msg.Choices {
+			values[i] = choice.Value
+		}
+		c.prompts.RememberChoices(promptID(target.channel, timestamp), target, values)
+	}
 	return nil
+}
+
+func promptID(channel, timestamp string) string { return channel + "\x00" + timestamp }
+
+func messageBlocks(msg chat.Message) ([]slackapi.Block, error) {
+	elements := make([]slackapi.BlockElement, 0, len(msg.Choices))
+	for i, choice := range msg.Choices {
+		if choice.Label == "" || choice.Value == "" {
+			return nil, fmt.Errorf("invalid choice %q", choice.Value)
+		}
+		button := slackapi.NewButtonBlockElement(choiceActionID(i), choice.Value,
+			slackapi.NewTextBlockObject(slackapi.PlainTextType, choice.Label, true, false))
+		switch choice.Value {
+		case "yes":
+			button.WithStyle(slackapi.StylePrimary)
+		}
+		elements = append(elements, button)
+	}
+	return []slackapi.Block{
+		slackapi.NewSectionBlock(slackapi.NewTextBlockObject(slackapi.MarkdownType, msg.Text, false, false), nil, nil),
+		slackapi.NewActionBlock("chatops.choices", elements...),
+	}, nil
 }
 
 // Close terminates the Socket Mode connection and unblocks Receive.

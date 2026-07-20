@@ -59,6 +59,25 @@ func Test_Invoke(t *testing.T) {
 			},
 			sent: []chat.Message{{ConversationID: "conv-1", Text: "on it"}},
 		},
+		"send-with-choices": {
+			call: tool.Call{
+				Action:     "send",
+				Target:     "conv-1",
+				Parameters: map[string]string{"text": "continue?"},
+				Choices: []tool.Choice{
+					{Label: "Yes", Value: "yes"},
+					{Label: "No", Value: "no"},
+				},
+			},
+			sent: []chat.Message{{
+				ConversationID: "conv-1",
+				Text:           "continue?",
+				Choices: []chat.Choice{
+					{Label: "Yes", Value: "yes"},
+					{Label: "No", Value: "no"},
+				},
+			}},
+		},
 		"unknown-action": {
 			call:  tool.Call{Action: "shout", Target: "conv-1", Parameters: map[string]string{"text": "hi"}},
 			errIs: tool.ErrUnknownAction,

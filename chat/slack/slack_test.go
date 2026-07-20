@@ -65,6 +65,7 @@ type postedMessage struct {
 	channel string
 	thread  string
 	text    string
+	choices []chat.Choice
 }
 
 type fakeAPI struct {
@@ -73,18 +74,27 @@ type fakeAPI struct {
 	err         error
 	botUserID   string
 	identityErr error
+	timestamp   string
+	cleared     []postedMessage
 }
 
-func newFakeAPI() *fakeAPI { return &fakeAPI{botUserID: "UCHATOPS"} }
+func newFakeAPI() *fakeAPI { return &fakeAPI{botUserID: "UCHATOPS", timestamp: "20.1"} }
 
 func (a *fakeAPI) BotUserID(context.Context) (string, error) {
 	return a.botUserID, a.identityErr
 }
 
-func (a *fakeAPI) PostMessage(_ context.Context, channel, thread, text string) error {
+func (a *fakeAPI) PostMessage(_ context.Context, channel, thread string, msg chat.Message) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.posted = append(a.posted, postedMessage{channel: channel, thread: thread, text: text})
+	a.posted = append(a.posted, postedMessage{channel: channel, thread: thread, text: msg.Text, choices: msg.Choices})
+	return a.timestamp, a.err
+}
+
+func (a *fakeAPI) ClearChoices(_ context.Context, channel, timestamp, text string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cleared = append(a.cleared, postedMessage{channel: channel, thread: timestamp, text: text})
 	return a.err
 }
 
@@ -235,6 +245,124 @@ func Test_Send_replies_to_mapped_thread(t *testing.T) {
 	require.Equal(t, []postedMessage{{channel: "C1", thread: "10.1", text: "on it"}}, api.messages())
 }
 
+func choiceEvent(envelopeID, actionID, value string) socketmode.Event {
+	return socketmode.Event{
+		Type: socketmode.EventTypeInteractive,
+		Data: slackapi.InteractionCallback{
+			Type:      slackapi.InteractionTypeBlockActions,
+			User:      slackapi.User{ID: "U2"},
+			Message:   slackapi.Message{Msg: slackapi.Msg{Text: "continue?"}},
+			Container: slackapi.Container{ChannelID: "C1", MessageTs: "20.1"},
+			ActionCallback: slackapi.ActionCallbacks{BlockActions: []*slackapi.BlockAction{{
+				ActionID: actionID, Value: value, ActionTs: "30.1",
+			}}},
+		},
+		Request: &socketmode.Request{EnvelopeID: envelopeID},
+	}
+}
+
+func Test_Send_and_receive_choices(t *testing.T) {
+	conn, socket, api := testConn(t)
+	socket.events <- messageEvent("E1", &slackevents.MessageEvent{
+		Channel: "C1", User: "U1", Text: "<@UCHATOPS> ping it", TimeStamp: "10.1",
+	})
+	inbound, err := conn.Receive(context.Background())
+	require.NoError(t, err)
+	choices := []chat.Choice{{Label: "Yes", Value: "yes"}, {Label: "No", Value: "no"}}
+	require.NoError(t, conn.Send(context.Background(), chat.Message{
+		ConversationID: inbound.ConversationID, Text: "continue?", Choices: choices,
+	}))
+	require.Equal(t, choices, api.messages()[0].choices)
+
+	socket.events <- choiceEvent("E2", choiceActionID(0), "yes")
+	answer, err := conn.Receive(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, inbound.ConversationID, answer.ConversationID)
+	require.Equal(t, "U2", answer.Sender)
+	require.Equal(t, "yes", answer.Text)
+	require.Equal(t, []postedMessage{{channel: "C1", thread: "20.1", text: "continue?"}}, api.cleared)
+	require.Eventually(t, func() bool { return len(socket.ackedIDs()) == 2 }, time.Second, time.Millisecond)
+}
+
+func Test_Receive_rejects_invalid_and_duplicate_choices(t *testing.T) {
+	conn, socket, _ := testConn(t)
+	socket.events <- messageEvent("E1", &slackevents.MessageEvent{
+		Channel: "C1", User: "U1", Text: "<@UCHATOPS> ping it", TimeStamp: "10.1",
+	})
+	inbound, err := conn.Receive(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, conn.Send(context.Background(), chat.Message{
+		ConversationID: inbound.ConversationID,
+		Text:           "continue?",
+		Choices:        []chat.Choice{{Label: "Yes", Value: "yes"}},
+	}))
+
+	socket.events <- choiceEvent("bad", "foreign", "yes")
+	socket.events <- choiceEvent("unregistered", choiceActionID(1), "no")
+	socket.events <- choiceEvent("valid", choiceActionID(0), "yes")
+	answer, err := conn.Receive(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "yes", answer.Text)
+
+	socket.events <- choiceEvent("duplicate", choiceActionID(0), "yes")
+	socket.events <- messageEvent("next", &slackevents.MessageEvent{
+		Channel: "C1", User: "U1", Text: "<@UCHATOPS> next", TimeStamp: "40.1",
+	})
+	next, err := conn.Receive(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "next", next.Text)
+	require.Eventually(t, func() bool { return len(socket.ackedIDs()) == 6 }, time.Second, time.Millisecond)
+}
+
+func Test_Send_rejects_invalid_choice(t *testing.T) {
+	conn, socket, api := testConn(t)
+	socket.events <- messageEvent("E1", &slackevents.MessageEvent{
+		Channel: "C1", User: "U1", Text: "<@UCHATOPS> hello", TimeStamp: "10.1",
+	})
+	msg, err := conn.Receive(context.Background())
+	require.NoError(t, err)
+	err = conn.Send(context.Background(), chat.Message{
+		ConversationID: msg.ConversationID, Text: "continue?",
+		Choices: []chat.Choice{{Label: "Deploy"}},
+	})
+	require.ErrorContains(t, err, "invalid choice")
+	require.Empty(t, api.messages())
+}
+
+func Test_Send_choices_requires_posted_timestamp(t *testing.T) {
+	conn, socket, api := testConn(t)
+	api.timestamp = ""
+	socket.events <- messageEvent("E1", &slackevents.MessageEvent{
+		Channel: "C1", User: "U1", Text: "<@UCHATOPS> hello", TimeStamp: "10.1",
+	})
+	msg, err := conn.Receive(context.Background())
+	require.NoError(t, err)
+	err = conn.Send(context.Background(), chat.Message{
+		ConversationID: msg.ConversationID, Text: "continue?",
+		Choices: []chat.Choice{{Label: "Yes", Value: "yes"}},
+	})
+	require.ErrorContains(t, err, "empty message timestamp")
+}
+
+func Test_Receive_reports_clear_choices_failure(t *testing.T) {
+	conn, socket, api := testConn(t)
+	socket.events <- messageEvent("E1", &slackevents.MessageEvent{
+		Channel: "C1", User: "U1", Text: "<@UCHATOPS> hello", TimeStamp: "10.1",
+	})
+	msg, err := conn.Receive(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, conn.Send(context.Background(), chat.Message{
+		ConversationID: msg.ConversationID, Text: "continue?",
+		Choices: []chat.Choice{{Label: "Yes", Value: "yes"}},
+	}))
+	testErr := errors.New("update failed")
+	api.err = testErr
+	socket.events <- choiceEvent("E2", choiceActionID(0), "yes")
+	_, err = conn.Receive(context.Background())
+	require.ErrorIs(t, err, testErr)
+	require.ErrorContains(t, err, "clear choices")
+}
+
 func Test_Send_errors(t *testing.T) {
 	conn, socket, api := testConn(t)
 	err := conn.Send(context.Background(), chat.Message{ConversationID: "slack:C1:unknown", Text: "no"})
@@ -347,8 +475,54 @@ func Test_slackAPI_PostMessage(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := slackapi.New("xoxb-test", slackapi.OptionAPIURL(server.URL+"/"))
-	require.NoError(t, (&webAPI{client: client}).PostMessage(context.Background(), "C1", "10.1", "on it"))
+	timestamp, err := (&webAPI{client: client}).PostMessage(context.Background(), "C1", "10.1", chat.Message{Text: "on it"})
+	require.NoError(t, err)
+	require.Equal(t, "10.2", timestamp)
 	require.Equal(t, postedMessage{channel: "C1", thread: "10.1", text: "on it"}, <-requests)
+}
+
+func Test_slackAPI_PostMessage_choices(t *testing.T) {
+	blocks := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		blocks <- r.Form.Get("blocks")
+		_, err := w.Write([]byte(`{"ok":true,"channel":"C1","ts":"20.1"}`))
+		require.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	client := slackapi.New("xoxb-test", slackapi.OptionAPIURL(server.URL+"/"))
+	_, err := (&webAPI{client: client}).PostMessage(context.Background(), "C1", "10.1", chat.Message{
+		Text:    "continue?",
+		Choices: []chat.Choice{{Label: "Yes", Value: "yes"}, {Label: "No", Value: "no"}},
+	})
+	require.NoError(t, err)
+	payload := <-blocks
+	require.Contains(t, payload, `"type":"actions"`)
+	require.Contains(t, payload, `"action_id":"chatops.choice.0"`)
+	require.Contains(t, payload, `"action_id":"chatops.choice.1"`)
+	require.Contains(t, payload, `"value":"no"`)
+}
+
+func Test_slackAPI_PostMessage_rejects_invalid_choice(t *testing.T) {
+	_, err := (&webAPI{client: slackapi.New("xoxb-test")}).PostMessage(
+		context.Background(), "C1", "10.1",
+		chat.Message{Text: "continue?", Choices: []chat.Choice{{Label: "Yes"}}},
+	)
+	require.ErrorContains(t, err, "invalid choice")
+}
+
+func Test_slackAPI_ClearChoices(t *testing.T) {
+	request := make(chan postedMessage, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		request <- postedMessage{channel: r.Form.Get("channel"), thread: r.Form.Get("ts"), text: r.Form.Get("blocks")}
+		_, err := w.Write([]byte(`{"ok":true,"channel":"C1","ts":"20.1"}`))
+		require.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	client := slackapi.New("xoxb-test", slackapi.OptionAPIURL(server.URL+"/"))
+	require.NoError(t, (&webAPI{client: client}).ClearChoices(context.Background(), "C1", "20.1", "yes"))
+	require.Equal(t, postedMessage{channel: "C1", thread: "20.1", text: "[]"}, <-request)
 }
 
 func Test_slackAPI_BotUserID(t *testing.T) {

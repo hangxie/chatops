@@ -23,12 +23,13 @@ func pingPlan() planner.Plan {
 }
 
 // replyPlan is the plan posting text back into conversation conv.
-func replyPlan(conv, text string) planner.Plan {
+func replyPlan(conv, text string, choices ...tool.Choice) planner.Plan {
 	return planner.Plan{Steps: []planner.Step{
 		{Tool: reply.URL, Call: tool.Call{
 			Action:     "send",
 			Target:     conv,
 			Parameters: map[string]string{"text": text},
+			Choices:    choices,
 		}},
 	}}
 }
@@ -38,6 +39,15 @@ const (
 	decline = "ok, I will not ping"
 	unknown = "sorry, I don't understand"
 )
+
+var confirmationChoices = []tool.Choice{
+	{Label: "Yes", Value: "yes"},
+	{Label: "No", Value: "no"},
+}
+
+func confirmationPlan(conv string) planner.Plan {
+	return replyPlan(conv, ask, confirmationChoices...)
+}
 
 func Test_Opener_via_registry(t *testing.T) {
 	reg := planner.NewRegistry(planner.Backend{Scheme: ping.Scheme, Opener: ping.Opener})
@@ -99,43 +109,43 @@ func Test_Plan(t *testing.T) {
 			{conv: "c1", text: "yes", want: replyPlan("c1", unknown)},
 		},
 		"ping-word-asks-then-yes": {
-			{conv: "c1", text: "can you ping the box?", want: replyPlan("c1", ask)},
+			{conv: "c1", text: "can you ping the box?", want: confirmationPlan("c1")},
 			{conv: "c1", text: "yes", want: pingPlan()},
 			// the confirmation is consumed; another yes means nothing
 			{conv: "c1", text: "yes", want: replyPlan("c1", unknown)},
 		},
 		"confirmation-shorthand-and-case": {
-			{conv: "c1", text: "please ping it", want: replyPlan("c1", ask)},
+			{conv: "c1", text: "please ping it", want: confirmationPlan("c1")},
 			{conv: "c1", text: " Y ", want: pingPlan()},
 		},
 		"declined-confirmation": {
-			{conv: "c1", text: "ping it please", want: replyPlan("c1", ask)},
+			{conv: "c1", text: "ping it please", want: confirmationPlan("c1")},
 			{conv: "c1", text: "no", want: replyPlan("c1", decline)},
 			{conv: "c1", text: "yes", want: replyPlan("c1", unknown)},
 		},
 		"declined-confirmation-shorthand": {
-			{conv: "c1", text: "ping it please", want: replyPlan("c1", ask)},
+			{conv: "c1", text: "ping it please", want: confirmationPlan("c1")},
 			{conv: "c1", text: "N", want: replyPlan("c1", decline)},
 		},
 		"other-topic-drops-pending-confirmation": {
-			{conv: "c1", text: "ping it please", want: replyPlan("c1", ask)},
+			{conv: "c1", text: "ping it please", want: confirmationPlan("c1")},
 			{conv: "c1", text: "how is the weather?", want: replyPlan("c1", unknown)},
 			{conv: "c1", text: "yes", want: replyPlan("c1", unknown)},
 		},
 		"exact-ping-drops-pending-confirmation": {
-			{conv: "c1", text: "ping it please", want: replyPlan("c1", ask)},
+			{conv: "c1", text: "ping it please", want: confirmationPlan("c1")},
 			{conv: "c1", text: "ping", want: pingPlan()},
 			{conv: "c1", text: "yes", want: replyPlan("c1", unknown)},
 		},
 		"repeated-ask-keeps-single-pending-confirmation": {
-			{conv: "c1", text: "ping it please", want: replyPlan("c1", ask)},
-			{conv: "c1", text: "I said ping it", want: replyPlan("c1", ask)},
+			{conv: "c1", text: "ping it please", want: confirmationPlan("c1")},
+			{conv: "c1", text: "I said ping it", want: confirmationPlan("c1")},
 			{conv: "c1", text: "yes", want: pingPlan()},
 		},
 		"ping-must-be-a-standalone-word": {
 			{conv: "c1", text: "pinging the server", want: replyPlan("c1", unknown)},
 			{conv: "c1", text: "check shipping status", want: replyPlan("c1", unknown)},
-			{conv: "c1", text: "ping? sure", want: replyPlan("c1", ask)},
+			{conv: "c1", text: "ping? sure", want: confirmationPlan("c1")},
 		},
 		// Go's \b is ASCII-only; the word boundary must be
 		// Unicode-aware so "ping" glued to accented letters, digits,
@@ -145,10 +155,10 @@ func Test_Plan(t *testing.T) {
 			{conv: "c1", text: "run éping now", want: replyPlan("c1", unknown)},
 			{conv: "c1", text: "ping2 the box", want: replyPlan("c1", unknown)},
 			{conv: "c1", text: "run ping_all", want: replyPlan("c1", unknown)},
-			{conv: "c1", text: "é ping é", want: replyPlan("c1", ask)},
+			{conv: "c1", text: "é ping é", want: confirmationPlan("c1")},
 		},
 		"conversations-are-isolated": {
-			{conv: "c1", text: "ping the box", want: replyPlan("c1", ask)},
+			{conv: "c1", text: "ping the box", want: confirmationPlan("c1")},
 			{conv: "c2", text: "yes", want: replyPlan("c2", unknown)},
 			{conv: "c1", text: "yes", want: pingPlan()},
 		},
@@ -156,7 +166,7 @@ func Test_Plan(t *testing.T) {
 		// conversation ID, so the same conversation ID on another
 		// connection must not answer the confirmation.
 		"connections-are-isolated": {
-			{connID: "connA", conv: "telnet", text: "ping the box", want: replyPlan("telnet", ask)},
+			{connID: "connA", conv: "telnet", text: "ping the box", want: confirmationPlan("telnet")},
 			{connID: "connB", conv: "telnet", text: "yes", want: replyPlan("telnet", unknown)},
 			{connID: "connA", conv: "telnet", text: "yes", want: pingPlan()},
 		},
@@ -214,7 +224,7 @@ func Test_Plan_pending_confirmation_expires(t *testing.T) {
 
 			plan, err := p.Plan(context.Background(), planner.Request{Text: "ping the box", ConversationID: "c1"})
 			require.NoError(t, err)
-			require.Equal(t, replyPlan("c1", ask), plan)
+			require.Equal(t, confirmationPlan("c1"), plan)
 
 			clock.now = clock.now.Add(tc.age)
 			plan, err = p.Plan(context.Background(), planner.Request{Text: "yes", ConversationID: "c1"})
@@ -235,14 +245,14 @@ func Test_Plan_expired_confirmations_swept_on_ask(t *testing.T) {
 
 	plan, err := p.Plan(context.Background(), planner.Request{Text: "ping the box", ConversationID: "c1"})
 	require.NoError(t, err)
-	require.Equal(t, replyPlan("c1", ask), plan)
+	require.Equal(t, confirmationPlan("c1"), plan)
 
 	// A fresh ask after c1's confirmation expired sweeps it out; the
 	// new confirmation works and the expired one does not.
 	clock.now = clock.now.Add(ping.ConfirmTTLForTest + time.Second)
 	plan, err = p.Plan(context.Background(), planner.Request{Text: "ping the box", ConversationID: "c2"})
 	require.NoError(t, err)
-	require.Equal(t, replyPlan("c2", ask), plan)
+	require.Equal(t, confirmationPlan("c2"), plan)
 
 	plan, err = p.Plan(context.Background(), planner.Request{Text: "yes", ConversationID: "c2"})
 	require.NoError(t, err)
@@ -267,7 +277,7 @@ func Test_Plan_pending_confirmations_are_capped(t *testing.T) {
 		conv := fmt.Sprintf("c%d", i)
 		plan, err := p.Plan(context.Background(), planner.Request{Text: "ping the box", ConversationID: conv})
 		require.NoError(t, err)
-		require.Equal(t, replyPlan(conv, ask), plan)
+		require.Equal(t, confirmationPlan(conv), plan)
 		clock.now = clock.now.Add(time.Millisecond)
 	}
 
@@ -308,7 +318,7 @@ func Test_Plan_concurrent_conversations(t *testing.T) {
 			for range 50 {
 				plan, err := p.Plan(context.Background(), planner.Request{Text: "ping the box", ConversationID: conv})
 				require.NoError(t, err)
-				require.Equal(t, replyPlan(conv, ask), plan)
+				require.Equal(t, confirmationPlan(conv), plan)
 				plan, err = p.Plan(context.Background(), planner.Request{Text: "yes", ConversationID: conv})
 				require.NoError(t, err)
 				require.Equal(t, pingPlan(), plan)
