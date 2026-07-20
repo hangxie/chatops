@@ -9,6 +9,8 @@ import (
 const (
 	defaultConversationTTL       = 24 * time.Hour
 	defaultMaxConversationRoutes = 4096
+	defaultPromptTTL             = 10 * time.Minute
+	defaultMaxPrompts            = 4096
 )
 
 type conversation struct {
@@ -21,6 +23,7 @@ type route struct {
 	conversation conversation
 	expiresAt    time.Time
 	heapIndex    int
+	allowed      map[string]struct{}
 }
 
 type routeExpiryHeap []*route
@@ -71,21 +74,50 @@ func newRouteCache(ttl time.Duration, maxRoutes int) *routeCache {
 }
 
 func (c *routeCache) Remember(id string, conversation conversation) {
+	c.remember(id, conversation, nil)
+}
+
+func (c *routeCache) RememberChoices(id string, conversation conversation, values []string) {
+	allowed := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		allowed[value] = struct{}{}
+	}
+	c.remember(id, conversation, allowed)
+}
+
+func (c *routeCache) remember(id string, conversation conversation, allowed map[string]struct{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
 	c.evictExpired(now)
 	if existing, ok := c.routes[id]; ok {
 		existing.conversation = conversation
+		existing.allowed = allowed
 		c.refresh(existing, now)
 		return
 	}
 	if len(c.routes) >= c.maxRoutes {
 		c.evictEarliestExpiry()
 	}
-	route := &route{id: id, conversation: conversation, expiresAt: now.Add(c.ttl)}
+	route := &route{id: id, conversation: conversation, expiresAt: now.Add(c.ttl), allowed: allowed}
 	c.routes[id] = route
 	heap.Push(&c.expiry, route)
+}
+
+func (c *routeCache) TakeChoice(id, value string) (conversation, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.evictExpired(c.now())
+	route, ok := c.routes[id]
+	if !ok {
+		return conversation{}, false
+	}
+	if _, ok := route.allowed[value]; !ok {
+		return conversation{}, false
+	}
+	heap.Remove(&c.expiry, route.heapIndex)
+	delete(c.routes, id)
+	return route.conversation, true
 }
 
 func (c *routeCache) Lookup(id string) (conversation, bool) {

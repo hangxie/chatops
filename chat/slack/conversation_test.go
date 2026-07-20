@@ -64,3 +64,44 @@ func Test_routeCache_enforces_capacity(t *testing.T) {
 	_, ok = cache.Lookup("third")
 	require.True(t, ok)
 }
+
+func Test_routeCache_take_choice_consumes_route(t *testing.T) {
+	now := time.Unix(1000, 0)
+	cache := newRouteCache(time.Hour, 2)
+	cache.now = func() time.Time { return now }
+	want := conversation{channel: "C1", thread: "1.1"}
+	cache.RememberChoices("prompt", want, []string{"yes"})
+
+	got, ok := cache.TakeChoice("prompt", "yes")
+	require.True(t, ok)
+	require.Equal(t, want, got)
+	_, ok = cache.TakeChoice("prompt", "yes")
+	require.False(t, ok)
+	require.Empty(t, cache.routes)
+	require.Empty(t, cache.expiry)
+}
+
+func Test_routeCache_take_choice_rejects_expired_route(t *testing.T) {
+	now := time.Unix(1000, 0)
+	cache := newRouteCache(time.Hour, 2)
+	cache.now = func() time.Time { return now }
+	cache.RememberChoices("prompt", conversation{channel: "C1", thread: "1.1"}, []string{"yes"})
+	now = now.Add(time.Hour)
+
+	_, ok := cache.TakeChoice("prompt", "yes")
+	require.False(t, ok)
+}
+
+func Test_routeCache_take_choice_requires_registered_value(t *testing.T) {
+	cache := newRouteCache(time.Hour, 2)
+	want := conversation{channel: "C1", thread: "1.1"}
+	cache.RememberChoices("prompt", want, []string{"yes", "no"})
+
+	_, ok := cache.TakeChoice("prompt", "cancel")
+	require.False(t, ok)
+	got, ok := cache.TakeChoice("prompt", "no")
+	require.True(t, ok)
+	require.Equal(t, want, got)
+	_, ok = cache.TakeChoice("prompt", "yes")
+	require.False(t, ok)
+}

@@ -208,7 +208,11 @@ func Test_Send(t *testing.T) {
 	}()
 	remote := s.accept(t)
 
-	err = conn.Send(testCtx(t), chat.Message{ConversationID: telnet.ConversationID, Text: "on it"})
+	err = conn.Send(testCtx(t), chat.Message{
+		ConversationID: telnet.ConversationID,
+		Text:           "on it",
+		Choices:        []chat.Choice{{Label: "Yes", Value: "yes"}},
+	})
 	require.NoError(t, err)
 
 	require.NoError(t, remote.SetReadDeadline(time.Now().Add(5*time.Second)))

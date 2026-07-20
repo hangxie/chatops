@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	slackapi "github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 	"github.com/stretchr/testify/require"
@@ -157,4 +158,110 @@ func Test_messageFromEvent_rejects_malformed_timestamp(t *testing.T) {
 	})
 	_, _, ok := messageFromEvent(event, "UCHATOPS")
 	require.False(t, ok)
+}
+
+func Test_choiceFromEvent(t *testing.T) {
+	event := socketmode.Event{Type: socketmode.EventTypeInteractive, Data: slackapi.InteractionCallback{
+		Type:      slackapi.InteractionTypeBlockActions,
+		Channel:   slackapi.Channel{GroupConversation: slackapi.GroupConversation{Conversation: slackapi.Conversation{ID: "C1"}}},
+		User:      slackapi.User{ID: "U1"},
+		Message:   slackapi.Message{Msg: slackapi.Msg{Timestamp: "20.1"}},
+		Container: slackapi.Container{MessageTs: "20.1", ChannelID: "C1"},
+		ActionCallback: slackapi.ActionCallbacks{BlockActions: []*slackapi.BlockAction{{
+			ActionID: choiceActionID(0), Value: "yes", ActionTs: "1720000001.000001",
+		}}},
+	}}
+
+	choice, ok := choiceFromEvent(event)
+	require.True(t, ok)
+	require.Equal(t, "C1", choice.channel)
+	require.Equal(t, "20.1", choice.messageTimestamp)
+	require.Equal(t, "U1", choice.message.Sender)
+	require.Equal(t, "yes", choice.message.Text)
+	require.Equal(t, time.Unix(1720000001, 1000), choice.message.Timestamp)
+}
+
+func Test_choiceFromEvent_uses_message_address_fallback(t *testing.T) {
+	event := socketmode.Event{Type: socketmode.EventTypeInteractive, Data: slackapi.InteractionCallback{
+		Type:    slackapi.InteractionTypeBlockActions,
+		Channel: slackapi.Channel{GroupConversation: slackapi.GroupConversation{Conversation: slackapi.Conversation{ID: "C1"}}},
+		User:    slackapi.User{ID: "U1"},
+		Message: slackapi.Message{Msg: slackapi.Msg{Timestamp: "20.1", Text: "continue?"}},
+		ActionCallback: slackapi.ActionCallbacks{BlockActions: []*slackapi.BlockAction{{
+			ActionID: choiceActionID(0), Value: "yes", ActionTs: "30.1",
+		}}},
+	}}
+
+	choice, ok := choiceFromEvent(event)
+	require.True(t, ok)
+	require.Equal(t, "C1", choice.channel)
+	require.Equal(t, "20.1", choice.messageTimestamp)
+	require.Equal(t, "continue?", choice.displayText)
+}
+
+func Test_choiceFromEvent_rejects_missing_address_and_bad_timestamp(t *testing.T) {
+	callback := slackapi.InteractionCallback{
+		Type: slackapi.InteractionTypeBlockActions,
+		User: slackapi.User{ID: "U1"},
+		ActionCallback: slackapi.ActionCallbacks{BlockActions: []*slackapi.BlockAction{{
+			ActionID: choiceActionID(0), Value: "yes", ActionTs: "30.1",
+		}}},
+	}
+	_, ok := choiceFromEvent(socketmode.Event{Type: socketmode.EventTypeInteractive, Data: callback})
+	require.False(t, ok)
+
+	callback.Container = slackapi.Container{ChannelID: "C1", MessageTs: "20.1"}
+	callback.ActionCallback.BlockActions[0].ActionTs = "bad"
+	_, ok = choiceFromEvent(socketmode.Event{Type: socketmode.EventTypeInteractive, Data: callback})
+	require.False(t, ok)
+}
+
+func Test_choiceFromEvent_rejects_invalid_payload(t *testing.T) {
+	valid := slackapi.InteractionCallback{
+		Type:    slackapi.InteractionTypeBlockActions,
+		Channel: slackapi.Channel{GroupConversation: slackapi.GroupConversation{Conversation: slackapi.Conversation{ID: "C1"}}},
+		User:    slackapi.User{ID: "U1"},
+		Message: slackapi.Message{Msg: slackapi.Msg{Timestamp: "20.1"}},
+		ActionCallback: slackapi.ActionCallbacks{BlockActions: []*slackapi.BlockAction{{
+			ActionID: choiceActionID(0), Value: "yes", ActionTs: "1.1",
+		}}},
+	}
+	testCases := map[string]socketmode.Event{
+		"wrong-event": {Type: socketmode.EventTypeConnected},
+		"wrong-data":  {Type: socketmode.EventTypeInteractive, Data: "bad"},
+		"wrong-type": {Type: socketmode.EventTypeInteractive, Data: func() slackapi.InteractionCallback {
+			v := valid
+			v.Type = slackapi.InteractionTypeViewSubmission
+			return v
+		}()},
+		"wrong-action": {Type: socketmode.EventTypeInteractive, Data: func() slackapi.InteractionCallback {
+			v := valid
+			v.ActionCallback.BlockActions[0].ActionID = "foreign"
+			return v
+		}()},
+		"missing-user": {Type: socketmode.EventTypeInteractive, Data: func() slackapi.InteractionCallback { v := valid; v.User.ID = ""; return v }()},
+	}
+	for name, event := range testCases {
+		t.Run(name, func(t *testing.T) {
+			_, ok := choiceFromEvent(event)
+			require.False(t, ok)
+		})
+	}
+}
+
+func Test_choiceActionID(t *testing.T) {
+	testCases := map[string]bool{
+		choiceActionID(0):   true,
+		choiceActionID(12):  true,
+		"chatops.choice":    false,
+		"chatops.choice.":   false,
+		"chatops.choice.-1": false,
+		"chatops.choice.01": false,
+		"foreign.0":         false,
+	}
+	for actionID, want := range testCases {
+		t.Run(actionID, func(t *testing.T) {
+			require.Equal(t, want, isChoiceActionID(actionID))
+		})
+	}
 }

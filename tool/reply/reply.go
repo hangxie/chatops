@@ -16,8 +16,9 @@
 //
 // The only supported action is "send": Call.Target is the
 // conversation ID to post into (chat.Message.ConversationID of the
-// message being answered) and Call.Parameters["text"] is the text to
-// post. Sending is the whole outcome, so Result.Text stays empty and
+// message being answered), Call.Parameters["text"] is the text to
+// post, and Call.Choices carries optional interactive responses.
+// Sending is the whole outcome, so Result.Text stays empty and
 // callers that post non-empty Result.Text back to chat do not
 // double-post.
 package reply
@@ -73,7 +74,14 @@ func (t *Tool) Invoke(ctx context.Context, call tool.Call) (tool.Result, error) 
 	if text == "" {
 		return tool.Result{}, errors.New(`reply: send with no "text" parameter`)
 	}
-	msg := chat.Message{ConversationID: call.Target, Text: text}
+	var choices []chat.Choice
+	if call.Choices != nil {
+		choices = make([]chat.Choice, len(call.Choices))
+		for i, choice := range call.Choices {
+			choices[i] = chat.Choice{Label: choice.Label, Value: choice.Value}
+		}
+	}
+	msg := chat.Message{ConversationID: call.Target, Text: text, Choices: choices}
 	if err := t.conn.Send(ctx, msg); err != nil {
 		return tool.Result{}, fmt.Errorf("reply: %w", err)
 	}
