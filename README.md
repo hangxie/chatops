@@ -130,18 +130,18 @@ Subscribe to the `app_mention` bot event and add `app_mentions:read`. To receive
 
 #### Creating the app
 
-The app configuration above is captured in [`scripts/slack-app-manifest.json`](scripts/slack-app-manifest.json), an [app manifest](https://api.slack.com/reference/manifests) with Socket Mode, Interactivity, the `app_mention` and `message.im` events, and the `app_mentions:read`, `chat:write`, and `im:history` bot scopes. Use it one of two ways.
+The app configuration above is captured in [`scripts/slack-app-manifest.json`](scripts/slack-app-manifest.json), an [app manifest](https://api.slack.com/reference/manifests) with Socket Mode, Interactivity, the `app_mention` and `message.im` events, and the `app_mentions:read`, `chat:write`, and `im:history` bot scopes. Creating the app from this manifest is faster and less error-prone than setting each option by hand.
 
-Paste the manifest by hand: open [Your Apps](https://api.slack.com/apps), choose "Create New App" then "From an app manifest", pick the workspace, and paste the file contents.
+The recommended path needs no tooling or tokens, just a browser signed in to Slack with permission to add apps to the target workspace: open [Your Apps](https://api.slack.com/apps) — Slack's developer console, not the chat client — choose "Create New App" then "From an app manifest", pick the workspace, and paste the file contents. Workspaces that restrict app installation may require an admin to perform or approve this.
 
-Or create the app from the command line with [`scripts/create-slack-app.sh`](scripts/create-slack-app.sh), which posts the manifest to Slack's App Manifest API. It needs `curl`, `jq`, and a configuration access token (valid for 12 hours) generated at [App Config Tokens](https://api.slack.com/reference/manifests#config-tokens):
+For repeat or automated provisioning, [`scripts/create-slack-app.sh`](scripts/create-slack-app.sh) posts the same manifest to Slack's App Manifest API instead. It needs `curl`, `jq`, and a configuration access token (valid for 12 hours) generated at [App Config Tokens](https://api.slack.com/reference/manifests#config-tokens); because that token is itself created in the browser, this path is only worthwhile when you provision apps more than once and can reuse the token's refresh token:
 
 ```bash
 export SLACK_CONFIG_ACCESS_TOKEN=xoxe.xoxp-...
 ./scripts/create-slack-app.sh
 ```
 
-Either path finishes with the same two manual steps, because Slack does not expose these credentials through the manifest API: install the app to your workspace to obtain the bot token (`SLACK_BOT_TOKEN`, `xoxb-…`), and generate an app-level token with the `connections:write` scope for the Socket Mode token (`SLACK_APP_TOKEN`, `xapp-…`). The script prints the exact links for both. To serve channels beyond direct messages, add the matching `message.*` events and history scopes to the manifest before creating the app, and invite the bot to each channel.
+Both paths finish with the same two manual steps, because Slack does not expose these credentials through the manifest API: install the app to your workspace to obtain the bot token (`SLACK_BOT_TOKEN`, `xoxb-…`), and generate an app-level token with the `connections:write` scope for the Socket Mode token (`SLACK_APP_TOKEN`, `xapp-…`). The script prints the exact links for both. To serve channels beyond direct messages, add the matching `message.*` events and history scopes to the manifest before creating the app, and invite the bot to each channel.
 
 Set both tokens and start the server with the configuration-free `slack://` URL:
 
