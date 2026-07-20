@@ -21,6 +21,8 @@ func Test_cli_parse(t *testing.T) {
 	}{
 		"version":           {args: []string{"version"}, command: "version"},
 		"version-json":      {args: []string{"version", "--json"}, command: "version"},
+		"chats":             {args: []string{"chats"}, command: "chats"},
+		"chats-json":        {args: []string{"chats", "--json"}, command: "chats"},
 		"server":            {args: []string{"server", "--chat", "telnet://localhost:6023", "--planner", "ping://"}, command: "server"},
 		"server-no-chat":    {args: []string{"server", "--planner", "ping://"}, errMsg: "--chat"},
 		"server-no-planner": {args: []string{"server", "--chat", "telnet://localhost:6023"}, errMsg: "--planner"},

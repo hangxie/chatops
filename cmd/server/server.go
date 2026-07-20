@@ -7,17 +7,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/hangxie/chatops/chat"
-	chatslack "github.com/hangxie/chatops/chat/slack"
-	"github.com/hangxie/chatops/chat/telnet"
 	"github.com/hangxie/chatops/cred"
-	"github.com/hangxie/chatops/cred/jsonfile"
 	"github.com/hangxie/chatops/engine"
-	"github.com/hangxie/chatops/planner"
-	plannerping "github.com/hangxie/chatops/planner/ping"
-	"github.com/hangxie/chatops/tool"
-	toolping "github.com/hangxie/chatops/tool/ping"
-	toolstatus "github.com/hangxie/chatops/tool/status"
+	"github.com/hangxie/chatops/internal/registry"
 )
 
 // Cmd contains all configuration for one engine server.
@@ -37,7 +29,7 @@ func (c *Cmd) Run(ctx context.Context) error {
 func (c *Cmd) run(ctx context.Context) (err error) {
 	var credentials cred.Store
 	if c.CredentialsURL != "" {
-		credentials, err = credentialRegistry().Open(ctx, c.CredentialsURL)
+		credentials, err = registry.Credential().Open(ctx, c.CredentialsURL)
 		if err != nil {
 			return fmt.Errorf("server: open credentials: %w", err)
 		}
@@ -46,11 +38,11 @@ func (c *Cmd) run(ctx context.Context) (err error) {
 		}()
 	}
 
-	conn, err := chatRegistry().Open(ctx, c.ChatURL)
+	conn, err := registry.Chat().Open(ctx, c.ChatURL)
 	if err != nil {
 		return fmt.Errorf("server: open chat: %w", err)
 	}
-	p, err := plannerRegistry().Open(ctx, c.PlannerURL, credentials)
+	p, err := registry.Planner().Open(ctx, c.PlannerURL, credentials)
 	if err != nil {
 		return errors.Join(fmt.Errorf("server: open planner: %w", err), closeNamed("chat", conn))
 	}
@@ -58,7 +50,7 @@ func (c *Cmd) run(ctx context.Context) (err error) {
 		ConnectionID:   c.ConnectionID,
 		Chat:           conn,
 		Planner:        p,
-		Tools:          toolRegistry(),
+		Tools:          registry.Tool(),
 		Credentials:    credentials,
 		MaxConcurrency: c.MaxConcurrency,
 	})
@@ -73,28 +65,6 @@ func (c *Cmd) run(ctx context.Context) (err error) {
 		return fmt.Errorf("server: run engine: %w", err)
 	}
 	return nil
-}
-
-func credentialRegistry() *cred.Registry {
-	return cred.NewRegistry(cred.Backend{Scheme: jsonfile.Scheme, Opener: jsonfile.Opener})
-}
-
-func chatRegistry() *chat.Registry {
-	return chat.NewRegistry(
-		chat.Backend{Scheme: chatslack.Scheme, Opener: chatslack.Opener},
-		chat.Backend{Scheme: telnet.Scheme, Opener: telnet.Opener},
-	)
-}
-
-func plannerRegistry() *planner.Registry {
-	return planner.NewRegistry(planner.Backend{Scheme: plannerping.Scheme, Opener: plannerping.Opener})
-}
-
-func toolRegistry() *tool.Registry {
-	return tool.NewRegistry(
-		tool.Backend{Scheme: toolping.Scheme, Opener: toolping.Opener},
-		tool.Backend{Scheme: toolstatus.Scheme, Opener: toolstatus.Opener},
-	)
 }
 
 func closeNamed(name string, closer io.Closer) error {

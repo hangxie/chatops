@@ -14,9 +14,6 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/stretchr/testify/require"
-
-	chatslack "github.com/hangxie/chatops/chat/slack"
-	"github.com/hangxie/chatops/tool"
 )
 
 func Test_Cmd_parse(t *testing.T) {
@@ -143,17 +140,6 @@ func Test_run_opens_and_closes_credentials(t *testing.T) {
 	require.ErrorContains(t, command.run(context.Background()), "open chat")
 }
 
-func Test_toolRegistry_opens_status_tool(t *testing.T) {
-	tl, err := toolRegistry().Open(context.Background(), "status://", nil)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, tl.Close()) }()
-
-	result, err := tl.Invoke(context.Background(), tool.Call{Action: "list"})
-	require.NoError(t, err)
-	require.Contains(t, result.Text, "github")
-	require.Contains(t, result.Text, "docker-hub")
-}
-
 func Test_run_reports_open_errors(t *testing.T) {
 	testCases := map[string]struct {
 		command Cmd
@@ -175,13 +161,6 @@ func Test_run_reports_open_errors(t *testing.T) {
 			require.ErrorContains(t, err, tc.errMsg)
 		})
 	}
-}
-
-func Test_chatRegistry_supports_slack(t *testing.T) {
-	t.Setenv(chatslack.BotTokenEnv, "")
-	t.Setenv(chatslack.AppTokenEnv, "")
-	_, err := chatRegistry().Open(context.Background(), "slack://")
-	require.ErrorContains(t, err, chatslack.BotTokenEnv)
 }
 
 type closer struct{ err error }

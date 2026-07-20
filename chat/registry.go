@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -51,6 +52,17 @@ func NewRegistry(backends ...Backend) *Registry {
 		openers[scheme] = b.Opener
 	}
 	return &Registry{openers: openers}
+}
+
+// Schemes returns the registered backend schemes in sorted order. The
+// returned slice is a fresh copy, so callers may modify it freely.
+func (r *Registry) Schemes() []string {
+	schemes := make([]string, 0, len(r.openers))
+	for scheme := range r.openers {
+		schemes = append(schemes, scheme)
+	}
+	sort.Strings(schemes)
+	return schemes
 }
 
 // Open connects to the chat backend identified by rawURL, such as
