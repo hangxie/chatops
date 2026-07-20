@@ -46,6 +46,7 @@ Usage: chatops <command>
 
 Commands:
   chats      List available chat backends.
+  planners   List available planner backends.
   server     Run the ChatOps server.
   version    Show build version.
 ```
@@ -199,6 +200,18 @@ telnet
 
 $ chatops chats --json
 ["slack","telnet"]
+```
+
+### Planners
+
+List the planner backends the binary knows about, one scheme per line. These are the schemes accepted by `server --planner`. Add `--json` (`-j`) for a machine-readable array:
+
+```console
+$ chatops planners
+ping
+
+$ chatops planners --json
+["ping"]
 ```
 
 ### Version
