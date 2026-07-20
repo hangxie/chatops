@@ -203,7 +203,7 @@ The connection carries a single conversation whose ID is the `telnet.Conversatio
    - Compute `Message.ConversationID` on receive from the backend's native addressing (e.g. Slack channel + thread), and translate it back on send. Wrap `chat.ErrUnknownConversation` (with `%w`) when a sent ID does not map to a conversation.
    - After `Close`, `Receive` and `Send` report an error wrapping `chat.ErrClosed`; `Close` must also unblock a pending `Receive`.
 3. Provide an `Open` function taking `context.Context` plus backend-specific location parameters and returning `(*Conn, error)`. Take credentials from the backend's standard environment variables; never accept them as parameters or URL elements.
-4. Export the scheme and an opener so callers can wire the backend into a `chat.Registry` (backends never self-register via `init()`), and add it to the CLI's registry in `cmd/server`:
+4. Export the scheme and an opener so callers can wire the backend into a `chat.Registry` (backends never self-register via `init()`), and add it to the CLI's shared registry wiring in `internal/registry` (used by both `cmd/server` and `cmd/chats`):
 
    ```go
    // Scheme is the URL scheme this backend serves in a chat.Registry.

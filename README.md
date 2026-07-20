@@ -45,6 +45,7 @@ $ chatops --help
 Usage: chatops <command>
 
 Commands:
+  chats      List available chat backends.
   server     Run the ChatOps server.
   version    Show build version.
 ```
@@ -186,6 +187,19 @@ The `json-file` credential store expects a single JSON object whose values are s
 ```
 
 Credential values do not belong in backend, planner, or tool URLs. Backends that require authentication resolve it from the credential store or their standard environment variables.
+
+### Chats
+
+List the chat backends the binary knows about, one scheme per line. These are the schemes accepted by `server --chat`. Add `--json` (`-j`) for a machine-readable array:
+
+```console
+$ chatops chats
+slack
+telnet
+
+$ chatops chats --json
+["slack","telnet"]
+```
 
 ### Version
 

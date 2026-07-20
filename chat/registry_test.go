@@ -41,6 +41,44 @@ func Test_NewRegistry_invalid_arguments(t *testing.T) {
 	}
 }
 
+func Test_Registry_Schemes(t *testing.T) {
+	opener := fakeOpener(&fakeConn{}, nil)
+
+	testCases := map[string]struct {
+		backends []chat.Backend
+		want     []string
+	}{
+		"empty":  {backends: nil, want: []string{}},
+		"single": {backends: []chat.Backend{{Scheme: "telnet", Opener: opener}}, want: []string{"telnet"}},
+		"sorted": {
+			backends: []chat.Backend{
+				{Scheme: "telnet", Opener: opener},
+				{Scheme: "slack", Opener: opener},
+			},
+			want: []string{"slack", "telnet"},
+		},
+		"lowercased": {
+			backends: []chat.Backend{{Scheme: "MiXeD", Opener: opener}},
+			want:     []string{"mixed"},
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			reg := chat.NewRegistry(tc.backends...)
+			require.Equal(t, tc.want, reg.Schemes())
+		})
+	}
+}
+
+func Test_Registry_Schemes_returns_independent_copy(t *testing.T) {
+	reg := chat.NewRegistry(chat.Backend{Scheme: "telnet", Opener: fakeOpener(&fakeConn{}, nil)})
+
+	got := reg.Schemes()
+	got[0] = "mutated"
+	require.Equal(t, []string{"telnet"}, reg.Schemes())
+}
+
 func Test_NewRegistry_empty_is_valid(t *testing.T) {
 	reg := chat.NewRegistry()
 	_, err := reg.Open(context.Background(), "telnet://somewhere")
