@@ -244,10 +244,11 @@ kubernetes://prod.example.com:6443?cred-prefix=k8s-prod
 
 Available tools:
 
-| Scheme  | Sub-package  | Tool URL                        |
-| ------- | ------------ | ------------------------------- |
-| `ping`  | `tool/ping`  | `ping://`                       |
-| `reply` | `tool/reply` | `reply://` (no registry opener) |
+| Scheme  | Sub-package   | Tool URL                        |
+| ------- | ------------- | ------------------------------- |
+| `ping`  | `tool/ping`   | `ping://`                       |
+| `status` | `tool/status` | `status://`                     |
+| `reply` | `tool/reply`  | `reply://` (no registry opener) |
 
 ### Usage
 
@@ -283,6 +284,18 @@ Tools also expose a typed `Open` function for direct use, e.g. `ping.Open(ctx)`.
 ### ping tool
 
 A dummy tool that answers `pong` to the `ping` action, useful as a liveness check and as the reference implementation of the interface. It has no endpoint and takes no credentials, so the URL is a bare `ping://` (anything beyond the scheme — host, path, query, userinfo, or non-empty fragment — is rejected; a bare trailing `#` parses identically to the bare URL and is accepted). The only supported action is `ping`; `Target` and `Parameters` are ignored, and any other action reports an error wrapping `tool.ErrUnknownAction`.
+
+### status tool
+
+The service-status tool checks public third-party status APIs and normalizes their different schemas. It has no credentials or caller-configurable endpoint, so its only URL is the bare `status://`; keeping upstream URLs in the compiled provider catalog prevents planner output from turning the tool into an arbitrary HTTP client.
+
+The `check` action requires one canonical provider or alias in `Call.Target` and takes no parameters. The canonical providers are `github`, `anthropic`, `cloudflare`, `openai`, `gemini`, `slack`, and `docker-hub`; the special target `all` checks every canonical provider. The `list` action takes no target or parameters and returns the canonical provider names. See the user guide for the complete alias table.
+
+Providers use adapters for their public status platform: GitHub, Anthropic, Cloudflare, and OpenAI use the common Statuspage summary schema; Slack uses the Slack Status API; Gemini combines active incidents for the stable Vertex Gemini and Workspace Gemini product IDs from Google's public JSON feeds; and Docker Hub uses the Status.io public API. Health is normalized to `operational`, `maintenance`, `degraded`, `partial_outage`, `major_outage`, or `unknown`.
+
+The checker preserves catalog order and limits aggregate checks to four concurrent provider requests. Network failures, non-success HTTP responses, and malformed upstream data become `unknown` snapshots so a status-page outage does not trigger the engine's fail-fast path; invalid tool calls and context cancellation are still returned as errors. Response bodies are bounded, and the shared HTTP client applies a five-second timeout.
+
+When adding a provider, prefer an existing adapter and add aliases only when they are unambiguous. Public catalogs such as [awesome-status-pages](https://github.com/ivbeg/awesome-status-pages) can help identify candidates, but they are discovery aids rather than runtime dependencies: verify the provider's official page, machine-readable endpoint, response format, and continued availability before adding it to the compiled catalog. Add a new adapter only when no existing status platform schema fits, and cover its health mapping, incidents, malformed responses, and cancellation behavior with table-driven tests.
 
 ### reply tool
 

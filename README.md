@@ -87,7 +87,40 @@ The current server supports these URLs:
 | Planner | `ping` | `ping://` | Recognizes ping requests and requires no credentials. |
 | Credentials | `json-file` | `json-file:///path/to/file.json` | Optional JSON object mapping credential names to string values. |
 
-The server also wires the `ping://` operational tool and its internal `reply://` tool. The first SIGINT or SIGTERM cancels in-flight work and closes resources gracefully; a second signal uses the operating system's default handling.
+The server also wires the `ping://` and `status://` operational tools and its internal `reply://` tool. The first SIGINT or SIGTERM cancels in-flight work and closes resources gracefully; a second signal uses the operating system's default handling.
+
+### Service status tool
+
+The `status://` tool lets a planner check public service-status APIs without credentials. A planner invokes it with a `check` action and a provider target, or uses the `list` action to discover canonical targets:
+
+```go
+planner.Step{
+    Tool: "status://",
+    Call: tool.Call{Action: "check", Target: "github"},
+}
+```
+
+| Target | Service | Aliases |
+| --- | --- | --- |
+| `github` | GitHub | `gh` |
+| `anthropic` | Anthropic and Claude | `claude` |
+| `cloudflare` | Cloudflare | `cf` |
+| `openai` | OpenAI | — |
+| `gemini` | Google Gemini across the Workspace Gemini and Vertex Gemini public incident feeds | `google`, `google-gemini`, `gemini-api`, `vertex-gemini`, `gemini-workspace` |
+| `slack` | Slack | — |
+| `docker-hub` | Docker Hub | `docker`, `dockerhub` |
+| `all` | Every canonical target above | — |
+
+The result text is ready for the engine to relay directly to chat, and `Result.Details` maps each checked canonical provider to its normalized health: `operational`, `maintenance`, `degraded`, `partial_outage`, `major_outage`, or `unknown`. For example:
+
+```text
+[OK] GitHub — All Systems Operational
+[DEGRADED] OpenAI — Degraded Performance
+  Elevated API errors (monitoring)
+  https://status.openai.com/...
+```
+
+Provider requests for `all` are made concurrently with at most four in flight. A provider timeout, HTTP failure, or malformed response produces an `unknown` result instead of failing the tool step and stopping the engine; invalid actions, targets, or parameters remain errors.
 
 ### Slack
 
