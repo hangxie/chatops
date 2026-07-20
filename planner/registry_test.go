@@ -10,6 +10,7 @@ import (
 
 	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/planner"
+	"github.com/hangxie/chatops/tool"
 )
 
 // fakeCredStore is a minimal cred.Store for verifying that the
@@ -25,7 +26,7 @@ func (fakeCredStore) Close() error {
 }
 
 func fakeOpener(p planner.Planner, err error) planner.OpenerFunc {
-	return func(_ context.Context, _ *url.URL, _ cred.Store) (planner.Planner, error) {
+	return func(_ context.Context, _ *url.URL, _ cred.Store, _ *tool.Registry) (planner.Planner, error) {
 		return p, err
 	}
 }
@@ -57,7 +58,7 @@ func Test_NewRegistry_invalid_arguments(t *testing.T) {
 func Test_NewRegistry_empty_is_valid(t *testing.T) {
 	reg := planner.NewRegistry()
 	require.Empty(t, reg.Schemes())
-	_, err := reg.Open(context.Background(), "openai://", nil)
+	_, err := reg.Open(context.Background(), "openai://", nil, nil)
 	require.ErrorContains(t, err, `unknown planner scheme "openai"`)
 }
 
@@ -85,7 +86,7 @@ func Test_Registry_normalizes_scheme_to_lowercase(t *testing.T) {
 		"mixed://whatever",
 		strings.ToUpper("mixed") + "://whatever",
 	} {
-		opened, err := reg.Open(context.Background(), rawURL, nil)
+		opened, err := reg.Open(context.Background(), rawURL, nil, nil)
 		require.NoError(t, err)
 		require.Same(t, planner.Planner(p), opened)
 	}
@@ -107,7 +108,7 @@ func Test_Registry_Open(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			opened, err := reg.Open(context.Background(), tc.url, nil)
+			opened, err := reg.Open(context.Background(), tc.url, nil, nil)
 			if tc.errMsg != "" {
 				require.ErrorContains(t, err, tc.errMsg)
 				return
@@ -123,24 +124,50 @@ func Test_Registry_Open_passes_arguments_to_opener(t *testing.T) {
 	var gotURL *url.URL
 	var gotCtxValue any
 	var gotCreds cred.Store
+	var gotTools *tool.Registry
 	reg := planner.NewRegistry(planner.Backend{
 		Scheme: "capture",
-		Opener: func(ctx context.Context, u *url.URL, creds cred.Store) (planner.Planner, error) {
+		Opener: func(ctx context.Context, u *url.URL, creds cred.Store, tools *tool.Registry) (planner.Planner, error) {
 			gotURL = u
 			gotCtxValue = ctx.Value(ctxKey{})
 			gotCreds = creds
+			gotTools = tools
 			return &fakePlanner{}, nil
 		},
 	})
 
 	creds := fakeCredStore{}
+	tools := tool.NewRegistry(tool.Backend{Scheme: "widget", Opener: fakeToolOpener})
 	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
-	_, err := reg.Open(ctx, "capture://host/some/path?model=gpt-5", creds)
+	_, err := reg.Open(ctx, "capture://host/some/path?model=gpt-5", creds, tools)
 	require.NoError(t, err)
 	require.Equal(t, "marker", gotCtxValue)
 	require.Equal(t, cred.Store(creds), gotCreds)
+	require.Same(t, tools, gotTools)
 	require.Equal(t, "capture", gotURL.Scheme)
 	require.Equal(t, "host", gotURL.Host)
 	require.Equal(t, "/some/path", gotURL.Path)
 	require.Equal(t, "gpt-5", gotURL.Query().Get("model"))
+}
+
+// Test_Registry_Open_nil_tools_becomes_empty verifies a nil tool set is
+// normalized to an empty registry so backends never see a nil.
+func Test_Registry_Open_nil_tools_becomes_empty(t *testing.T) {
+	var gotTools *tool.Registry
+	reg := planner.NewRegistry(planner.Backend{
+		Scheme: "capture",
+		Opener: func(_ context.Context, _ *url.URL, _ cred.Store, tools *tool.Registry) (planner.Planner, error) {
+			gotTools = tools
+			return &fakePlanner{}, nil
+		},
+	})
+
+	_, err := reg.Open(context.Background(), "capture://", nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, gotTools)
+	require.Empty(t, gotTools.Schemes())
+}
+
+func fakeToolOpener(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
+	return nil, nil
 }

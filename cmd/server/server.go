@@ -51,7 +51,7 @@ func (c *Cmd) run(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("server: open chat: %w", err)
 	}
-	p, err := registry.Planner().Open(ctx, c.PlannerURL, credentials)
+	p, err := registry.Planner().Open(ctx, c.PlannerURL, credentials, tools)
 	if err != nil {
 		return errors.Join(fmt.Errorf("server: open planner: %w", err), closeNamed("chat", conn))
 	}
