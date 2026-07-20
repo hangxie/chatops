@@ -134,7 +134,15 @@ The app configuration above is captured in [`scripts/slack-app-manifest.json`](s
 
 The recommended path needs no tooling or tokens, just a browser signed in to Slack with permission to add apps to the target workspace: open [Your Apps](https://api.slack.com/apps) — Slack's developer console, not the chat client — choose "Create New App" then "From an app manifest", pick the workspace, and paste the file contents. Workspaces that restrict app installation may require an admin to perform or approve this.
 
-For repeat or automated provisioning, [`scripts/create-slack-app.sh`](scripts/create-slack-app.sh) posts the same manifest to Slack's App Manifest API instead. It needs `curl`, `jq`, and a configuration access token (valid for 12 hours) generated at [App Config Tokens](https://api.slack.com/reference/manifests#config-tokens); because that token is itself created in the browser, this path is only worthwhile when you provision apps more than once and can reuse the token's refresh token:
+For repeat or automated provisioning, [`scripts/create-slack-app.sh`](scripts/create-slack-app.sh) posts the same manifest to Slack's App Manifest API instead. It needs `curl`, `jq`, and a configuration access token. Because that token is itself created in the browser, this path is only worthwhile when you provision apps more than once and can reuse the token's refresh token.
+
+Create the configuration access token as follows:
+
+1. Open [App Config Tokens](https://api.slack.com/reference/manifests#config-tokens) (or the "Your app configuration tokens" section at the bottom of [Your Apps](https://api.slack.com/apps)).
+2. Click "Generate Token", select the workspace, and confirm.
+3. Copy the generated access token (`xoxe.xoxp-…`, valid 12 hours) and, if you plan to rotate it, the refresh token (`xoxe-1-…`).
+
+Refresh an expired access token without the browser by exchanging the refresh token through the [`tooling.tokens.rotate`](https://api.slack.com/methods/tooling.tokens.rotate) method. Then run the script:
 
 ```bash
 export SLACK_CONFIG_ACCESS_TOKEN=xoxe.xoxp-...
