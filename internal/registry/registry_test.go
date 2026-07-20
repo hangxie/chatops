@@ -36,6 +36,8 @@ func Test_Planner_opens_ping(t *testing.T) {
 }
 
 func Test_Tool_opens_status_tool(t *testing.T) {
+	require.Equal(t, []string{"ping", "status"}, registry.Tool().Schemes())
+
 	tl, err := registry.Tool().Open(context.Background(), "status://", nil)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, tl.Close()) }()

@@ -12,6 +12,7 @@ import (
 	"github.com/hangxie/chatops/cmd/chats"
 	"github.com/hangxie/chatops/cmd/planners"
 	"github.com/hangxie/chatops/cmd/server"
+	"github.com/hangxie/chatops/cmd/tools"
 	"github.com/hangxie/chatops/cmd/version"
 )
 
@@ -19,6 +20,7 @@ var cli struct {
 	Chats    chats.Cmd    `cmd:"" help:"List available chat backends."`
 	Planners planners.Cmd `cmd:"" help:"List available planner backends."`
 	Server   server.Cmd   `cmd:"" help:"Run the ChatOps server."`
+	Tools    tools.Cmd    `cmd:"" help:"List available tools."`
 	Version  version.Cmd  `cmd:"" help:"Show build version."`
 }
 

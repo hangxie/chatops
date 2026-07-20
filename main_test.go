@@ -25,7 +25,10 @@ func Test_cli_parse(t *testing.T) {
 		"chats-json":        {args: []string{"chats", "--json"}, command: "chats"},
 		"planners":          {args: []string{"planners"}, command: "planners"},
 		"planners-json":     {args: []string{"planners", "--json"}, command: "planners"},
+		"tools":             {args: []string{"tools"}, command: "tools"},
+		"tools-json":        {args: []string{"tools", "--json"}, command: "tools"},
 		"server":            {args: []string{"server", "--chat", "telnet://localhost:6023", "--planner", "ping://"}, command: "server"},
+		"server-tools":      {args: []string{"server", "--chat", "telnet://localhost:6023", "--planner", "ping://", "--tool", "ping", "--tool", "status"}, command: "server"},
 		"server-no-chat":    {args: []string{"server", "--planner", "ping://"}, errMsg: "--chat"},
 		"server-no-planner": {args: []string{"server", "--chat", "telnet://localhost:6023"}, errMsg: "--planner"},
 		"no-args":           {args: nil, errMsg: "expected one of"},
@@ -88,6 +91,14 @@ func Test_cli_run_planners(t *testing.T) {
 		require.NoError(t, runCLI(newParser(), []string{"planners"}, context.Background()))
 	})
 	require.Equal(t, "ping\n", stdout)
+	require.Empty(t, stderr)
+}
+
+func Test_cli_run_tools(t *testing.T) {
+	stdout, stderr := testutils.CaptureStdoutStderr(func() {
+		require.NoError(t, runCLI(newParser(), []string{"tools"}, context.Background()))
+	})
+	require.Equal(t, "ping\nstatus\n", stdout)
 	require.Empty(t, stderr)
 }
 

@@ -14,11 +14,12 @@ import (
 
 // Cmd contains all configuration for one engine server.
 type Cmd struct {
-	ChatURL        string `name:"chat" required:"" help:"Chat backend URL (for example, slack:// or telnet://localhost:6023)."`
-	PlannerURL     string `name:"planner" required:"" help:"Planner backend URL (for example, ping://)."`
-	CredentialsURL string `name:"credentials" help:"Optional credential store URL for planners and tools."`
-	ConnectionID   string `name:"connection-id" default:"default" help:"Stable ID used to scope planner conversation state."`
-	MaxConcurrency int    `name:"max-concurrency" default:"8" help:"Maximum number of conversations processed concurrently."`
+	ChatURL        string   `name:"chat" required:"" help:"Chat backend URL (for example, slack:// or telnet://localhost:6023)."`
+	PlannerURL     string   `name:"planner" required:"" help:"Planner backend URL (for example, ping://)."`
+	CredentialsURL string   `name:"credentials" help:"Optional credential store URL for planners and tools."`
+	ConnectionID   string   `name:"connection-id" default:"default" help:"Stable ID used to scope planner conversation state."`
+	MaxConcurrency int      `name:"max-concurrency" default:"8" help:"Maximum number of conversations processed concurrently."`
+	Tools          []string `name:"tool" help:"Selectable tool to expose; repeat to allow multiple tools (default: all)."`
 }
 
 // Run starts the engine and gracefully stops when ctx is cancelled.
@@ -27,6 +28,14 @@ func (c *Cmd) Run(ctx context.Context) error {
 }
 
 func (c *Cmd) run(ctx context.Context) (err error) {
+	tools := registry.Tool()
+	if len(c.Tools) != 0 {
+		tools, err = tools.Select(c.Tools...)
+		if err != nil {
+			return fmt.Errorf("server: configure tools: %w", err)
+		}
+	}
+
 	var credentials cred.Store
 	if c.CredentialsURL != "" {
 		credentials, err = registry.Credential().Open(ctx, c.CredentialsURL)
@@ -50,7 +59,7 @@ func (c *Cmd) run(ctx context.Context) (err error) {
 		ConnectionID:   c.ConnectionID,
 		Chat:           conn,
 		Planner:        p,
-		Tools:          registry.Tool(),
+		Tools:          tools,
 		Credentials:    credentials,
 		MaxConcurrency: c.MaxConcurrency,
 	})

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/hangxie/chatops/cred"
@@ -54,6 +55,33 @@ func NewRegistry(backends ...Backend) *Registry {
 		openers[scheme] = b.Opener
 	}
 	return &Registry{openers: openers}
+}
+
+// Schemes returns the registered tool URL schemes in lexical order. The
+// returned slice is a copy and may be modified by the caller.
+func (r *Registry) Schemes() []string {
+	schemes := make([]string, 0, len(r.openers))
+	for scheme := range r.openers {
+		schemes = append(schemes, scheme)
+	}
+	sort.Strings(schemes)
+	return schemes
+}
+
+// Select returns a registry containing only the named tools. Repeated and
+// mixed-case names identify the same tool. An unknown name returns an error
+// listing the available choices.
+func (r *Registry) Select(names ...string) (*Registry, error) {
+	openers := make(map[string]OpenerFunc, len(names))
+	for _, name := range names {
+		scheme := strings.ToLower(name)
+		opener, ok := r.openers[scheme]
+		if !ok {
+			return nil, fmt.Errorf("tool: unknown tool %q; available tools: %s", name, strings.Join(r.Schemes(), ", "))
+		}
+		openers[scheme] = opener
+	}
+	return &Registry{openers: openers}, nil
 }
 
 // Open opens the tool instance identified by rawURL, such as
