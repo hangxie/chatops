@@ -334,7 +334,7 @@ The only supported action is `send`: `Target` is the conversation ID to post int
 
 ## Planners (`planner`)
 
-The `planner` package provides a generic way to turn free-form chat messages into executable plans, backed by pluggable planner backends — LLM providers such as OpenAI and Anthropic (planned), or the dummy ping planner. The top-level package defines the interface; each backend lives in its own sub-package and exports the URL scheme it serves plus an opener, which callers wire into a registry (no `init()` side effects — supported backends are always visible at the wiring site):
+The `planner` package provides a generic way to turn free-form chat messages into executable plans, backed by pluggable planner backends — the OpenAI Chat Completions backend (which also drives compatible services such as Gemini and Ollama), Anthropic (planned), or the dummy ping planner. The top-level package defines the interface; each backend lives in its own sub-package and exports the URL scheme it serves plus an opener, which callers wire into a registry (no `init()` side effects — supported backends are always visible at the wiring site):
 
 ```go
 type Planner interface {
@@ -352,30 +352,39 @@ A request carries the message **text**, the **conversation ID** and **sender** (
 
 Steps name tools by URL only, so a plan is **not self-contained**: the caller executes it in the context of the request that produced it. In particular, `reply://` resolves to the reply tool bound to the chat connection that request arrived on — a caller serving several connections keeps one reply tool per connection rather than sharing one — which is what keeps replies on the right connection even when conversation IDs collide across connections.
 
-A planner is identified by a single URL — the scheme selects the backend, host/port/path locate the endpoint it talks to (empty for providers with a well-known API endpoint), and query parameters carry further configuration such as the model (e.g. `openai://?model=gpt-5`, `anthropic://?model=claude-fable-5`). As with `tool`, credential *values* are **never** part of the URL; backends resolve them (e.g. API keys) from the `cred.Store` passed to `Open`, under conventional key names prefixed by the backend name (e.g. `openai-api-key`, `anthropic-api-key`), overridable per instance with the `cred-prefix` query parameter.
+A planner is identified by a single URL — the scheme selects the backend, host/port/path locate the endpoint it talks to (empty for providers with a well-known API endpoint), and query parameters carry further configuration such as the model (e.g. `openai-chat-completions://api.openai.com/v1?model=gpt-5`, `anthropic://?model=claude-fable-5`). As with `tool`, credential *values* are **never** part of the URL; backends resolve them (e.g. API keys) from the `cred.Store` passed to `Open`, under conventional key names prefixed by the backend name (e.g. `anthropic-api-key`), or a `cred-prefix` query parameter.
+
+`Open` also receives the caller's enabled tool set (the `*tool.Registry` built from `--tool`), so an LLM-backed backend can offer those tools to the model as callable functions and emit plan steps naming them by scheme. A backend that plans a fixed set of steps (such as `ping`) ignores it.
+
+**Breaking change (tool set threaded through `Open`).** Adding the OpenAI backend required the enabled tool set to reach planners, so `planner.OpenerFunc` and `planner.Registry.Open` each gained a trailing `tools *tool.Registry` argument. To migrate: callers pass the enabled registry (or `nil`, treated as empty) as the new final argument to `Open`; backend `OpenerFunc` implementations add the trailing `tools *tool.Registry` parameter and ignore it unless they offer tools to a model. There is no compatibility shim — the parameter is mandatory — because the planner interface is still pre-1.0 and has no external backends.
 
 Available backends:
 
-| Scheme | Sub-package    | Planner URL |
-| ------ | -------------- | ----------- |
-| `ping` | `planner/ping` | `ping://`   |
+| Scheme                     | Sub-package                       | Planner URL                                         |
+| -------------------------- | --------------------------------- | --------------------------------------------------- |
+| `openai-chat-completions`  | `planner/openaichatcompletions`   | `openai-chat-completions://host[:port][/path]?model=NAME` |
+| `ping`                     | `planner/ping`                    | `ping://`                                           |
 
 ### Usage
 
-Build a registry from the backends you want, open the planner by URL with a credential store, then plan inbound messages and execute the steps:
+Build a registry from the backends you want, open the planner by URL with a credential store and the enabled tool set, then plan inbound messages and execute the steps:
 
 ```go
 import (
     "context"
 
     "github.com/hangxie/chatops/planner"
+    planneropenaichat "github.com/hangxie/chatops/planner/openaichatcompletions"
     "github.com/hangxie/chatops/planner/ping"
 )
 
 reg := planner.NewRegistry(
+    planner.Backend{Scheme: planneropenaichat.Scheme, Opener: planneropenaichat.Opener},
     planner.Backend{Scheme: ping.Scheme, Opener: ping.Opener},
 )
-p, err := reg.Open(context.Background(), "ping://", nil) // creds not needed by ping
+// tools is the enabled *tool.Registry; nil is treated as the empty set.
+// creds and tools are passed through to the backend's opener.
+p, err := reg.Open(context.Background(), "ping://", nil, tools)
 if err != nil {
     // handle error
 }
@@ -409,6 +418,16 @@ A dummy planner that recognizes only the ping intent, useful as a wiring check a
 - Pending confirmations are bounded state: an unanswered confirmation expires after ten minutes, and at most 1024 conversations' confirmations are remembered at once (asking past the cap evicts the oldest).
 - Everything unrecognized plans a reply saying `sorry, I don't understand`.
 
+### openai-chat-completions planner
+
+A planner backed by any service that speaks the OpenAI Chat Completions API, so the same backend drives OpenAI, Google Gemini's OpenAI-compatible endpoint, a local Ollama, vLLM, LocalAI, and similar servers. The endpoint is configured through the URL: the host is required (the planner is not tied to a fixed provider) and locates the endpoint, whose path defaults to `/v1`, with `insecure=true` selecting plain HTTP. The `model` query parameter is required (there is no universal default across services). The API key is read from the `cred.Store` under `<cred-prefix>-api-key` when `cred-prefix` is set and sent as a bearer token; without it, or when no key is found, no `Authorization` header is sent, so keyless servers work.
+
+- The host is required, so a hostless or mistyped URL (e.g. the typo `openai-chat-completions:///host/v1` with three slashes, which parses to an empty host) is rejected rather than silently defaulting to some provider.
+- Each enabled tool's scheme is offered to the model as a function name, so the schemes must satisfy the OpenAI function-name rules (letters, digits, `_`, `-`, up to 64 characters). A tool whose scheme uses `+` or `.` is rejected when the planner is opened, rather than making every completion request fail.
+- On each message the planner makes one Chat Completions request, offering the enabled operational tools (from the tool set passed to `Open`) plus a built-in `reply` function. Tools are offered generically: each is a function taking an `action`, an optional `target`, and optional string `parameters`, mirroring `tool.Call`.
+- The model's response maps to plan steps: assistant prose and each `reply` call become `reply://` steps, and each operational tool call becomes a step invoking that tool by its `<scheme>://` URL.
+- The exchange is single-shot — tool results are not fed back to the model — and the planner keeps no per-conversation history yet.
+
 A typical exchange:
 
 ```text
@@ -420,7 +439,7 @@ bot>  pong
 
 ### Adding a new backend
 
-1. Create a sub-package under `planner/` named after the backend (e.g. `planner/openai`, `planner/anthropic`).
+1. Create a sub-package under `planner/` named after the backend (e.g. `planner/openaichatcompletions`, `planner/anthropic`).
 2. Define a `Planner` type implementing the `planner.Planner` interface:
    - `Plan` turns one inbound message into steps; express replies and clarifying questions as steps invoking the `reply://` tool with the request's `ConversationID` as the call target. Keep any per-conversation context keyed by the `(ConnectionID, ConversationID)` pair — never by `ConversationID` alone, which collides across chat connections — and make the planner safe for concurrent use.
    - `Close` releases connections or other resources.
