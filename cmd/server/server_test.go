@@ -2,19 +2,68 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/stretchr/testify/require"
 )
+
+func Test_newLogger(t *testing.T) {
+	testCases := map[string]struct {
+		level, format string
+		wantErr       string
+		emits         bool // whether a Debug record is emitted at this level
+		wantJSON      bool
+	}{
+		"defaults-json-info": {level: "", format: "", emits: false, wantJSON: true},
+		"debug-emits":        {level: "debug", format: "json", emits: true, wantJSON: true},
+		"warn-hides-debug":   {level: "warn", format: "json", emits: false, wantJSON: true},
+		"warning-alias":      {level: "warning", format: "json", emits: false, wantJSON: true},
+		"error-level":        {level: "error", format: "json", emits: false, wantJSON: true},
+		"text-format":        {level: "info", format: "text", wantJSON: false},
+		"level-case":         {level: "INFO", format: "JSON", wantJSON: true},
+		"bad-level":          {level: "loud", format: "json", wantErr: "unknown log level"},
+		"bad-format":         {level: "info", format: "xml", wantErr: "unknown log format"},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger, err := newLogger(tc.level, tc.format, &buf)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			logger.Debug("dbg")
+			logger.Error("shown")
+			out := buf.String()
+			require.Equal(t, tc.emits, strings.Contains(out, "dbg"))
+			require.Contains(t, out, "shown")
+			if tc.wantJSON {
+				var rec map[string]any
+				require.NoError(t, json.Unmarshal([]byte(strings.SplitN(strings.TrimSpace(out), "\n", 2)[0]), &rec))
+			} else {
+				require.Contains(t, out, "msg=shown")
+			}
+		})
+	}
+}
+
+func Test_run_rejects_invalid_log_level(t *testing.T) {
+	command := Cmd{ChatURL: "unknown://", PlannerURL: "unknown://", LogLevel: "loud"}
+	require.ErrorContains(t, command.run(context.Background()), "unknown log level")
+}
 
 func Test_Cmd_parse(t *testing.T) {
 	testCases := map[string]struct {
@@ -31,6 +80,8 @@ func Test_Cmd_parse(t *testing.T) {
 				"--max-concurrency", "3",
 				"--tool", "ping",
 				"--tool", "status",
+				"--log-level", "debug",
+				"--log-format", "text",
 			},
 			command: Cmd{
 				ChatURL:        "telnet://localhost:6023",
@@ -39,6 +90,19 @@ func Test_Cmd_parse(t *testing.T) {
 				ConnectionID:   "operations",
 				MaxConcurrency: 3,
 				Tools:          []string{"ping", "status"},
+				LogLevel:       "debug",
+				LogFormat:      "text",
+			},
+		},
+		"log-defaults": {
+			args: []string{"--chat", "telnet://localhost:6023", "--planner", "ping://"},
+			command: Cmd{
+				ChatURL:        "telnet://localhost:6023",
+				PlannerURL:     "ping://",
+				ConnectionID:   "default",
+				MaxConcurrency: 8,
+				LogLevel:       "info",
+				LogFormat:      "json",
 			},
 		},
 		"required-chat": {

@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"os"
+	"strings"
 
 	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/engine"
@@ -20,6 +23,8 @@ type Cmd struct {
 	ConnectionID   string   `name:"connection-id" default:"default" help:"Stable ID used to scope planner conversation state."`
 	MaxConcurrency int      `name:"max-concurrency" default:"8" help:"Maximum number of conversations processed concurrently."`
 	Tools          []string `name:"tool" help:"Selectable tool to expose; repeat to allow multiple tools (default: all)."`
+	LogLevel       string   `name:"log-level" enum:"debug,info,warn,error" default:"info" help:"Log verbosity: debug, info, warn, or error."`
+	LogFormat      string   `name:"log-format" enum:"json,text" default:"json" help:"Log output format: json or text."`
 }
 
 // Run starts the engine and gracefully stops when ctx is cancelled.
@@ -28,6 +33,12 @@ func (c *Cmd) Run(ctx context.Context) error {
 }
 
 func (c *Cmd) run(ctx context.Context) (err error) {
+	logger, err := newLogger(c.LogLevel, c.LogFormat, os.Stderr)
+	if err != nil {
+		return err
+	}
+	slog.SetDefault(logger)
+
 	tools := registry.Tool()
 	if len(c.Tools) != 0 {
 		tools, err = tools.Select(c.Tools...)
@@ -35,6 +46,14 @@ func (c *Cmd) run(ctx context.Context) (err error) {
 			return fmt.Errorf("server: configure tools: %w", err)
 		}
 	}
+	logger.Info(
+		"starting server",
+		"chat", c.ChatURL,
+		"planner", c.PlannerURL,
+		"tools", tools.Schemes(),
+		"connection_id", c.ConnectionID,
+		"max_concurrency", c.MaxConcurrency,
+	)
 
 	var credentials cred.Store
 	if c.CredentialsURL != "" {
@@ -62,6 +81,7 @@ func (c *Cmd) run(ctx context.Context) (err error) {
 		Tools:          tools,
 		Credentials:    credentials,
 		MaxConcurrency: c.MaxConcurrency,
+		Logger:         logger,
 	})
 	if err != nil {
 		return errors.Join(
@@ -74,6 +94,35 @@ func (c *Cmd) run(ctx context.Context) (err error) {
 		return fmt.Errorf("server: run engine: %w", err)
 	}
 	return nil
+}
+
+// newLogger builds the structured logger from the configured level and
+// format, writing to w. An empty level or format uses the defaults (info,
+// json) so a directly constructed Cmd — bypassing kong's flag defaults —
+// still logs. Unknown values are rejected.
+func newLogger(level, format string, w io.Writer) (*slog.Logger, error) {
+	var lvl slog.Level
+	switch strings.ToLower(level) {
+	case "", "info":
+		lvl = slog.LevelInfo
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn", "warning":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		return nil, fmt.Errorf("server: unknown log level %q (want debug, info, warn, or error)", level)
+	}
+	opts := &slog.HandlerOptions{Level: lvl}
+	switch strings.ToLower(format) {
+	case "", "json":
+		return slog.New(slog.NewJSONHandler(w, opts)), nil
+	case "text":
+		return slog.New(slog.NewTextHandler(w, opts)), nil
+	default:
+		return nil, fmt.Errorf("server: unknown log format %q (want json or text)", format)
+	}
 }
 
 func closeNamed(name string, closer io.Closer) error {
