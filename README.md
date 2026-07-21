@@ -70,6 +70,8 @@ Available settings:
 | `--connection-id` | No | `default` | Stable identifier used to scope planner conversation state. |
 | `--max-concurrency` | No | `8` | Maximum conversations processed concurrently; the maximum value is `256`. |
 | `--tool` | No | All selectable tools | Tool to expose to planners; repeat the flag to expose multiple tools. |
+| `--log-level` | No | `info` | Log verbosity: `debug`, `info`, `warn`, or `error`. |
+| `--log-format` | No | `json` | Log output format: `json` or `text`. |
 
 A fully configured invocation looks like this:
 
@@ -81,7 +83,9 @@ chatops server \
     --connection-id operations \
     --max-concurrency 8 \
     --tool ping \
-    --tool status
+    --tool status \
+    --log-level info \
+    --log-format json
 ```
 
 The current server supports these URLs:
@@ -97,6 +101,18 @@ The current server supports these URLs:
 With no `--tool` flag, the server exposes every compiled-in selectable tool, preserving the default behavior. Repeat `--tool` to expose an explicit allowlist; for example, `--tool ping --tool status` exposes exactly `ping://` and `status://`. An unknown name prevents startup and reports the available choices. A planner that attempts to use a compiled-in tool omitted from the allowlist receives the same unknown-tool error as any unavailable tool.
 
 The server's internal `reply://` tool is bound directly to each live chat conversation and is therefore neither listed nor controlled by `--tool`. The first SIGINT or SIGTERM cancels in-flight work and closes resources gracefully; a second signal uses the operating system's default handling.
+
+### Logging
+
+The server emits structured logs (Go's `log/slog`) to standard error, describing how each message flows through the planner and the tools. `--log-level` sets the verbosity and `--log-format` selects `json` (default) or `text`.
+
+At `info` the server logs startup configuration and, per message, `message received`, `plan produced` (with the step count and the tools the planner chose), each `executing step` (with the tool, action, and target), `result posted`, and any error, all tagged with the `conversation_id` and `sender`. Raise to `--log-level debug` to also see the message text, the planner request, and each tool being opened and invoked. A representative `info` line:
+
+```json
+{"time":"2026-07-21T12:00:00Z","level":"INFO","msg":"plan produced","conversation_id":"C123","sender":"alice","steps":2,"tools":["reply://","status://"]}
+```
+
+Credentials are never logged: planner and tool URLs are logged, but secrets live in the credential store, not the URL.
 
 ### OpenAI-compatible planner
 

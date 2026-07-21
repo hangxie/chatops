@@ -13,8 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
-	"strings"
+	"log/slog"
 	"sync"
 
 	"github.com/hangxie/chatops/chat"
@@ -40,6 +39,11 @@ type Config struct {
 	// MaxConcurrency is the maximum number of conversations processed at once.
 	// Zero uses DefaultMaxConcurrency.
 	MaxConcurrency int
+
+	// Logger receives structured records describing message handling — how
+	// each message is planned and how each plan step is executed against the
+	// tools. A nil Logger discards all records.
+	Logger *slog.Logger
 }
 
 const (
@@ -60,6 +64,7 @@ type Engine struct {
 	credentials    cred.Store
 	reply          tool.Tool
 	maxConcurrency int
+	logger         *slog.Logger
 
 	mu       sync.Mutex
 	work     sync.WaitGroup
@@ -94,6 +99,10 @@ func New(config Config) (*Engine, error) {
 	}
 	// Open can only reject a nil connection, which was checked above.
 	replyTool, _ := reply.Open(context.Background(), config.Chat)
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	return &Engine{
 		connectionID:   config.ConnectionID,
 		chat:           config.Chat,
@@ -102,6 +111,7 @@ func New(config Config) (*Engine, error) {
 		credentials:    config.Credentials,
 		reply:          replyTool,
 		maxConcurrency: maxConcurrency,
+		logger:         logger,
 	}, nil
 }
 
@@ -125,9 +135,20 @@ func (e *Engine) Run(ctx context.Context) (err error) {
 	e.cancel = cancel
 	e.mu.Unlock()
 
+	e.logger.Info(
+		"engine started",
+		"connection_id", e.connectionID,
+		"max_concurrency", e.maxConcurrency,
+		"tools", e.tools.Schemes(),
+	)
 	defer func() {
 		cancel()
 		err = errors.Join(err, e.Close())
+		if err != nil {
+			e.logger.Error("engine stopped", "error", err.Error())
+		} else {
+			e.logger.Info("engine stopped")
+		}
 	}()
 	scheduler := newMessageScheduler(runCtx, e.maxConcurrency, func(msg chat.Message) error {
 		return e.processMessage(runCtx, msg)
@@ -187,62 +208,6 @@ func isGracefulStop(ctx context.Context, err error) bool {
 	return errors.Is(err, chat.ErrClosed) ||
 		(errors.Is(ctx.Err(), context.Canceled) && errors.Is(err, context.Canceled)) ||
 		(errors.Is(ctx.Err(), context.DeadlineExceeded) && errors.Is(err, context.DeadlineExceeded))
-}
-
-func (e *Engine) handle(ctx context.Context, msg chat.Message) error {
-	plan, err := e.planner.Plan(ctx, planner.Request{
-		Text:           msg.Text,
-		ConnectionID:   e.connectionID,
-		ConversationID: msg.ConversationID,
-		Sender:         msg.Sender,
-	})
-	if err != nil {
-		return fmt.Errorf("engine: plan message: %w", err)
-	}
-	for i, step := range plan.Steps {
-		result, invokeErr := e.invoke(ctx, msg.ConversationID, step)
-		if invokeErr != nil {
-			return fmt.Errorf("engine: execute step %d (%q): %w", i+1, step.Tool, invokeErr)
-		}
-		if result.Text == "" {
-			continue
-		}
-		if sendErr := e.chat.Send(ctx, chat.Message{ConversationID: msg.ConversationID, Text: result.Text}); sendErr != nil {
-			return fmt.Errorf("engine: send result for step %d (%q): %w", i+1, step.Tool, sendErr)
-		}
-	}
-	return nil
-}
-
-func (e *Engine) invoke(ctx context.Context, conversationID string, step planner.Step) (result tool.Result, err error) {
-	u, err := url.Parse(step.Tool)
-	if err != nil {
-		return tool.Result{}, fmt.Errorf("parse tool URL: %w", err)
-	}
-	if strings.EqualFold(u.Scheme, reply.Scheme) {
-		if !strings.EqualFold(step.Tool, reply.URL) {
-			return tool.Result{}, fmt.Errorf("reply: URL %q takes no endpoint or configuration", step.Tool)
-		}
-		step.Call.Target = conversationID
-		return e.reply.Invoke(ctx, step.Call)
-	}
-
-	// Tool instances are deliberately scoped to one step for isolated ownership
-	// and cleanup. Expensive backends can pool resources behind their opener.
-	opened, err := e.tools.Open(ctx, step.Tool, e.credentials)
-	if err != nil {
-		return tool.Result{}, fmt.Errorf("open tool: %w", err)
-	}
-	defer func() {
-		if closeErr := opened.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("close tool: %w", closeErr))
-		}
-	}()
-	result, err = opened.Invoke(ctx, step.Call)
-	if err != nil {
-		return tool.Result{}, fmt.Errorf("invoke tool: %w", err)
-	}
-	return result, nil
 }
 
 // Close cancels Run, waits for in-flight planning and tool work, then releases
