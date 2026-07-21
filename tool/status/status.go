@@ -96,7 +96,7 @@ func (t *Tool) Invoke(ctx context.Context, call tool.Call) (tool.Result, error) 
 		}
 		return tool.Result{Text: "Supported services: " + strings.Join(t.checker.Names(), ", ")}, nil
 	default:
-		return tool.Result{}, fmt.Errorf("status: %q: %w", call.Action, tool.ErrUnknownAction)
+		return tool.Result{}, fmt.Errorf("status: %q: %w; supported actions: check, list", call.Action, tool.ErrUnknownAction)
 	}
 }
 
