@@ -14,9 +14,15 @@ import (
 	"github.com/hangxie/chatops/tool/reply"
 )
 
+// failureNotice is posted to the requester when handling their message fails
+// for a non-fatal reason (a bad plan or a tool error). The specific error is
+// logged, not shown, so internal detail does not leak into chat.
+const failureNotice = "sorry, I couldn't complete that request"
+
 // handle plans one inbound message and executes every step of the plan,
 // logging the planner decision and each tool invocation so operators can see
-// how a message flowed through the planner and the tools.
+// how a message flowed through the planner and the tools. Errors are returned
+// wrapped; processMessage decides whether they are fatal and logs them.
 func (e *Engine) handle(ctx context.Context, msg chat.Message) error {
 	log := e.logger.With("conversation_id", msg.ConversationID, "sender", msg.Sender)
 	log.Info("message received")
@@ -29,7 +35,6 @@ func (e *Engine) handle(ctx context.Context, msg chat.Message) error {
 		Sender:         msg.Sender,
 	})
 	if err != nil {
-		log.Error("planner failed", "error", err.Error())
 		return fmt.Errorf("engine: plan message: %w", err)
 	}
 	log.Info("plan produced", "steps", len(plan.Steps), "tools", stepTools(plan.Steps))
@@ -39,7 +44,6 @@ func (e *Engine) handle(ctx context.Context, msg chat.Message) error {
 		stepLog.Info("executing step")
 		result, invokeErr := e.invoke(ctx, stepLog, msg.ConversationID, step)
 		if invokeErr != nil {
-			stepLog.Error("step failed", "error", invokeErr.Error())
 			return fmt.Errorf("engine: execute step %d (%q): %w", i+1, step.Tool, invokeErr)
 		}
 		if result.Text == "" {
@@ -47,12 +51,20 @@ func (e *Engine) handle(ctx context.Context, msg chat.Message) error {
 			continue
 		}
 		if sendErr := e.chat.Send(ctx, chat.Message{ConversationID: msg.ConversationID, Text: result.Text}); sendErr != nil {
-			stepLog.Error("posting result failed", "error", sendErr.Error())
 			return fmt.Errorf("engine: send result for step %d (%q): %w", i+1, step.Tool, sendErr)
 		}
 		stepLog.Info("result posted")
 	}
 	return nil
+}
+
+// notifyFailure posts the generic failure notice to conversationID so the
+// requester knows their message could not be completed. Any error delivering
+// the notice is logged and otherwise ignored — the engine keeps running.
+func (e *Engine) notifyFailure(ctx context.Context, conversationID string) {
+	if err := e.chat.Send(ctx, chat.Message{ConversationID: conversationID, Text: failureNotice}); err != nil {
+		e.logger.Error("failure notice not delivered", "conversation_id", conversationID, "error", err.Error())
+	}
 }
 
 // stepTools lists the tool URLs a plan invokes, for a compact log summary of

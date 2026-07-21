@@ -102,6 +102,8 @@ With no `--tool` flag, the server exposes every compiled-in selectable tool, pre
 
 The server's internal `reply://` tool is bound directly to each live chat conversation and is therefore neither listed nor controlled by `--tool`. The first SIGINT or SIGTERM cancels in-flight work and closes resources gracefully; a second signal uses the operating system's default handling.
 
+A failure while handling one message — the planner erroring, a plan naming an unknown tool, a tool rejecting an action or failing, even a tool panicking — is not fatal: the server logs the full error at `error`, posts a brief `sorry, I couldn't complete that request` back to that conversation, and keeps serving other messages. Only losing the chat connection or receiving a shutdown signal stops the server.
+
 ### Logging
 
 The server emits structured logs (Go's `log/slog`) to standard error, describing how each message flows through the planner and the tools. `--log-level` sets the verbosity and `--log-format` selects `json` (default) or `text`.

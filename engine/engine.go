@@ -191,11 +191,33 @@ func (e *Engine) beginWork() bool {
 	return true
 }
 
-func (e *Engine) processMessage(ctx context.Context, msg chat.Message) (err error) {
+func (e *Engine) processMessage(ctx context.Context, msg chat.Message) error {
 	if !e.beginWork() {
 		return context.Canceled
 	}
 	defer e.work.Done()
+
+	err := e.safeHandle(ctx, msg)
+	if err == nil {
+		return nil
+	}
+	// Connection loss and shutdown are fatal: return them so the engine
+	// stops.
+	if isGracefulStop(ctx, err) {
+		return err
+	}
+	// A single message's failure — a bad plan, an unknown or failing tool
+	// action, even a panicking tool — must not stop a long-running bot. Log
+	// the full error and tell the requester, then keep serving.
+	e.logger.Error("message handling failed",
+		"conversation_id", msg.ConversationID, "sender", msg.Sender, "error", err.Error())
+	e.notifyFailure(ctx, msg.ConversationID)
+	return nil
+}
+
+// safeHandle runs handle, converting a panic in a tool or planner into an
+// error so one misbehaving component cannot crash the engine.
+func (e *Engine) safeHandle(ctx context.Context, msg chat.Message) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("engine: process message: panic: %v", recovered)

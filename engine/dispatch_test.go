@@ -137,7 +137,7 @@ func Test_handle_info_level_omits_debug_records(t *testing.T) {
 	require.False(t, hasRecord(recs, "opening tool", nil))
 }
 
-func Test_handle_logs_planner_failure(t *testing.T) {
+func Test_handle_logs_message_failure_and_continues(t *testing.T) {
 	var out syncBuffer
 	logger := slog.New(slog.NewJSONHandler(&out, nil))
 
@@ -148,6 +148,13 @@ func Test_handle_logs_planner_failure(t *testing.T) {
 	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry(), Logger: logger})
 	require.NoError(t, err)
 
-	require.Error(t, e.Run(ctx))
-	require.True(t, hasRecord(out.records(t), "planner failed", map[string]any{"error": "backend down"}))
+	result := make(chan error, 1)
+	go func() { result <- e.Run(ctx) }()
+	// A planner failure is logged with its full error and the engine keeps
+	// running rather than stopping.
+	require.Eventually(t, func() bool {
+		return hasRecord(out.records(t), "message handling failed", map[string]any{"conversation_id": "c1", "error": "engine: plan message: backend down"})
+	}, time.Second, time.Millisecond)
+	cancel()
+	require.NoError(t, <-result)
 }
