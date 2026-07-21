@@ -37,7 +37,7 @@ func Test_Tool_invoke(t *testing.T) {
 		"parameters":     {call: tool.Call{Action: "check", Target: "github", Parameters: map[string]string{"x": "y"}}, errContains: "parameters"},
 		"unknown-target": {call: tool.Call{Action: "check", Target: "missing"}, errIs: ErrUnknownProvider},
 		"list-target":    {call: tool.Call{Action: "list", Target: "github"}, errContains: "no target"},
-		"unknown-action": {call: tool.Call{Action: "remove"}, errIs: tool.ErrUnknownAction},
+		"unknown-action": {call: tool.Call{Action: "remove"}, errIs: tool.ErrUnknownAction, errContains: "supported actions: check, list"},
 	}
 
 	for name, tc := range testCases {
