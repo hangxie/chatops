@@ -76,7 +76,7 @@ func (r *Registry) Schemes() []string {
 }
 
 // Open opens the planner backend identified by rawURL, such as
-// "openai://?model=gpt-5"; the URL scheme selects the backend.
+// "openai-chat-completions://api.openai.com/v1?model=gpt-5"; the URL scheme selects the backend.
 // Credentials the backend needs are resolved from creds by the key
 // names in the package documentation, never taken from the URL. creds
 // may be nil when every wired backend takes no credentials; openers

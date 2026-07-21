@@ -10,7 +10,7 @@
 //	reg := planner.NewRegistry(
 //		planner.Backend{Scheme: ping.Scheme, Opener: ping.Opener},
 //	)
-//	p, err := reg.Open(ctx, "ping://", creds)
+//	p, err := reg.Open(ctx, "ping://", creds, tools)
 //	plan, err := p.Plan(ctx, planner.Request{
 //		Text:           msg.Text,
 //		ConversationID: msg.ConversationID,
@@ -20,8 +20,11 @@
 // The URL scheme selects the backend, the host/port/path locate the
 // endpoint it talks to (empty for providers with a well-known API
 // endpoint), and query parameters carry further configuration such as
-// the model (e.g. "openai://?model=gpt-5",
-// "anthropic://?model=claude-fable-5").
+// the model (e.g. "openai-chat-completions://api.openai.com/v1?model=gpt-5",
+// "anthropic://?model=claude-fable-5"). The tools argument is the set
+// of operational tools the caller has enabled, passed through to the
+// backend so an LLM-backed planner can offer them to the model (see
+// Registry.Open); a nil set is treated as empty.
 //
 // Credential values are never part of the URL; backends resolve them
 // (e.g. API keys) from the cred.Store passed to Open, under

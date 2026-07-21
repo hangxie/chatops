@@ -28,11 +28,18 @@ func Test_Credential_opens_jsonfile(t *testing.T) {
 }
 
 func Test_Planner_opens_ping(t *testing.T) {
-	require.Equal(t, []string{"ping"}, registry.Planner().Schemes())
+	require.Equal(t, []string{"openai-chat-completions", "ping"}, registry.Planner().Schemes())
 
 	p, err := registry.Planner().Open(context.Background(), "ping://", nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, p)
+}
+
+func Test_Planner_opens_openai(t *testing.T) {
+	p, err := registry.Planner().Open(context.Background(), "openai-chat-completions://api.openai.com/v1?model=gpt-5", nil, registry.Tool())
+	require.NoError(t, err)
+	require.NotNil(t, p)
+	require.NoError(t, p.Close())
 }
 
 func Test_Tool_opens_status_tool(t *testing.T) {
