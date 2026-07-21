@@ -91,11 +91,48 @@ The current server supports these URLs:
 | Chat | `slack` | `slack://` | Uses Socket Mode with `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`; replies are threaded. |
 | Chat | `telnet` | `telnet://host:port` | Port defaults to `23`; the protocol is newline-delimited text without telnet option negotiation. |
 | Planner | `ping` | `ping://` | Recognizes ping requests and requires no credentials. |
+| Planner | `openai-chat-completions` | `openai-chat-completions://host[:port][/path]?model=NAME` | Drives any OpenAI Chat Completions endpoint (OpenAI, Gemini, Ollama, …). See [OpenAI-compatible planner](#openai-compatible-planner). |
 | Credentials | `json-file` | `json-file:///path/to/file.json` | Optional JSON object mapping credential names to string values. |
 
 With no `--tool` flag, the server exposes every compiled-in selectable tool, preserving the default behavior. Repeat `--tool` to expose an explicit allowlist; for example, `--tool ping --tool status` exposes exactly `ping://` and `status://`. An unknown name prevents startup and reports the available choices. A planner that attempts to use a compiled-in tool omitted from the allowlist receives the same unknown-tool error as any unavailable tool.
 
 The server's internal `reply://` tool is bound directly to each live chat conversation and is therefore neither listed nor controlled by `--tool`. The first SIGINT or SIGTERM cancels in-flight work and closes resources gracefully; a second signal uses the operating system's default handling.
+
+### OpenAI-compatible planner
+
+The `openai-chat-completions://` planner turns chat messages into plans using any service that speaks the OpenAI Chat Completions API. Because the endpoint is part of the URL, the same planner drives OpenAI, Google Gemini's OpenAI-compatible endpoint, a local Ollama, vLLM, LocalAI, and similar servers.
+
+On each message the planner makes one completion request, offering the enabled operational tools (from `--tool`) plus a built-in `reply` function. The model's answer maps directly to plan steps: assistant prose and each `reply` call become `reply://` steps posted to the requester, and each operational tool call becomes a step invoking that tool. Because tools are generic, every tool is offered to the model as a function taking an `action`, an optional `target`, and optional string `parameters` — the same fields as a tool call.
+
+The URL configures the endpoint and model:
+
+| Part | Meaning |
+| --- | --- |
+| host / port / path | Endpoint location. The host is required (this planner targets any compatible endpoint, not a fixed provider); the path defaults to `/v1`. |
+| `model` (required) | Model identifier to request, for example `gpt-5`, `gemini-3.1-flash-lite`, or `llama3`. |
+| `insecure=true` | Use plain HTTP instead of HTTPS, for a local server. |
+| `cred-prefix=NAME` | Resolve the API key from the credential store under `NAME-api-key`. |
+
+The API key is read from the credential store (never the URL) under `<cred-prefix>-api-key` and sent as a bearer token. When `cred-prefix` is omitted, or no matching key is found, no `Authorization` header is sent, so keyless local servers work.
+
+```bash
+# OpenAI
+chatops server --chat telnet://localhost:6023 \
+    --planner 'openai-chat-completions://api.openai.com/v1?model=gpt-5&cred-prefix=openai' \
+    --credentials json-file:///etc/chatops/credentials.json
+
+# Google Gemini's OpenAI-compatible endpoint
+chatops server --chat telnet://localhost:6023 \
+    --planner 'openai-chat-completions://generativelanguage.googleapis.com/v1beta/openai?model=gemini-3.1-flash-lite&cred-prefix=gemini' \
+    --credentials json-file:///etc/chatops/credentials.json
+
+# Local Ollama (no key required)
+chatops server --chat telnet://localhost:6023 \
+    --planner 'openai-chat-completions://localhost:11434/v1?insecure=true&model=llama3' \
+    --tool ping --tool status
+```
+
+The exchange is single-shot: tool results are not fed back to the model, and the planner keeps no per-conversation history yet.
 
 ### Service status tool
 
@@ -214,10 +251,11 @@ List the planner backends the binary knows about, one scheme per line. These are
 
 ```console
 $ chatops planners
+openai
 ping
 
 $ chatops planners --json
-["ping"]
+["openai","ping"]
 ```
 
 ### Tools
