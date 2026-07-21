@@ -15,11 +15,11 @@ func Test_Cmd_Run(t *testing.T) {
 	}{
 		"plain": {
 			cmd:    Cmd{},
-			stdout: "ping\n",
+			stdout: "openai-chat-completions\nping\n",
 		},
 		"json": {
 			cmd:    Cmd{JSON: true},
-			stdout: `["ping"]` + "\n",
+			stdout: `["openai-chat-completions","ping"]` + "\n",
 		},
 	}
 

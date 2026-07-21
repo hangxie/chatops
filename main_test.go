@@ -90,7 +90,7 @@ func Test_cli_run_planners(t *testing.T) {
 	stdout, stderr := testutils.CaptureStdoutStderr(func() {
 		require.NoError(t, runCLI(newParser(), []string{"planners"}, context.Background()))
 	})
-	require.Equal(t, "ping\n", stdout)
+	require.Equal(t, "openai-chat-completions\nping\n", stdout)
 	require.Empty(t, stderr)
 }
 

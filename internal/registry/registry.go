@@ -10,6 +10,7 @@ import (
 	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/cred/jsonfile"
 	"github.com/hangxie/chatops/planner"
+	planneropenaichat "github.com/hangxie/chatops/planner/openaichatcompletions"
 	plannerping "github.com/hangxie/chatops/planner/ping"
 	"github.com/hangxie/chatops/tool"
 	toolping "github.com/hangxie/chatops/tool/ping"
@@ -33,7 +34,10 @@ func Credential() *cred.Registry {
 // Planner builds the registry of planner backends the binary knows
 // about.
 func Planner() *planner.Registry {
-	return planner.NewRegistry(planner.Backend{Scheme: plannerping.Scheme, Opener: plannerping.Opener})
+	return planner.NewRegistry(
+		planner.Backend{Scheme: planneropenaichat.Scheme, Opener: planneropenaichat.Opener},
+		planner.Backend{Scheme: plannerping.Scheme, Opener: plannerping.Opener},
+	)
 }
 
 // Tool builds the registry of operational tools the binary knows about.
