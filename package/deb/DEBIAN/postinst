@@ -1,5 +1,23 @@
 #!/bin/sh
 
-chmod +x /usr/bin/chatops
+set -e
+
+if ! getent passwd chatops >/dev/null; then
+    adduser --system --group --no-create-home --home /nonexistent chatops
+fi
+
+chown root:chatops /etc/chatops
+chmod 0750 /etc/chatops
+if [ -e /etc/chatops/chatops.env ]; then
+    chown root:chatops /etc/chatops/chatops.env
+    chmod 0640 /etc/chatops/chatops.env
+fi
+
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null || true
+    if [ -n "${2:-}" ]; then
+        systemctl try-restart chatops.service >/dev/null || true
+    fi
+fi
 
 exit 0
