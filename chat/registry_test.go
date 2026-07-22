@@ -9,10 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hangxie/chatops/chat"
+	"github.com/hangxie/chatops/cred"
 )
 
 func fakeOpener(conn chat.Conn, err error) chat.OpenerFunc {
-	return func(_ context.Context, _ *url.URL) (chat.Conn, error) {
+	return func(_ context.Context, _ *url.URL, _ cred.Store) (chat.Conn, error) {
 		return conn, err
 	}
 }
@@ -81,7 +82,7 @@ func Test_Registry_Schemes_returns_independent_copy(t *testing.T) {
 
 func Test_NewRegistry_empty_is_valid(t *testing.T) {
 	reg := chat.NewRegistry()
-	_, err := reg.Open(context.Background(), "telnet://somewhere")
+	_, err := reg.Open(context.Background(), "telnet://somewhere", nil)
 	require.ErrorContains(t, err, `unknown chat backend scheme "telnet"`)
 }
 
@@ -95,7 +96,7 @@ func Test_Registry_normalizes_scheme_to_lowercase(t *testing.T) {
 		"mixed://whatever",
 		strings.ToUpper("mixed") + "://whatever",
 	} {
-		opened, err := reg.Open(context.Background(), rawURL)
+		opened, err := reg.Open(context.Background(), rawURL, nil)
 		require.NoError(t, err)
 		require.Same(t, chat.Conn(conn), opened)
 	}
@@ -117,7 +118,7 @@ func Test_Registry_Open(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			opened, err := reg.Open(context.Background(), tc.url)
+			opened, err := reg.Open(context.Background(), tc.url, nil)
 			if tc.errMsg != "" {
 				require.ErrorContains(t, err, tc.errMsg)
 				return
@@ -132,21 +133,30 @@ func Test_Registry_Open_passes_url_and_context_to_opener(t *testing.T) {
 	type ctxKey struct{}
 	var gotURL *url.URL
 	var gotCtxValue any
+	var gotCredentials cred.Store
+	credentials := &fakeStore{}
 	reg := chat.NewRegistry(chat.Backend{
 		Scheme: "capture",
-		Opener: func(ctx context.Context, u *url.URL) (chat.Conn, error) {
+		Opener: func(ctx context.Context, u *url.URL, creds cred.Store) (chat.Conn, error) {
 			gotURL = u
 			gotCtxValue = ctx.Value(ctxKey{})
+			gotCredentials = creds
 			return &fakeConn{}, nil
 		},
 	})
 
 	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
-	_, err := reg.Open(ctx, "capture://host:1234/some/path?opt=1")
+	_, err := reg.Open(ctx, "capture://host:1234/some/path?opt=1", credentials)
 	require.NoError(t, err)
 	require.Equal(t, "marker", gotCtxValue)
 	require.Equal(t, "capture", gotURL.Scheme)
 	require.Equal(t, "host:1234", gotURL.Host)
 	require.Equal(t, "/some/path", gotURL.Path)
 	require.Equal(t, "1", gotURL.Query().Get("opt"))
+	require.Same(t, credentials, gotCredentials)
 }
+
+type fakeStore struct{}
+
+func (*fakeStore) Get(context.Context, string) (string, error) { return "", cred.ErrNotFound }
+func (*fakeStore) Close() error                                { return nil }

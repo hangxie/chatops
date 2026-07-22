@@ -7,13 +7,15 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/hangxie/chatops/cred"
 )
 
 // OpenerFunc connects to the chat backend described by u and returns
 // a Conn. Backends export one for wiring into a Registry; the URL
 // scheme has already been matched, and interpretation of the rest of
 // the URL is backend-specific.
-type OpenerFunc func(ctx context.Context, u *url.URL) (Conn, error)
+type OpenerFunc func(ctx context.Context, u *url.URL, creds cred.Store) (Conn, error)
 
 // Backend pairs a URL scheme with the opener serving it, for wiring
 // into NewRegistry.
@@ -67,10 +69,11 @@ func (r *Registry) Schemes() []string {
 
 // Open connects to the chat backend identified by rawURL, such as
 // "telnet://chat.example.com:6023"; the URL scheme selects the
-// backend. Credentials for the backend (e.g. SLACK_BOT_TOKEN) are
-// taken from each backend's standard environment variables, never
-// from the URL.
-func (r *Registry) Open(ctx context.Context, rawURL string) (Conn, error) {
+// backend. Credentials the backend needs are resolved from creds by
+// the key names in the package documentation, never taken from the
+// URL. creds may be nil when the selected backend needs no credentials;
+// openers that need credentials must report an error.
+func (r *Registry) Open(ctx context.Context, rawURL string, creds cred.Store) (Conn, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("chat: parse backend URL: %w", err)
@@ -79,5 +82,5 @@ func (r *Registry) Open(ctx context.Context, rawURL string) (Conn, error) {
 	if !ok {
 		return nil, fmt.Errorf("chat: unknown chat backend scheme %q", u.Scheme)
 	}
-	return opener(ctx, u)
+	return opener(ctx, u, creds)
 }

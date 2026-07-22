@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/hangxie/chatops/chat"
+	"github.com/hangxie/chatops/cred"
 )
 
 // ConversationID is the conversation ID of the single conversation a
@@ -44,7 +45,7 @@ const Scheme = "telnet"
 
 // Opener is the chat.OpenerFunc for this backend: the URL host is the
 // server address, with the port defaulting to the telnet port 23.
-func Opener(ctx context.Context, u *url.URL) (chat.Conn, error) {
+func Opener(ctx context.Context, u *url.URL, _ cred.Store) (chat.Conn, error) {
 	host := u.Hostname()
 	if host == "" {
 		return nil, fmt.Errorf("telnet: URL %q has no host", u.String())

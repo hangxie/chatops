@@ -9,7 +9,7 @@
 //	reg := chat.NewRegistry(
 //		chat.Backend{Scheme: telnet.Scheme, Opener: telnet.Opener},
 //	)
-//	conn, err := reg.Open(ctx, "telnet://chat.example.com:6023")
+//	conn, err := reg.Open(ctx, "telnet://chat.example.com:6023", creds)
 //
 // Messages are grouped into conversations — a topic or thread that a
 // piece of work is about. Each backend computes a stable conversation
@@ -20,8 +20,7 @@
 // with the ConversationID of the message being answered.
 //
 // Credentials for connecting to a backend are never part of the URL;
-// backends take them from their standard environment variables (e.g.
-// SLACK_BOT_TOKEN).
+// backends resolve them from the cred.Store passed to Registry.Open.
 package chat
 
 import (

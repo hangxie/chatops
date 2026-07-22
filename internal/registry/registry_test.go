@@ -6,7 +6,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	chatslack "github.com/hangxie/chatops/chat/slack"
 	"github.com/hangxie/chatops/internal/registry"
 	"github.com/hangxie/chatops/tool"
 )
@@ -16,10 +15,8 @@ func Test_Chat_supports_registered_schemes(t *testing.T) {
 }
 
 func Test_Chat_supports_slack(t *testing.T) {
-	t.Setenv(chatslack.BotTokenEnv, "")
-	t.Setenv(chatslack.AppTokenEnv, "")
-	_, err := registry.Chat().Open(context.Background(), "slack://")
-	require.ErrorContains(t, err, chatslack.BotTokenEnv)
+	_, err := registry.Chat().Open(context.Background(), "slack://", nil)
+	require.ErrorContains(t, err, "credential store is not configured")
 }
 
 func Test_Credential_opens_jsonfile(t *testing.T) {
