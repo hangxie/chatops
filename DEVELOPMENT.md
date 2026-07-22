@@ -264,7 +264,7 @@ import (
 )
 
 reg := tool.NewRegistry(
-    tool.Backend{Scheme: ping.Scheme, Opener: ping.Opener},
+    tool.Backend{Scheme: ping.Scheme, Opener: ping.Opener, Descriptor: &ping.Descriptor},
 )
 tl, err := reg.Open(context.Background(), "ping://", nil) // creds not needed by ping
 if err != nil {
@@ -283,13 +283,13 @@ Tools also expose a typed `Open` function for direct use, e.g. `ping.Open(ctx)`.
 
 ### ping tool
 
-A dummy tool that answers `pong` to the `ping` action, useful as a liveness check and as the reference implementation of the interface. It has no endpoint and takes no credentials, so the URL is a bare `ping://` (anything beyond the scheme — host, path, query, userinfo, or non-empty fragment — is rejected; a bare trailing `#` parses identically to the bare URL and is accepted). The only supported action is `ping`; `Target` and `Parameters` are ignored, and any other action reports an error wrapping `tool.ErrUnknownAction`.
+A dummy tool that answers `pong` to the `ping` action, useful as a liveness check and as the reference implementation of the interface. It has no endpoint and takes no credentials, so the URL is a bare `ping://` (anything beyond the scheme — host, path, query, userinfo, or non-empty fragment — is rejected; a bare trailing `#` parses identically to the bare URL and is accepted). The only supported action is `ping`; `Target` and `Parameters` are ignored, and any other action reports an error wrapping `tool.ErrUnknownAction`. It exports a `tool.Descriptor` (its single `ping` action) as a reference for the typed-schema wiring.
 
 ### status tool
 
 The service-status tool checks public third-party status APIs and normalizes their different schemas. It has no credentials or caller-configurable endpoint, so its only URL is the bare `status://`; keeping upstream URLs in the compiled provider catalog prevents planner output from turning the tool into an arbitrary HTTP client.
 
-The `check` action requires one canonical provider or alias in `Call.Target` and takes no parameters. The canonical providers are `github`, `anthropic`, `cloudflare`, `openai`, `gemini`, `slack`, and `docker-hub`; the special target `all` checks every canonical provider. The `list` action takes no target or parameters and returns the canonical provider names. See the user guide for the complete alias table.
+The `check` action requires one canonical provider or alias in `Call.Target` and takes no parameters. The canonical providers are `github`, `anthropic`, `cloudflare`, `openai`, `gemini`, `slack`, and `docker-hub`; the special target `all` checks every canonical provider. The `list` action takes no target or parameters and returns the canonical provider names. See the user guide for the complete alias table. The tool exports a `tool.Descriptor` declaring both actions (with `check` taking a service-name target), so an LLM planner is offered `check`/`list` as an enum rather than guessing action names.
 
 Providers use adapters for their public status platform: GitHub, Anthropic, Cloudflare, and OpenAI use the common Statuspage summary schema; Slack uses the Slack Status API; Gemini combines active incidents for the stable Vertex Gemini and Workspace Gemini product IDs from Google's public JSON feeds; and Docker Hub uses the Status.io public API. Health is normalized to `operational`, `maintenance`, `degraded`, `partial_outage`, `major_outage`, or `unknown`.
 
@@ -329,8 +329,24 @@ The only supported action is `send`: `Target` is the conversation ID to post int
    }
    ```
 
-5. Add a test file with table-driven tests covering `Open` failures, supported and unknown actions, context cancellation, `Close` semantics, and opening through a `tool.Registry` with the exported scheme.
-6. List the tool in the table above and document its actions and credential key names in a section like the ping one.
+5. Export a `tool.Descriptor` describing the tool and wire it into the `Backend` alongside the scheme and opener — it is required, so `NewRegistry` panics on a backend without one. The descriptor lets an LLM planner offer each of the tool's actions as its own typed function (named `<tool>-<action>`, each with its described `target` and typed parameters and their required fields) instead of making the model guess the vocabulary. Keep the described actions and parameters in step with `Invoke`.
+
+   ```go
+   // Descriptor is the tool's self-description for planners.
+   var Descriptor = tool.Descriptor{
+       Summary: "One-line, model-facing description of the tool.",
+       Actions: []tool.Action{
+           {Name: "restart", Description: "Restart the target.", TakesTarget: true, TargetDesc: "the deployment"},
+       },
+   }
+   ```
+
+   ```go
+   tool.Backend{Scheme: mytool.Scheme, Opener: mytool.Opener, Descriptor: &mytool.Descriptor}
+   ```
+
+6. Add a test file with table-driven tests covering `Open` failures, supported and unknown actions, context cancellation, `Close` semantics, opening through a `tool.Registry` with the exported scheme, and that every described action is one `Invoke` accepts.
+7. List the tool in the table above and document its actions and credential key names in a section like the ping one.
 
 ## Planners (`planner`)
 
