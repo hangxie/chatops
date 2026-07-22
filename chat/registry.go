@@ -69,9 +69,9 @@ func (r *Registry) Schemes() []string {
 
 // Open connects to the chat backend identified by rawURL, such as
 // "telnet://chat.example.com:6023"; the URL scheme selects the
-// backend. Credentials the backend needs are resolved from creds by
-// the key names in the package documentation, never taken from the
-// URL. creds may be nil when the selected backend needs no credentials;
+// backend. Credentials the backend needs are resolved from creds using
+// predefined cred.Key identifiers, never taken from the URL. creds may be nil
+// when the selected backend needs no credentials;
 // openers that need credentials must report an error.
 func (r *Registry) Open(ctx context.Context, rawURL string, creds cred.Store) (Conn, error) {
 	u, err := url.Parse(rawURL)

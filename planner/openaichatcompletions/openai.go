@@ -6,25 +6,18 @@
 // The package exports Scheme and Opener for wiring the planner into a
 // planner.Registry under the "openai-chat-completions" URL scheme:
 //
-//	openai-chat-completions://api.openai.com/v1?model=gpt-5&cred-prefix=openai
-//	openai-chat-completions://generativelanguage.googleapis.com/v1beta/openai?model=gemini-3.1-flash-lite&cred-prefix=gemini
-//	openai-chat-completions://localhost:11434/v1?insecure=true&model=llama3
+//	openai-chat-completions://api.openai.com/v1?model=gpt-5
+//	openai-chat-completions://generativelanguage.googleapis.com/v1beta/openai?model=gemini-3.1-flash-lite
+//	openai-chat-completions://localhost:11434/v1?insecure=true&keyless=true&model=llama3
 //
 // The host is required and locates the endpoint; its path defaults to
 // "/v1", and the connection uses HTTPS unless insecure=true selects
 // plain HTTP. The model query parameter is required.
-//
-// When cred-prefix is set, the API key is resolved from the cred.Store
-// under "<cred-prefix>-api-key" and sent as a bearer token; without it,
-// or when no key is found, no Authorization header is sent, so keyless
-// servers work.
-//
-// On each message the planner makes one Chat Completions request, offering
-// the enabled tools plus the built-in reply function (see catalog.go), then
-// maps the model's reply: assistant prose and each tool call become plan
-// steps, so answering the human and invoking a tool have the same shape.
-// The exchange is single-shot — tool results are not fed back to the model —
-// and the planner keeps no per-conversation history yet.
+// Unless keyless=true is explicit, the API key is resolved from the
+// predefined planner credential and sent as a bearer token.
+// Each message produces one request offering the enabled tools plus reply.
+// Assistant prose and tool calls become plan steps; tool results are not fed
+// back to the model, and the planner keeps no conversation history yet.
 package openaichatcompletions
 
 import (
@@ -37,6 +30,7 @@ import (
 	"time"
 
 	"github.com/hangxie/chatops/cred"
+	"github.com/hangxie/chatops/internal/urlquery"
 	"github.com/hangxie/chatops/planner"
 	"github.com/hangxie/chatops/tool"
 )
@@ -59,24 +53,37 @@ const systemPrompt = "You are a ChatOps planner. Decide how to handle the user's
 	"To carry out an operation, call the matching tool function. You may call several functions " +
 	"in one turn. Use only the provided functions and do not invent tools."
 
-// Opener is the planner.OpenerFunc for this backend: it parses the
-// endpoint and model from the URL and resolves the API key from creds.
+// Opener parses the endpoint and model and resolves the planner API key.
 func Opener(ctx context.Context, u *url.URL, creds cred.Store, tools *tool.Registry) (planner.Planner, error) {
 	if u.Opaque != "" || u.User != nil || u.Fragment != "" {
 		return nil, fmt.Errorf("openai: URL %q must not carry userinfo, opaque data, or a fragment", u.String())
 	}
 	query := u.Query()
+	wrapURL := func(err error) error {
+		return fmt.Errorf("openai: URL %q: %w", u.String(), err)
+	}
+	if err := urlquery.Validate(query, "model", "insecure", "keyless"); err != nil {
+		return nil, wrapURL(err)
+	}
 	model := strings.TrimSpace(query.Get("model"))
 	if model == "" {
 		return nil, fmt.Errorf("openai: URL %q is missing the required model query parameter", u.String())
 	}
 
-	baseURL, err := baseURLFromURL(u, query.Get("insecure") == "true")
+	insecure, err := urlquery.Bool(query, "insecure")
+	if err != nil {
+		return nil, wrapURL(err)
+	}
+	keyless, err := urlquery.Bool(query, "keyless")
+	if err != nil {
+		return nil, wrapURL(err)
+	}
+	baseURL, err := baseURLFromURL(u, insecure)
 	if err != nil {
 		return nil, err
 	}
 
-	apiKey, err := resolveAPIKey(ctx, creds, strings.TrimSpace(query.Get("cred-prefix")))
+	apiKey, err := resolveAPIKey(ctx, creds, keyless)
 	if err != nil {
 		return nil, err
 	}
@@ -135,18 +142,17 @@ func normalizeBaseURL(raw string) (string, error) {
 	return u.Scheme + "://" + u.Host + strings.TrimRight(u.EscapedPath(), "/"), nil
 }
 
-// resolveAPIKey looks up "<prefix>-api-key" in creds; a nil store, an
-// empty prefix, or a missing key yields an empty key (keyless server).
-func resolveAPIKey(ctx context.Context, creds cred.Store, prefix string) (string, error) {
-	if creds == nil || prefix == "" {
+// resolveAPIKey retrieves the planner key unless keyless mode is explicit.
+func resolveAPIKey(ctx context.Context, creds cred.Store, keyless bool) (string, error) {
+	if keyless {
 		return "", nil
 	}
-	key, err := creds.Get(ctx, prefix+"-api-key")
+	key, err := cred.Require(ctx, creds, cred.PlannerAPIKey)
 	if err != nil {
-		if errors.Is(err, cred.ErrNotFound) {
-			return "", nil
+		if errors.Is(err, cred.ErrStoreNotConfigured) {
+			return "", fmt.Errorf("openai: %w; use keyless=true for an unauthenticated endpoint", err)
 		}
-		return "", fmt.Errorf("openai: resolve API key: %w", err)
+		return "", fmt.Errorf("openai: %w", err)
 	}
 	return key, nil
 }

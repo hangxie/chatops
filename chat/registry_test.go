@@ -10,6 +10,7 @@ import (
 
 	"github.com/hangxie/chatops/chat"
 	"github.com/hangxie/chatops/cred"
+	"github.com/hangxie/chatops/internal/testutils"
 )
 
 func fakeOpener(conn chat.Conn, err error) chat.OpenerFunc {
@@ -134,7 +135,7 @@ func Test_Registry_Open_passes_url_and_context_to_opener(t *testing.T) {
 	var gotURL *url.URL
 	var gotCtxValue any
 	var gotCredentials cred.Store
-	credentials := &fakeStore{}
+	credentials := testutils.CredentialStore{}
 	reg := chat.NewRegistry(chat.Backend{
 		Scheme: "capture",
 		Opener: func(ctx context.Context, u *url.URL, creds cred.Store) (chat.Conn, error) {
@@ -153,10 +154,5 @@ func Test_Registry_Open_passes_url_and_context_to_opener(t *testing.T) {
 	require.Equal(t, "host:1234", gotURL.Host)
 	require.Equal(t, "/some/path", gotURL.Path)
 	require.Equal(t, "1", gotURL.Query().Get("opt"))
-	require.Same(t, credentials, gotCredentials)
+	require.Equal(t, credentials, gotCredentials)
 }
-
-type fakeStore struct{}
-
-func (*fakeStore) Get(context.Context, string) (string, error) { return "", cred.ErrNotFound }
-func (*fakeStore) Close() error                                { return nil }

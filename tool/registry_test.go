@@ -9,20 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hangxie/chatops/cred"
+	"github.com/hangxie/chatops/internal/testutils"
 	"github.com/hangxie/chatops/tool"
 )
-
-// fakeCredStore is a minimal cred.Store for verifying that the
-// registry hands the store through to openers untouched.
-type fakeCredStore struct{}
-
-func (fakeCredStore) Get(_ context.Context, key string) (string, error) {
-	return "", cred.ErrNotFound
-}
-
-func (fakeCredStore) Close() error {
-	return nil
-}
 
 func fakeOpener(tl tool.Tool, err error) tool.OpenerFunc {
 	return func(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
@@ -177,14 +166,14 @@ func Test_Registry_Open_passes_arguments_to_opener(t *testing.T) {
 		Descriptor: stubDesc(),
 	})
 
-	creds := fakeCredStore{}
+	creds := testutils.CredentialStore{}
 	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
-	_, err := reg.Open(ctx, "capture://host/some/path?cred-prefix=k8s-prod", creds)
+	_, err := reg.Open(ctx, "capture://host/some/path?region=us-west", creds)
 	require.NoError(t, err)
 	require.Equal(t, "marker", gotCtxValue)
 	require.Equal(t, cred.Store(creds), gotCreds)
 	require.Equal(t, "capture", gotURL.Scheme)
 	require.Equal(t, "host", gotURL.Host)
 	require.Equal(t, "/some/path", gotURL.Path)
-	require.Equal(t, "k8s-prod", gotURL.Query().Get("cred-prefix"))
+	require.Equal(t, "us-west", gotURL.Query().Get("region"))
 }

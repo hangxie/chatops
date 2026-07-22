@@ -23,14 +23,8 @@ import (
 	"github.com/hangxie/chatops/cred"
 )
 
-const (
-	// Scheme is the URL scheme this backend serves in a chat.Registry.
-	Scheme = "slack"
-	// BotTokenKey names the credential holding the bot OAuth token.
-	BotTokenKey = "slack-bot-token"
-	// AppTokenKey names the credential holding the Socket Mode app token.
-	AppTokenKey = "slack-app-token"
-)
+// Scheme is the URL scheme this backend serves in a chat.Registry.
+const Scheme = "slack"
 
 type socketClient interface {
 	Events() <-chan socketmode.Event
@@ -118,7 +112,7 @@ func Opener(ctx context.Context, u *url.URL, creds cred.Store) (chat.Conn, error
 	return Open(ctx, creds)
 }
 
-// Open connects to Slack using BotTokenKey and AppTokenKey from creds.
+// Open connects to Slack using the predefined Slack credentials from creds.
 func Open(ctx context.Context, creds cred.Store) (*Conn, error) {
 	return open(ctx, creds, defaultClients)
 }
@@ -132,22 +126,13 @@ func open(ctx context.Context, creds cred.Store, clients clientFactory) (*Conn, 
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("slack: %w", err)
 	}
-	if creds == nil {
-		return nil, fmt.Errorf("slack: credential store is not configured")
-	}
-	botToken, err := creds.Get(ctx, BotTokenKey)
+	botToken, err := cred.Require(ctx, creds, cred.SlackBotToken)
 	if err != nil {
-		return nil, fmt.Errorf("slack: resolve %s: %w", BotTokenKey, err)
+		return nil, fmt.Errorf("slack: %w", err)
 	}
-	if botToken == "" {
-		return nil, fmt.Errorf("slack: credential %s is empty", BotTokenKey)
-	}
-	appToken, err := creds.Get(ctx, AppTokenKey)
+	appToken, err := cred.Require(ctx, creds, cred.SlackAppToken)
 	if err != nil {
-		return nil, fmt.Errorf("slack: resolve %s: %w", AppTokenKey, err)
-	}
-	if appToken == "" {
-		return nil, fmt.Errorf("slack: credential %s is empty", AppTokenKey)
+		return nil, fmt.Errorf("slack: %w", err)
 	}
 
 	socket, api := clients(botToken, appToken)

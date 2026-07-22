@@ -32,9 +32,9 @@ The `cred` package provides a generic way to access credentials from pluggable b
 
 ```go
 type Store interface {
-    // Get retrieves the credential identified by key. It returns an
+    // Get retrieves the credential identified by the predefined key. It returns an
     // error wrapping cred.ErrNotFound when the key does not exist.
-    Get(ctx context.Context, key string) (string, error)
+    Get(ctx context.Context, key cred.Key) (string, error)
 
     // Close releases any resources held by the store.
     Close() error
@@ -49,7 +49,7 @@ Available backends:
 | ----------- | --------------- | -------------------------------- |
 | `json-file` | `cred/jsonfile` | `json-file:///path/to/file.json` |
 
-How each backend lays out credentials in its store is backend-specific and documented per backend below.
+`cred.Key` is a closed set of application credential identifiers: `cred.SlackBotToken`, `cred.SlackAppToken`, and `cred.PlannerAPIKey`. Store backends map those identifiers to their native layout, preventing callers from constructing arbitrary names or configurable prefixes.
 
 ### Usage
 
@@ -73,7 +73,7 @@ if err != nil {
 }
 defer store.Close()
 
-secret, err := store.Get(context.Background(), "db-password")
+secret, err := store.Get(context.Background(), cred.PlannerAPIKey)
 if errors.Is(err, cred.ErrNotFound) {
     // credential does not exist
 }
@@ -83,14 +83,21 @@ Backends also expose a typed `Open` function for direct use, e.g. `jsonfile.Open
 
 ### json-file backend
 
-The store URL is the file path (relative paths work too: `json-file://relative/path.json`). The file must contain a single JSON object mapping credential keys to string values:
+The store URL is the file path (relative paths work too: `json-file://relative/path.json`). The file uses a strict schema whose sections and credentials are optional:
 
 ```json
 {
-  "db-password": "hunter2",
-  "api-token": "abc123"
+  "slack": {
+    "bot-token": "xoxb-...",
+    "app-token": "xapp-..."
+  },
+  "planner": {
+    "api-key": "sk-..."
+  }
 }
 ```
+
+Unknown sections, unknown fields, nulls, and non-string values are rejected by `Open`. Missing credentials remain absent and cause `Get` to wrap `cred.ErrNotFound`; present empty strings are returned so the consuming component can report that its required credential is empty.
 
 ### Adding a new backend
 
@@ -113,6 +120,8 @@ The store URL is the file path (relative paths work too: `json-file://relative/p
 
 5. Add a test file with table-driven tests covering `Open` failures, existing keys, missing keys, context cancellation, and opening through a `cred.Registry` with the exported scheme.
 6. List the backend in the table above and document its store layout in a section like the json-file one.
+
+Adding a new application credential requires adding its identifier and section/field path to the schema table in `cred/cred.go`. `Key.String` and schema-aware store backends derive their mappings from that table.
 
 ## Chat backends (`chat`)
 
@@ -138,7 +147,7 @@ type Conn interface {
 
 Messages are grouped into **conversations** — the topic or thread a piece of work is about. Each backend computes a stable conversation ID from its native addressing (e.g. a Slack backend derives it from channel and thread; telnet has a single conversation) and translates it back on send. Callers treat `Message.ConversationID` as an opaque string scoped to one `Conn`: to reply, send with the `ConversationID` of the message being answered.
 
-A connection is identified by a single URL — the scheme selects the backend and the rest of the URL locates the server. Credential values are **never** part of the URL; backends resolve them from the `cred.Store` passed to `Registry.Open` under documented conventional key names. A backend that needs no credentials ignores the store.
+A connection is identified by a single URL — the scheme selects the backend and the rest of the URL locates the server. Credential values are **never** part of the URL; backends resolve predefined `cred.Key` identifiers from the `cred.Store` passed to `Registry.Open`. A backend that needs no credentials ignores the store.
 
 Available backends:
 
@@ -184,7 +193,7 @@ Backends also expose a typed `Open` function for direct use, e.g. `telnet.Open(c
 
 ### Slack backend
 
-The Slack backend uses the Events API and interactive payloads over Socket Mode for inbound messages, `chat.postMessage` for outbound replies, and `chat.update` to remove consumed controls. Its `slack://` URL takes no host, path, or query configuration. It resolves the bot OAuth token from `slack-bot-token` and the app-level token with `connections:write` from `slack-app-token`; see the user guide for the required app event subscriptions and bot scopes. Startup calls `auth.test` to validate the bot token and obtain its user ID before opening Socket Mode.
+The Slack backend uses the Events API and interactive payloads over Socket Mode for inbound messages, `chat.postMessage` for outbound replies, and `chat.update` to remove consumed controls. Its `slack://` URL takes no host, path, or query configuration. It resolves the bot OAuth token from `cred.SlackBotToken` (`slack.bot-token`) and the app-level token with `connections:write` from `cred.SlackAppToken` (`slack.app-token`); see the user guide for the required app event subscriptions and bot scopes. Startup calls `auth.test` to validate the bot token and obtain its user ID before opening Socket Mode.
 
 Every accepted Socket Mode envelope is acknowledged before its event is processed. Human message and `app_mention` events become `chat.Message` values only when their text starts with the exact `<@USERID>` obtained for the authenticated bot. The backend strips that stable bot identity before planning, so changing the bot's display name requires no ChatOps configuration. Mentions of other users, bot mentions later in the text, unmentioned messages, bot messages, message subtypes, events without a sender, and empty commands are ignored. The conversation ID combines the Slack channel ID with the root message timestamp. A root message and all replies in its thread therefore share one engine conversation, and `Send` posts back into that thread. Routing entries refresh on receive and send, expire after 24 hours of inactivity, and are limited to 4,096 entries. An indexed min-heap makes refresh, expiry, and capacity eviction O(log n); reaching capacity evicts the earliest-expiring route.
 
@@ -202,7 +211,7 @@ The connection carries a single conversation whose ID is the `telnet.Conversatio
 2. Define a `Conn` type implementing the `chat.Conn` interface:
    - Compute `Message.ConversationID` on receive from the backend's native addressing (e.g. Slack channel + thread), and translate it back on send. Wrap `chat.ErrUnknownConversation` (with `%w`) when a sent ID does not map to a conversation.
    - After `Close`, `Receive` and `Send` report an error wrapping `chat.ErrClosed`; `Close` must also unblock a pending `Receive`.
-3. Provide an `Open` function taking `context.Context`, a `cred.Store`, and any backend-specific location parameters, and returning `(*Conn, error)`. Resolve credential values from the store under documented conventional key names; never accept values as URL elements.
+3. Provide an `Open` function taking `context.Context`, a `cred.Store`, and any backend-specific location parameters, and returning `(*Conn, error)`. Resolve credential values using predefined `cred.Key` identifiers; never accept values as URL elements.
 4. Export the scheme and an opener so callers can wire the backend into a `chat.Registry` (backends never self-register via `init()`), and add it to the CLI's shared registry wiring in `internal/registry` (used by both `cmd/server` and `cmd/chats`):
 
    ```go
@@ -236,11 +245,7 @@ type Tool interface {
 
 A call carries enough detail for the tool to act, without prescribing how it maps to actual API calls or commands: an **action** (the verb, e.g. `restart`), a **target** (what it applies to, e.g. `deployment/web`; may be empty), and optional key-value **parameters**. The result carries **text** — the human-readable outcome, composed by the tool and ready to post to chat as-is — plus optional machine-readable key-value **details**; callers never need the details to render a reply. Text is empty only when the tool has already delivered the outcome to the human itself (like the reply tool, whose action is posting into chat), so callers relay non-empty text and stay silent on empty text.
 
-A tool instance is identified by a single URL — the scheme selects the implementation, host/port/path locate the endpoint it operates on, and query parameters carry further instance configuration. Credential *values* are **never** part of the URL; tools resolve them from the `cred.Store` passed to `Open`. Each tool defines conventional key names prefixed by its name (e.g. `k8s-ca`/`k8s-cert`/`k8s-key`, `proxmox-ssh-user`/`proxmox-ssh-key`, `harbor-user`/`harbor-password`), and the prefix can be overridden per instance with the `cred-prefix` query parameter so multiple instances of the same tool can use distinct credentials:
-
-```
-kubernetes://prod.example.com:6443?cred-prefix=k8s-prod
-```
+A tool instance is identified by a single URL — the scheme selects the implementation, host/port/path locate the endpoint it operates on, and query parameters carry further non-secret instance configuration. Credential *values* are **never** part of the URL; tools resolve predefined `cred.Key` identifiers from the `cred.Store` passed to `Open`. Adding a credential-bearing tool therefore extends the application credential schema rather than accepting caller-selected key prefixes.
 
 Available tools:
 
@@ -316,7 +321,7 @@ The only supported action is `send`: `Target` is the conversation ID to post int
    - `Invoke` maps the call's action/target/parameters onto the tool's API, wrapping `tool.ErrUnknownAction` (with `%w`) when the action is not supported so callers can detect it with `errors.Is`.
    - Compose `Result.Text` as the complete human-readable answer; put supplementary machine-readable output in `Result.Details`.
    - `Close` releases connections or other resources.
-3. Provide an `Open` function taking `context.Context` plus tool-specific parameters and returning `(*Tool, error)`. Resolve credentials from the `cred.Store` using the tool's conventional key names (document them), honoring the `cred-prefix` override; never accept credential values as parameters or URL elements.
+3. Provide an `Open` function taking `context.Context` plus tool-specific parameters and returning `(*Tool, error)`. Resolve credentials from the `cred.Store` using predefined `cred.Key` identifiers; never accept credential values as parameters or URL elements.
 4. Export the scheme and an opener so callers can wire the tool into a `tool.Registry` (tools never self-register via `init()`):
 
    ```go
@@ -346,7 +351,7 @@ The only supported action is `send`: `Target` is the conversation ID to post int
    ```
 
 6. Add a test file with table-driven tests covering `Open` failures, supported and unknown actions, context cancellation, `Close` semantics, opening through a `tool.Registry` with the exported scheme, and that every described action is one `Invoke` accepts.
-7. List the tool in the table above and document its actions and credential key names in a section like the ping one.
+7. List the tool in the table above and document its actions and credential identifiers in a section like the ping one.
 
 ## Planners (`planner`)
 
@@ -368,7 +373,7 @@ A request carries the message **text**, the **conversation ID** and **sender** (
 
 Steps name tools by URL only, so a plan is **not self-contained**: the caller executes it in the context of the request that produced it. In particular, `reply://` resolves to the reply tool bound to the chat connection that request arrived on — a caller serving several connections keeps one reply tool per connection rather than sharing one — which is what keeps replies on the right connection even when conversation IDs collide across connections.
 
-A planner is identified by a single URL — the scheme selects the backend, host/port/path locate the endpoint it talks to (empty for providers with a well-known API endpoint), and query parameters carry further configuration such as the model (e.g. `openai-chat-completions://api.openai.com/v1?model=gpt-5`, `anthropic://?model=claude-fable-5`). As with `tool`, credential *values* are **never** part of the URL; backends resolve them (e.g. API keys) from the `cred.Store` passed to `Open`, under conventional key names prefixed by the backend name (e.g. `anthropic-api-key`), or a `cred-prefix` query parameter.
+A planner is identified by a single URL — the scheme selects the backend, host/port/path locate the endpoint it talks to (empty for providers with a well-known API endpoint), and query parameters carry further configuration such as the model (e.g. `openai-chat-completions://api.openai.com/v1?model=gpt-5`, `anthropic://?model=claude-fable-5`). Credential *values* are **never** part of the URL. Because the server runs one planner, an authenticated backend resolves the single `cred.PlannerAPIKey`; caller-selected credential prefixes are not supported.
 
 `Open` also receives the caller's enabled tool set (the `*tool.Registry` built from `--tool`), so an LLM-backed backend can offer those tools to the model as callable functions and emit plan steps naming them by scheme. A backend that plans a fixed set of steps (such as `ping`) ignores it.
 
@@ -436,7 +441,7 @@ A dummy planner that recognizes only the ping intent, useful as a wiring check a
 
 ### openai-chat-completions planner
 
-A planner backed by any service that speaks the OpenAI Chat Completions API, so the same backend drives OpenAI, Google Gemini's OpenAI-compatible endpoint, a local Ollama, vLLM, LocalAI, and similar servers. The endpoint is configured through the URL: the host is required (the planner is not tied to a fixed provider) and locates the endpoint, whose path defaults to `/v1`, with `insecure=true` selecting plain HTTP. The `model` query parameter is required (there is no universal default across services). The API key is read from the `cred.Store` under `<cred-prefix>-api-key` when `cred-prefix` is set and sent as a bearer token; without it, or when no key is found, no `Authorization` header is sent, so keyless servers work.
+A planner backed by any service that speaks the OpenAI Chat Completions API, so the same backend drives OpenAI, Google Gemini's OpenAI-compatible endpoint, a local Ollama, vLLM, LocalAI, and similar servers. The endpoint is configured through the URL: the host is required (the planner is not tied to a fixed provider) and locates the endpoint, whose path defaults to `/v1`, with `insecure=true` selecting plain HTTP. The `model` query parameter is required (there is no universal default across services). By default the backend requires `cred.PlannerAPIKey` (`planner.api-key`) and sends it as a bearer token. `keyless=true` explicitly selects an unauthenticated endpoint; a missing or empty key is otherwise a startup error.
 
 - The host is required, so a hostless or mistyped URL (e.g. the typo `openai-chat-completions:///host/v1` with three slashes, which parses to an empty host) is rejected rather than silently defaulting to some provider.
 - Each enabled tool's scheme is offered to the model as a function name, so the schemes must satisfy the OpenAI function-name rules (letters, digits, `_`, `-`, up to 64 characters). A tool whose scheme uses `+` or `.` is rejected when the planner is opened, rather than making every completion request fail.
@@ -459,7 +464,7 @@ bot>  pong
 2. Define a `Planner` type implementing the `planner.Planner` interface:
    - `Plan` turns one inbound message into steps; express replies and clarifying questions as steps invoking the `reply://` tool with the request's `ConversationID` as the call target. Keep any per-conversation context keyed by the `(ConnectionID, ConversationID)` pair — never by `ConversationID` alone, which collides across chat connections — and make the planner safe for concurrent use.
    - `Close` releases connections or other resources.
-3. Provide an `Open` function taking `context.Context` plus backend-specific parameters and returning `(*Planner, error)`. Resolve credentials (e.g. API keys) from the `cred.Store` using the backend's conventional key names (document them), honoring the `cred-prefix` override; never accept credential values as parameters or URL elements.
+3. Provide an `Open` function taking `context.Context` plus backend-specific parameters and returning `(*Planner, error)`. Resolve authentication from `cred.PlannerAPIKey` when needed; never accept credential values as parameters or URL elements.
 4. Export the scheme and an opener so callers can wire the backend into a `planner.Registry` (backends never self-register via `init()`):
 
    ```go
@@ -473,4 +478,4 @@ bot>  pong
    ```
 
 5. Add a test file with table-driven tests covering `Open` failures, representative message-to-plan mappings (including multi-message sequences when the backend keeps conversation context, and isolation across conversations and across connections), context cancellation, `Close` semantics, and opening through a `planner.Registry` with the exported scheme.
-6. List the backend in the table above and document its URL parameters and credential key names in a section like the ping one.
+6. List the backend in the table above and document its URL parameters and credential identifiers in a section like the ping one.

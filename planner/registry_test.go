@@ -9,21 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hangxie/chatops/cred"
+	"github.com/hangxie/chatops/internal/testutils"
 	"github.com/hangxie/chatops/planner"
 	"github.com/hangxie/chatops/tool"
 )
-
-// fakeCredStore is a minimal cred.Store for verifying that the
-// registry hands the store through to openers untouched.
-type fakeCredStore struct{}
-
-func (fakeCredStore) Get(_ context.Context, key string) (string, error) {
-	return "", cred.ErrNotFound
-}
-
-func (fakeCredStore) Close() error {
-	return nil
-}
 
 func fakeOpener(p planner.Planner, err error) planner.OpenerFunc {
 	return func(_ context.Context, _ *url.URL, _ cred.Store, _ *tool.Registry) (planner.Planner, error) {
@@ -136,7 +125,7 @@ func Test_Registry_Open_passes_arguments_to_opener(t *testing.T) {
 		},
 	})
 
-	creds := fakeCredStore{}
+	creds := testutils.CredentialStore{}
 	tools := tool.NewRegistry(tool.Backend{
 		Scheme:     "widget",
 		Opener:     fakeToolOpener,

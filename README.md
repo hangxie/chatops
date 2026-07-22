@@ -92,11 +92,11 @@ The current server supports these URLs:
 
 | Component | Scheme | URL form | Notes |
 | --- | --- | --- | --- |
-| Chat | `slack` | `slack://` | Uses Socket Mode with `slack-bot-token` and `slack-app-token` from the credential store; replies are threaded. |
+| Chat | `slack` | `slack://` | Uses Socket Mode with `slack.bot-token` and `slack.app-token` from the credential store; replies are threaded. |
 | Chat | `telnet` | `telnet://host:port` | Port defaults to `23`; the protocol is newline-delimited text without telnet option negotiation. |
 | Planner | `ping` | `ping://` | Recognizes ping requests and requires no credentials. |
 | Planner | `openai-chat-completions` | `openai-chat-completions://host[:port][/path]?model=NAME` | Drives any OpenAI Chat Completions endpoint (OpenAI, Gemini, Ollama, …). See [OpenAI-compatible planner](#openai-compatible-planner). |
-| Credentials | `json-file` | `json-file:///path/to/file.json` | Optional JSON object mapping credential names to string values. |
+| Credentials | `json-file` | `json-file:///path/to/file.json` | Strict JSON document with optional `slack` and `planner` sections. |
 
 With no `--tool` flag, the server exposes every compiled-in selectable tool, preserving the default behavior. Repeat `--tool` to expose an explicit allowlist; for example, `--tool ping --tool status` exposes exactly `ping://` and `status://`. An unknown name prevents startup and reports the available choices. A planner that attempts to use a compiled-in tool omitted from the allowlist receives the same unknown-tool error as any unavailable tool.
 
@@ -129,24 +129,24 @@ The URL configures the endpoint and model:
 | host / port / path | Endpoint location. The host is required (this planner targets any compatible endpoint, not a fixed provider); the path defaults to `/v1`. |
 | `model` (required) | Model identifier to request, for example `gpt-5`, `gemini-3.1-flash-lite`, or `llama3`. |
 | `insecure=true` | Use plain HTTP instead of HTTPS, for a local server. |
-| `cred-prefix=NAME` | Resolve the API key from the credential store under `NAME-api-key`. |
+| `keyless=true` | Explicitly omit authentication for a local or otherwise unauthenticated endpoint. |
 
-The API key is read from the credential store (never the URL) under `<cred-prefix>-api-key` and sent as a bearer token. When `cred-prefix` is omitted, or no matching key is found, no `Authorization` header is sent, so keyless local servers work.
+By default the planner requires `planner.api-key` from the credential store and sends it as a bearer token. A missing or empty key prevents startup. Set `keyless=true` explicitly when the endpoint requires no authentication.
 
 ```bash
 # OpenAI
 chatops server --chat telnet://localhost:6023 \
-    --planner 'openai-chat-completions://api.openai.com/v1?model=gpt-5&cred-prefix=openai' \
+    --planner 'openai-chat-completions://api.openai.com/v1?model=gpt-5' \
     --credentials json-file:///etc/chatops/credentials.json
 
 # Google Gemini's OpenAI-compatible endpoint
 chatops server --chat telnet://localhost:6023 \
-    --planner 'openai-chat-completions://generativelanguage.googleapis.com/v1beta/openai?model=gemini-3.1-flash-lite&cred-prefix=gemini' \
+    --planner 'openai-chat-completions://generativelanguage.googleapis.com/v1beta/openai?model=gemini-3.1-flash-lite' \
     --credentials json-file:///etc/chatops/credentials.json
 
 # Local Ollama (no key required)
 chatops server --chat telnet://localhost:6023 \
-    --planner 'openai-chat-completions://localhost:11434/v1?insecure=true&model=llama3' \
+    --planner 'openai-chat-completions://localhost:11434/v1?insecure=true&keyless=true&model=llama3' \
     --tool ping --tool status
 ```
 
@@ -220,14 +220,16 @@ The app is named `chatops` by default. Pass a different name as an argument (or 
 
 When pasting the manifest by hand instead, edit the `name` fields in [`scripts/slack-app-manifest.json`](scripts/slack-app-manifest.json) before pasting.
 
-Both paths finish with the same two manual steps, because Slack does not expose these credentials through the manifest API: install the app to your workspace to obtain the bot token (`xoxb-…`), and generate an app-level token with the `connections:write` scope for the Socket Mode token (`xapp-…`). Store them under `slack-bot-token` and `slack-app-token`, respectively. The script prints the exact links for both. To serve channels beyond direct messages, add the matching `message.*` events and history scopes to the manifest before creating the app, and invite the bot to each channel.
+Both paths finish with the same two manual steps, because Slack does not expose these credentials through the manifest API: install the app to your workspace to obtain the bot token (`xoxb-…`), and generate an app-level token with the `connections:write` scope for the Socket Mode token (`xapp-…`). Store them as `slack.bot-token` and `slack.app-token`, respectively. The script prints the exact links for both. To serve channels beyond direct messages, add the matching `message.*` events and history scopes to the manifest before creating the app, and invite the bot to each channel.
 
 Add both tokens to the credential store and start the server with the configuration-free `slack://` URL:
 
 ```json
 {
-  "slack-bot-token": "xoxb-...",
-  "slack-app-token": "xapp-..."
+  "slack": {
+    "bot-token": "xoxb-...",
+    "app-token": "xapp-..."
+  }
 }
 ```
 
@@ -245,17 +247,23 @@ Each root message starts a ChatOps conversation. The bot posts its response in t
 
 ### Credential file
 
-The `json-file` credential store expects a single JSON object whose values are strings:
+The `json-file` credential store uses a predefined schema:
 
 ```json
 {
-  "slack-bot-token": "xoxb-...",
-  "slack-app-token": "xapp-...",
-  "openai-api-key": "sk-..."
+  "slack": {
+    "bot-token": "xoxb-...",
+    "app-token": "xapp-..."
+  },
+  "planner": {
+    "api-key": "sk-..."
+  }
 }
 ```
 
-Credential values do not belong in chat backend, planner, or tool URLs. Components that require authentication resolve it from the credential store. Credentials needed to open the store itself use that store backend's standard configuration chain.
+A complete sample with dummy values is available at [`scripts/cred-store-sample.json`](scripts/cred-store-sample.json). Both sections and every credential within them are optional, allowing configurations such as telnet plus the ping planner. Unknown sections, unknown fields, nulls, and non-string credential values are rejected when the store opens, so spelling and shape mistakes fail at startup. Credential values do not belong in chat backend, planner, or tool URLs. Credentials needed to open the store itself use that store backend's standard configuration chain.
+
+When upgrading a flat credential file, move the Slack values into the `slack` object and the one planner API key into `planner.api-key`; arbitrary top-level keys are no longer accepted. Remove `cred-prefix` from OpenAI-compatible planner URLs. For a keyless endpoint, add `keyless=true` explicitly. The `insecure` parameter now accepts only `true` or `false`; values previously treated as false, such as `1`, `yes`, or an empty value, now prevent startup. Go implementations of `cred.Store` must change `Get` from a string key to `cred.Key`, and callers must use the predefined constants.
 
 ### Chats
 

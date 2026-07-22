@@ -216,7 +216,7 @@ func Test_run_passes_credentials_to_chat(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
 	command := Cmd{CredentialsURL: "json-file://" + path, ChatURL: "slack://", PlannerURL: "ping://"}
-	require.ErrorContains(t, command.run(context.Background()), "slack-bot-token")
+	require.ErrorContains(t, command.run(context.Background()), "slack.bot-token")
 }
 
 func Test_run_reports_open_errors(t *testing.T) {

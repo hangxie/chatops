@@ -117,11 +117,11 @@ func (r *Registry) Select(names ...string) (*Registry, error) {
 }
 
 // Open opens the tool instance identified by rawURL, such as
-// "kubernetes://prod.example.com:6443?cred-prefix=k8s-prod"; the URL
-// scheme selects the tool. Credentials the tool needs are resolved
-// from creds by the key names in the package documentation, never
-// taken from the URL. creds may be nil when every wired tool takes no
-// credentials; openers that need credentials must report an error.
+// "kubernetes://prod.example.com:6443"; the URL scheme selects the tool.
+// Credentials the tool needs are resolved from creds using predefined
+// cred.Key identifiers, never taken from the URL. creds may be nil when the
+// selected tool takes no credentials; openers that need credentials must
+// report an error.
 func (r *Registry) Open(ctx context.Context, rawURL string, creds cred.Store) (Tool, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
