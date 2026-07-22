@@ -19,10 +19,12 @@ import (
 type OpenerFunc func(ctx context.Context, u *url.URL, creds cred.Store) (Tool, error)
 
 // Backend pairs a URL scheme with the opener serving it, for wiring
-// into NewRegistry.
+// into NewRegistry. Descriptor is required: every tool self-describes so
+// planners can offer it a precise, typed function definition.
 type Backend struct {
-	Scheme string
-	Opener OpenerFunc
+	Scheme     string
+	Opener     OpenerFunc
+	Descriptor *Descriptor
 }
 
 // schemeRE is the URI scheme syntax from RFC 3986 section 3.1.
@@ -31,7 +33,8 @@ var schemeRE = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*$`)
 // Registry maps URL schemes to tool implementations. It is immutable
 // after construction and therefore safe for concurrent use.
 type Registry struct {
-	openers map[string]OpenerFunc
+	openers     map[string]OpenerFunc
+	descriptors map[string]Descriptor
 }
 
 // NewRegistry builds a Registry serving the given backends. Schemes
@@ -41,6 +44,7 @@ type Registry struct {
 // syntax, an opener is nil, or a scheme appears twice.
 func NewRegistry(backends ...Backend) *Registry {
 	openers := make(map[string]OpenerFunc, len(backends))
+	descriptors := make(map[string]Descriptor, len(backends))
 	for _, b := range backends {
 		if !schemeRE.MatchString(b.Scheme) {
 			panic(fmt.Sprintf("tool: NewRegistry with invalid scheme %q", b.Scheme))
@@ -52,9 +56,22 @@ func NewRegistry(backends ...Backend) *Registry {
 		if _, exists := openers[scheme]; exists {
 			panic(fmt.Sprintf("tool: NewRegistry with duplicate scheme %q", scheme))
 		}
+		if b.Descriptor == nil {
+			panic(fmt.Sprintf("tool: NewRegistry with nil descriptor for scheme %q", b.Scheme))
+		}
+		validateDescriptor(scheme, *b.Descriptor)
 		openers[scheme] = b.Opener
+		descriptors[scheme] = b.Descriptor.Clone()
 	}
-	return &Registry{openers: openers}
+	return &Registry{openers: openers, descriptors: descriptors}
+}
+
+// validateDescriptor panics on an invalid descriptor: it is a programmer
+// error in the static backend list, caught here rather than at the model API.
+func validateDescriptor(scheme string, d Descriptor) {
+	if err := d.Validate(); err != nil {
+		panic(fmt.Sprintf("tool: NewRegistry with descriptor for scheme %q: %v", scheme, err))
+	}
 }
 
 // Schemes returns the registered tool URL schemes in lexical order. The
@@ -68,11 +85,23 @@ func (r *Registry) Schemes() []string {
 	return schemes
 }
 
-// Select returns a registry containing only the named tools. Repeated and
-// mixed-case names identify the same tool. An unknown name returns an error
-// listing the available choices.
+// Descriptor returns the descriptor registered for scheme, matched
+// case-insensitively. The second result is false only for an unknown scheme.
+func (r *Registry) Descriptor(scheme string) (Descriptor, bool) {
+	d, ok := r.descriptors[strings.ToLower(scheme)]
+	if !ok {
+		return Descriptor{}, false
+	}
+	return d.Clone(), true
+}
+
+// Select returns a registry containing only the named tools, carrying
+// over each tool's descriptor. Repeated and mixed-case names identify the
+// same tool. An unknown name returns an error listing the available
+// choices.
 func (r *Registry) Select(names ...string) (*Registry, error) {
 	openers := make(map[string]OpenerFunc, len(names))
+	descriptors := make(map[string]Descriptor, len(names))
 	for _, name := range names {
 		scheme := strings.ToLower(name)
 		opener, ok := r.openers[scheme]
@@ -80,8 +109,11 @@ func (r *Registry) Select(names ...string) (*Registry, error) {
 			return nil, fmt.Errorf("tool: unknown tool %q; available tools: %s", name, strings.Join(r.Schemes(), ", "))
 		}
 		openers[scheme] = opener
+		if d, ok := r.descriptors[scheme]; ok {
+			descriptors[scheme] = d.Clone()
+		}
 	}
-	return &Registry{openers: openers}, nil
+	return &Registry{openers: openers, descriptors: descriptors}, nil
 }
 
 // Open opens the tool instance identified by rawURL, such as

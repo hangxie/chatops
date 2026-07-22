@@ -11,7 +11,7 @@ import (
 )
 
 func Test_Opener_via_registry(t *testing.T) {
-	reg := tool.NewRegistry(tool.Backend{Scheme: ping.Scheme, Opener: ping.Opener})
+	reg := tool.NewRegistry(tool.Backend{Scheme: ping.Scheme, Opener: ping.Opener, Descriptor: &ping.Descriptor})
 
 	testCases := map[string]struct {
 		url    string
@@ -99,4 +99,22 @@ func Test_Close_is_idempotent(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tl.Close())
 	require.NoError(t, tl.Close())
+}
+
+func Test_Descriptor(t *testing.T) {
+	require.NotEmpty(t, ping.Descriptor.Summary)
+	require.Len(t, ping.Descriptor.Actions, 1)
+
+	action := ping.Descriptor.Actions[0]
+	require.Equal(t, "ping", action.Name)
+	require.False(t, action.TakesTarget)
+	require.Empty(t, action.Parameters)
+
+	// The described action must be one Invoke actually accepts, so the
+	// descriptor cannot drift from the implementation.
+	tl, err := ping.Open(context.Background())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, tl.Close()) }()
+	_, err = tl.Invoke(context.Background(), tool.Call{Action: action.Name})
+	require.NoError(t, err)
 }

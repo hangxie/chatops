@@ -5,55 +5,31 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strings"
 
-	"github.com/hangxie/chatops/planner"
 	"github.com/hangxie/chatops/tool"
-	"github.com/hangxie/chatops/tool/reply"
 )
 
 // replyFunc is the built-in function the model calls to reply to the
 // requester; it is always offered, alongside the operational tools.
 const replyFunc = "reply"
 
-// Descriptions the model sees for the offered functions.
-const (
-	replyFuncDesc = "Post a message back to the person who sent the request, " +
-		"for answers, clarifying questions, or acknowledgements."
-	toolFuncDescFmt = "Invoke the %q operational tool. Set action to the verb to " +
-		"perform, target to what it applies to (may be empty), and parameters to " +
-		"any additional key/value arguments."
-)
+// replyFuncDesc is the description the model sees for the reply function.
+const replyFuncDesc = "Post a message back to the person who sent the request, " +
+	"for answers, clarifying questions, or acknowledgements."
 
-// JSON Schemas for the two function shapes: reply takes only text, and
-// every operational tool takes the generic action/target/parameters
-// triple, since tools do not describe their own vocabulary.
-var (
-	replyParams = mustJSON(map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"text": map[string]any{
-				"type":        "string",
-				"description": "The message text to post back to the requester.",
-			},
+// replyParams is the JSON Schema for the built-in reply function: it takes
+// only the message text. Operational tools get a typed schema built at
+// runtime from their descriptor (see actionSchema).
+var replyParams = mustJSON(map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"text": map[string]any{
+			"type":        "string",
+			"description": "The message text to post back to the requester.",
 		},
-		"required":             []string{"text"},
-		"additionalProperties": false,
-	})
-	toolParams = mustJSON(map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"action": map[string]any{"type": "string"},
-			"target": map[string]any{"type": "string"},
-			"parameters": map[string]any{
-				"type":                 "object",
-				"additionalProperties": map[string]any{"type": "string"},
-			},
-		},
-		"required":             []string{"action"},
-		"additionalProperties": false,
-	})
-)
+	},
+	"required": []string{"text"},
+})
 
 // maxFuncNameLen is the OpenAI limit on function names.
 const maxFuncNameLen = 64
@@ -77,87 +53,136 @@ func validateSchemes(schemes []string) error {
 	return nil
 }
 
-// toolDefs builds the function catalog offered to the model: the
-// built-in reply function plus one generic function per enabled tool
-// scheme, in a stable order (reply first, then schemes sorted).
-func toolDefs(schemes []string) []toolDef {
-	defs := make([]toolDef, 0, len(schemes)+1)
+// toolFunc is the (scheme, action) one offered function invokes, kept so a
+// tool call's arguments can be validated against the action's schema.
+type toolFunc struct {
+	scheme string
+	action tool.Action
+}
+
+// functionName joins scheme and action with a hyphen (e.g. "status-check"),
+// so the name carries the action and the schema needs no discriminator.
+func functionName(scheme, action string) string {
+	return scheme + "-" + action
+}
+
+// buildCatalog returns the functions offered to the model — reply plus one
+// typed function per (scheme, action) — and the reverse map from function
+// name to the action it invokes. An invalid, too-long, or colliding
+// generated name is a configuration error.
+func buildCatalog(schemes []string, descriptors map[string]tool.Descriptor) ([]toolDef, map[string]toolFunc, error) {
+	capacity := 1 // reply, plus one function per action below
+	for _, scheme := range schemes {
+		capacity += len(descriptors[scheme].Actions)
+	}
+	defs := make([]toolDef, 0, capacity)
 	defs = append(defs, toolDef{Type: "function", Function: functionDef{
 		Name:        replyFunc,
 		Description: replyFuncDesc,
 		Parameters:  replyParams,
 	}})
+	funcs := map[string]toolFunc{}
+
 	sorted := append([]string(nil), schemes...)
 	sort.Strings(sorted)
 	for _, scheme := range sorted {
-		defs = append(defs, toolDef{Type: "function", Function: functionDef{
-			Name:        scheme,
-			Description: fmt.Sprintf(toolFuncDescFmt, scheme),
-			Parameters:  toolParams,
-		}})
-	}
-	return defs
-}
-
-// callArgs is the union of argument shapes the model may send: text for
-// the reply function, and action/target/parameters for an operational
-// tool.
-type callArgs struct {
-	Text       string            `json:"text"`
-	Action     string            `json:"action"`
-	Target     string            `json:"target"`
-	Parameters map[string]string `json:"parameters"`
-}
-
-// stepsFromMessage maps one assistant message to plan steps: prose and
-// reply calls become reply steps into conv, other tool calls become
-// "<scheme>://" steps. Model output is untrusted, so each tool call is
-// checked against allowed (the offered schemes) and its required
-// text/action validated; it errors on bad JSON, an unavailable tool, or
-// a missing text/action.
-func stepsFromMessage(msg respMessage, conv string, allowed map[string]struct{}) (planner.Plan, error) {
-	var steps []planner.Step
-	if text := strings.TrimSpace(msg.Content); text != "" {
-		steps = append(steps, replyStep(conv, text, nil))
-	}
-	for _, call := range msg.ToolCalls {
-		var args callArgs
-		if raw := call.Function.Arguments; raw != "" {
-			if err := json.Unmarshal([]byte(raw), &args); err != nil {
-				return planner.Plan{}, fmt.Errorf("openai: decode arguments for %q: %w", call.Function.Name, err)
+		d, ok := descriptors[scheme]
+		if !ok {
+			return nil, nil, fmt.Errorf("openai: no descriptor for enabled tool %q", scheme)
+		}
+		for _, a := range d.Actions {
+			name := functionName(scheme, a.Name)
+			if len(name) > maxFuncNameLen || !funcNameRE.MatchString(name) {
+				return nil, nil, fmt.Errorf("openai: tool %q action %q yields invalid function name %q (allowed: letters, digits, '_', '-'; max %d characters)", scheme, a.Name, name, maxFuncNameLen)
 			}
-		}
-		name := call.Function.Name
-		if name == replyFunc {
-			if strings.TrimSpace(args.Text) == "" {
-				return planner.Plan{}, fmt.Errorf("openai: reply call has empty text")
+			if _, dup := funcs[name]; dup {
+				return nil, nil, fmt.Errorf("openai: tool %q action %q yields function name %q that collides with another offered function", scheme, a.Name, name)
 			}
-			steps = append(steps, replyStep(conv, args.Text, nil))
-			continue
+			funcs[name] = toolFunc{scheme: scheme, action: a}
+			defs = append(defs, toolDef{Type: "function", Function: functionDef{
+				Name:        name,
+				Description: actionFuncDesc(d.Summary, a),
+				Parameters:  mustJSON(actionSchema(a)),
+			}})
 		}
-		if _, ok := allowed[name]; !ok {
-			return planner.Plan{}, fmt.Errorf("openai: completion called unavailable tool %q", name)
-		}
-		if strings.TrimSpace(args.Action) == "" {
-			return planner.Plan{}, fmt.Errorf("openai: tool %q call has empty action", name)
-		}
-		steps = append(steps, planner.Step{
-			Tool: name + "://",
-			Call: tool.Call{Action: args.Action, Target: args.Target, Parameters: args.Parameters},
-		})
 	}
-	return planner.Plan{Steps: steps}, nil
+	return defs, funcs, nil
 }
 
-// replyStep is a step posting text back into conversation conv through
-// the reply tool, mirroring the shape the ping planner emits.
-func replyStep(conv, text string, choices []tool.Choice) planner.Step {
-	return planner.Step{Tool: reply.URL, Call: tool.Call{
-		Action:     "send",
-		Target:     conv,
-		Parameters: map[string]string{"text": text},
-		Choices:    choices,
-	}}
+// actionFuncDesc joins the tool summary and the action description so the
+// model sees both the tool's purpose and what this action does.
+func actionFuncDesc(summary string, a tool.Action) string {
+	switch {
+	case summary != "" && a.Description != "":
+		return summary + " — " + a.Description
+	case a.Description != "":
+		return a.Description
+	default:
+		return summary
+	}
+}
+
+// actionSchema builds one action's function schema: a plain object with a
+// "target" (required when the action takes one) and a "parameters" object
+// (required when any parameter is). It avoids const/oneOf/additionalProperties
+// to stay within the schema subset endpoints such as Gemini accept.
+func actionSchema(a tool.Action) map[string]any {
+	properties := map[string]any{}
+	var required []string
+
+	if a.TakesTarget {
+		target := map[string]any{"type": "string"}
+		if a.TargetDesc != "" {
+			target["description"] = a.TargetDesc
+		}
+		properties["target"] = target
+		required = append(required, "target")
+	}
+
+	if paramProps, paramRequired := actionParams(a.Parameters); len(paramProps) > 0 {
+		paramSchema := map[string]any{
+			"type":       "object",
+			"properties": paramProps,
+		}
+		if len(paramRequired) > 0 {
+			paramSchema["required"] = paramRequired
+			required = append(required, "parameters")
+		}
+		properties["parameters"] = paramSchema
+	}
+
+	schema := map[string]any{
+		"type":       "object",
+		"properties": properties,
+	}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
+}
+
+// actionParams builds one action's parameter property schemas keyed by
+// name, plus its sorted required-name list. A parameter with no declared
+// type defaults to "string".
+func actionParams(params []tool.Param) (map[string]any, []string) {
+	props := map[string]any{}
+	var required []string
+	for _, p := range params {
+		typ := p.Type
+		if typ == "" {
+			typ = "string"
+		}
+		schema := map[string]any{"type": typ}
+		if p.Description != "" {
+			schema["description"] = p.Description
+		}
+		props[p.Name] = schema
+		if p.Required {
+			required = append(required, p.Name)
+		}
+	}
+	sort.Strings(required)
+	return props, required
 }
 
 // mustJSON marshals a static schema value, panicking on failure (a

@@ -43,7 +43,7 @@ func Planner() *planner.Registry {
 // Tool builds the registry of operational tools the binary knows about.
 func Tool() *tool.Registry {
 	return tool.NewRegistry(
-		tool.Backend{Scheme: toolping.Scheme, Opener: toolping.Opener},
-		tool.Backend{Scheme: toolstatus.Scheme, Opener: toolstatus.Opener},
+		tool.Backend{Scheme: toolping.Scheme, Opener: toolping.Opener, Descriptor: &toolping.Descriptor},
+		tool.Backend{Scheme: toolstatus.Scheme, Opener: toolstatus.Opener, Descriptor: &toolstatus.Descriptor},
 	)
 }

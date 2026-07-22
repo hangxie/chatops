@@ -30,19 +30,28 @@ func fakeOpener(tl tool.Tool, err error) tool.OpenerFunc {
 	}
 }
 
+// stubDesc is a minimal valid descriptor for wiring test backends, which
+// must self-describe.
+func stubDesc() *tool.Descriptor {
+	return &tool.Descriptor{Summary: "stub", Actions: []tool.Action{{Name: "do"}}}
+}
+
 func Test_NewRegistry_invalid_arguments(t *testing.T) {
 	opener := fakeOpener(nil, nil)
 	testCases := map[string][]tool.Backend{
-		"empty-scheme":         {{Scheme: "", Opener: opener}},
-		"nil-opener":           {{Scheme: "ping", Opener: nil}},
-		"leading-digit":        {{Scheme: "1abc", Opener: opener}},
-		"space":                {{Scheme: "pi ng", Opener: opener}},
-		"underscore":           {{Scheme: "pi_ng", Opener: opener}},
-		"colon-and-slash":      {{Scheme: "ping://", Opener: opener}},
-		"non-ascii-letter":     {{Scheme: "schémé", Opener: opener}},
-		"duplicate":            {{Scheme: "dup", Opener: opener}, {Scheme: "dup", Opener: opener}},
-		"duplicate-mixed-case": {{Scheme: "dup", Opener: opener}, {Scheme: "DUP", Opener: opener}},
-		"one-good-one-bad":     {{Scheme: "good", Opener: opener}, {Scheme: "", Opener: opener}},
+		"empty-scheme":     {{Scheme: "", Opener: opener}},
+		"nil-opener":       {{Scheme: "ping", Opener: nil}},
+		"leading-digit":    {{Scheme: "1abc", Opener: opener}},
+		"space":            {{Scheme: "pi ng", Opener: opener}},
+		"underscore":       {{Scheme: "pi_ng", Opener: opener}},
+		"colon-and-slash":  {{Scheme: "ping://", Opener: opener}},
+		"non-ascii-letter": {{Scheme: "schémé", Opener: opener}},
+		// Duplicate cases carry descriptors so the duplicate check is
+		// reached before the required-descriptor check.
+		"duplicate":            {{Scheme: "dup", Opener: opener, Descriptor: stubDesc()}, {Scheme: "dup", Opener: opener, Descriptor: stubDesc()}},
+		"duplicate-mixed-case": {{Scheme: "dup", Opener: opener, Descriptor: stubDesc()}, {Scheme: "DUP", Opener: opener, Descriptor: stubDesc()}},
+		"one-good-one-bad":     {{Scheme: "good", Opener: opener, Descriptor: stubDesc()}, {Scheme: "", Opener: opener}},
+		"nil-descriptor":       {{Scheme: "ping", Opener: opener}},
 	}
 
 	for name, backends := range testCases {
@@ -63,9 +72,9 @@ func Test_NewRegistry_empty_is_valid(t *testing.T) {
 
 func Test_Registry_Schemes_returns_sorted_copy(t *testing.T) {
 	reg := tool.NewRegistry(
-		tool.Backend{Scheme: "Zulu", Opener: fakeOpener(nil, nil)},
-		tool.Backend{Scheme: "alpha", Opener: fakeOpener(nil, nil)},
-		tool.Backend{Scheme: "Middle", Opener: fakeOpener(nil, nil)},
+		tool.Backend{Scheme: "Zulu", Opener: fakeOpener(nil, nil), Descriptor: stubDesc()},
+		tool.Backend{Scheme: "alpha", Opener: fakeOpener(nil, nil), Descriptor: stubDesc()},
+		tool.Backend{Scheme: "Middle", Opener: fakeOpener(nil, nil), Descriptor: stubDesc()},
 	)
 
 	schemes := reg.Schemes()
@@ -77,8 +86,8 @@ func Test_Registry_Schemes_returns_sorted_copy(t *testing.T) {
 
 func Test_Registry_Select(t *testing.T) {
 	reg := tool.NewRegistry(
-		tool.Backend{Scheme: "ping", Opener: fakeOpener(&fakeTool{}, nil)},
-		tool.Backend{Scheme: "status", Opener: fakeOpener(&fakeTool{}, nil)},
+		tool.Backend{Scheme: "ping", Opener: fakeOpener(&fakeTool{}, nil), Descriptor: stubDesc()},
+		tool.Backend{Scheme: "status", Opener: fakeOpener(&fakeTool{}, nil), Descriptor: stubDesc()},
 	)
 	testCases := map[string]struct {
 		selected []string
@@ -111,7 +120,7 @@ func Test_Registry_Select(t *testing.T) {
 
 func Test_Registry_normalizes_scheme_to_lowercase(t *testing.T) {
 	tl := &fakeTool{}
-	reg := tool.NewRegistry(tool.Backend{Scheme: "MiXeD", Opener: fakeOpener(tl, nil)})
+	reg := tool.NewRegistry(tool.Backend{Scheme: "MiXeD", Opener: fakeOpener(tl, nil), Descriptor: stubDesc()})
 
 	// url.Parse lowercases the scheme, so lookup must be lowercase
 	// regardless of how the scheme was registered or written in the URL.
@@ -127,7 +136,7 @@ func Test_Registry_normalizes_scheme_to_lowercase(t *testing.T) {
 
 func Test_Registry_Open(t *testing.T) {
 	tl := &fakeTool{}
-	reg := tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: fakeOpener(tl, nil)})
+	reg := tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: fakeOpener(tl, nil), Descriptor: stubDesc()})
 
 	testCases := map[string]struct {
 		url    string
@@ -165,6 +174,7 @@ func Test_Registry_Open_passes_arguments_to_opener(t *testing.T) {
 			gotCreds = creds
 			return &fakeTool{}, nil
 		},
+		Descriptor: stubDesc(),
 	})
 
 	creds := fakeCredStore{}

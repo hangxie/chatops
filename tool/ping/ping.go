@@ -24,6 +24,15 @@ import (
 // Scheme is the URL scheme this tool serves in a tool.Registry.
 const Scheme = "ping"
 
+// Descriptor is the tool's self-description for planners; wire it into a
+// tool.Backend alongside Scheme and Opener.
+var Descriptor = tool.Descriptor{
+	Summary: "Liveness check; replies \"pong\" to confirm the bot is responsive.",
+	Actions: []tool.Action{
+		{Name: "ping", Description: `Reply "pong".`},
+	},
+}
+
 // Opener is the tool.OpenerFunc for this tool: the URL carries no
 // endpoint or configuration, and creds is ignored. Any host, path,
 // query, userinfo, or non-empty fragment is rejected; a bare trailing

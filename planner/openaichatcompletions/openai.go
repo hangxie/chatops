@@ -19,13 +19,12 @@
 // or when no key is found, no Authorization header is sent, so keyless
 // servers work.
 //
-// On each message the planner makes one Chat Completions request,
-// offering the enabled operational tools plus the built-in reply
-// function (see catalog.go), and maps the model's reply: assistant
-// prose and each tool call become plan steps, so answering the human
-// and invoking a tool have the same shape. The exchange is single-shot
-// — tool results are not fed back to the model — and the planner keeps
-// no per-conversation history yet.
+// On each message the planner makes one Chat Completions request, offering
+// the enabled tools plus the built-in reply function (see catalog.go), then
+// maps the model's reply: assistant prose and each tool call become plan
+// steps, so answering the human and invoking a tool have the same shape.
+// The exchange is single-shot — tool results are not fed back to the model —
+// and the planner keeps no per-conversation history yet.
 package openaichatcompletions
 
 import (
@@ -83,10 +82,17 @@ func Opener(ctx context.Context, u *url.URL, creds cred.Store, tools *tool.Regis
 	}
 
 	var schemes []string
+	var descriptors map[string]tool.Descriptor
 	if tools != nil {
 		schemes = tools.Schemes()
+		descriptors = make(map[string]tool.Descriptor, len(schemes))
+		for _, scheme := range schemes {
+			if d, ok := tools.Descriptor(scheme); ok {
+				descriptors[scheme] = d
+			}
+		}
 	}
-	return Open(ctx, Config{BaseURL: baseURL, Model: model, APIKey: apiKey, ToolSchemes: schemes})
+	return Open(ctx, Config{BaseURL: baseURL, Model: model, APIKey: apiKey, ToolSchemes: schemes, ToolDescriptors: descriptors})
 }
 
 // baseURLFromURL builds the completion endpoint from u. The host is
@@ -155,6 +161,10 @@ type Config struct {
 	APIKey string
 	// ToolSchemes are the enabled operational tools offered to the model.
 	ToolSchemes []string
+	// ToolDescriptors holds the self-description, keyed by scheme, for the
+	// enabled tools. Every scheme in ToolSchemes must have an entry here;
+	// Open rejects a scheme without one. Each is offered a typed function.
+	ToolDescriptors map[string]tool.Descriptor
 }
 
 // Planner is the OpenAI-compatible planner. It holds an HTTP client and
@@ -164,10 +174,13 @@ type Planner struct {
 	baseURL string
 	model   string
 	apiKey  string
-	schemes []string
-	// allowed is the set form of schemes, used to reject tool calls the
-	// model makes for functions that were never offered.
-	allowed map[string]struct{}
+	// defs is the function catalog offered to the model, built once at
+	// Open from an immutable snapshot of the descriptors.
+	defs []toolDef
+	// funcs maps each offered function name to the tool scheme and action
+	// it invokes, used to map the model's tool calls back to plan steps and
+	// to reject calls to functions that were never offered.
+	funcs map[string]toolFunc
 }
 
 // Open builds a planner from an already-resolved Config. Opener is the
@@ -190,17 +203,32 @@ func Open(ctx context.Context, cfg Config) (*Planner, error) {
 	if err := validateSchemes(cfg.ToolSchemes); err != nil {
 		return nil, err
 	}
-	allowed := make(map[string]struct{}, len(cfg.ToolSchemes))
+	// Validate and deep-copy each descriptor so a caller mutating the config
+	// after Open cannot change the catalog or race with Plan.
+	descriptors := make(map[string]tool.Descriptor, len(cfg.ToolSchemes))
 	for _, scheme := range cfg.ToolSchemes {
-		allowed[scheme] = struct{}{}
+		d, ok := cfg.ToolDescriptors[scheme]
+		if !ok {
+			return nil, fmt.Errorf("openai: enabled tool %q has no descriptor", scheme)
+		}
+		if err := d.Validate(); err != nil {
+			return nil, fmt.Errorf("openai: descriptor for tool %q is invalid: %w", scheme, err)
+		}
+		descriptors[scheme] = d.Clone()
+	}
+	// Build the catalog once; the schemas are serialized JSON, so nothing
+	// reads the descriptors again after Open.
+	defs, funcs, err := buildCatalog(cfg.ToolSchemes, descriptors)
+	if err != nil {
+		return nil, err
 	}
 	return &Planner{
 		client:  &http.Client{Timeout: requestTimeout},
 		baseURL: baseURL,
 		model:   cfg.Model,
 		apiKey:  cfg.APIKey,
-		schemes: append([]string(nil), cfg.ToolSchemes...),
-		allowed: allowed,
+		defs:    defs,
+		funcs:   funcs,
 	}, nil
 }
 
@@ -217,7 +245,7 @@ func (p *Planner) Plan(ctx context.Context, req planner.Request) (planner.Plan, 
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: req.Text},
 		},
-		Tools: toolDefs(p.schemes),
+		Tools: p.defs,
 	}
 	response, err := chatComplete(ctx, p.client, p.baseURL, p.apiKey, request)
 	if err != nil {
@@ -226,7 +254,7 @@ func (p *Planner) Plan(ctx context.Context, req planner.Request) (planner.Plan, 
 	if len(response.Choices) == 0 {
 		return planner.Plan{}, fmt.Errorf("openai: completion returned no choices")
 	}
-	return stepsFromMessage(response.Choices[0].Message, req.ConversationID, p.allowed)
+	return stepsFromMessage(response.Choices[0].Message, req.ConversationID, p.funcs)
 }
 
 // Close releases nothing beyond the idle HTTP connections, which the

@@ -96,7 +96,7 @@ func runWithLogger(t *testing.T, level slog.Level) []map[string]any {
 	taskTool := &fakeTool{result: tool.Result{Text: "restarted web"}}
 	tools := tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: func(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
 		return taskTool, nil
-	}})
+	}, Descriptor: stubDesc()})
 	e, err := New(Config{ConnectionID: "chat-1", Chat: conn, Planner: p, Tools: tools, Logger: logger})
 	require.NoError(t, err)
 
