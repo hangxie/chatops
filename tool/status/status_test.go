@@ -123,6 +123,39 @@ func Test_Opener_uses_default_catalog(t *testing.T) {
 	require.Contains(t, result.Text, "github")
 }
 
+func Test_Descriptor(t *testing.T) {
+	require.NotEmpty(t, Descriptor.Summary)
+
+	byName := make(map[string]tool.Action, len(Descriptor.Actions))
+	for _, a := range Descriptor.Actions {
+		byName[a.Name] = a
+	}
+
+	check, ok := byName["check"]
+	require.True(t, ok)
+	require.True(t, check.TakesTarget)
+	require.NotEmpty(t, check.TargetDesc)
+	require.Empty(t, check.Parameters)
+
+	list, ok := byName["list"]
+	require.True(t, ok)
+	require.False(t, list.TakesTarget)
+	require.Empty(t, list.Parameters)
+
+	// Every described action must be one Invoke accepts, so the
+	// descriptor cannot drift from the implementation. "list" needs no
+	// live checker; "check" is exercised elsewhere, so here we only
+	// assert its action is not rejected as unknown.
+	checker, err := NewChecker([]Provider{fakeProvider{name: "github", snap: Snapshot{Health: HealthOperational}}})
+	require.NoError(t, err)
+	tl, err := Open(context.Background(), checker)
+	require.NoError(t, err)
+	for name := range byName {
+		_, err := tl.Invoke(context.Background(), tool.Call{Action: name, Target: "github"})
+		require.NotErrorIs(t, err, tool.ErrUnknownAction)
+	}
+}
+
 func Test_healthLabel_and_displayName(t *testing.T) {
 	labels := map[Health]string{
 		HealthOperational: "OK", HealthMaintenance: "MAINTENANCE", HealthDegraded: "DEGRADED",

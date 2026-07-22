@@ -1,12 +1,12 @@
 // Package tool provides a generic interface for invoking operational
 // tools such as kubernetes, proxmox, harbor, or the dummy ping tool.
 //
-// Each tool lives in its own sub-package and exports its URL scheme
-// and opener; callers wire the tools they support into a Registry, so
-// a tool instance can be opened from a single URL:
+// Each tool lives in its own sub-package and exports its URL scheme,
+// opener, and descriptor; callers wire the tools they support into a
+// Registry, so a tool instance can be opened from a single URL:
 //
 //	reg := tool.NewRegistry(
-//		tool.Backend{Scheme: ping.Scheme, Opener: ping.Opener},
+//		tool.Backend{Scheme: ping.Scheme, Opener: ping.Opener, Descriptor: &ping.Descriptor},
 //	)
 //	tl, err := reg.Open(ctx, "ping://", creds)
 //	result, err := tl.Invoke(ctx, tool.Call{Action: "ping"})

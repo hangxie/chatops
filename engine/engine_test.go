@@ -19,6 +19,12 @@ import (
 	"github.com/hangxie/chatops/tool/reply"
 )
 
+// stubDesc is a minimal valid descriptor for wiring test tools, which
+// must self-describe.
+func stubDesc() *tool.Descriptor {
+	return &tool.Descriptor{Summary: "stub", Actions: []tool.Action{{Name: "do"}}}
+}
+
 type fakeConn struct {
 	mu           sync.Mutex
 	received     []chat.Message
@@ -169,7 +175,7 @@ func Test_Run_plans_executes_and_replies(t *testing.T) {
 	taskTool := &fakeTool{result: tool.Result{Text: "restarted web"}}
 	tools := tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: func(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
 		return taskTool, nil
-	}})
+	}, Descriptor: stubDesc()})
 	e, err := New(Config{ConnectionID: "chat-1", Chat: conn, Planner: p, Tools: tools})
 	require.NoError(t, err)
 
@@ -254,7 +260,7 @@ func Test_Run_message_failure_is_nonfatal(t *testing.T) {
 			if tc.invoked != nil {
 				tools = tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: func(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
 					return tc.invoked, nil
-				}})
+				}, Descriptor: stubDesc()})
 			}
 			e, err := New(Config{Chat: conn, Planner: tc.planner, Tools: tools})
 			require.NoError(t, err)
@@ -285,7 +291,7 @@ func Test_Run_survives_send_failure(t *testing.T) {
 	invoked := &fakeTool{result: tool.Result{Text: "done"}}
 	tools := tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: func(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
 		return invoked, nil
-	}})
+	}, Descriptor: stubDesc()})
 	p := planStep("fake://", tool.Call{})
 	e, err := New(Config{Chat: conn, Planner: p, Tools: tools})
 	require.NoError(t, err)
@@ -317,7 +323,7 @@ func Test_Run_recovers_panicking_tool_and_continues(t *testing.T) {
 	taskTool := &panicTool{}
 	tools := tool.NewRegistry(tool.Backend{Scheme: "panic", Opener: func(context.Context, *url.URL, cred.Store) (tool.Tool, error) {
 		return taskTool, nil
-	}})
+	}, Descriptor: stubDesc()})
 	e, err := New(Config{Chat: conn, Planner: p, Tools: tools})
 	require.NoError(t, err)
 
@@ -385,7 +391,7 @@ func Test_Run_chat_closed_while_handling_is_graceful(t *testing.T) {
 	taskTool := &fakeTool{result: tool.Result{Text: "done"}}
 	tools := tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: func(context.Context, *url.URL, cred.Store) (tool.Tool, error) {
 		return taskTool, nil
-	}})
+	}, Descriptor: stubDesc()})
 	e, err := New(Config{Chat: conn, Planner: p, Tools: tools})
 	require.NoError(t, err)
 	require.NoError(t, e.Run(context.Background()))

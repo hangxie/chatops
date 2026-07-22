@@ -14,6 +14,24 @@ import (
 
 const Scheme = "status"
 
+// Descriptor is the tool's self-description for planners; wire it into a
+// tool.Backend alongside Scheme and Opener.
+var Descriptor = tool.Descriptor{
+	Summary: "Check the public status of common external services (GitHub, OpenAI, Slack, ...).",
+	Actions: []tool.Action{
+		{
+			Name:        "check",
+			Description: "Report the current status of one service.",
+			TakesTarget: true,
+			TargetDesc:  "The service to check, e.g. github, openai, slack, cloudflare (use list to see all).",
+		},
+		{
+			Name:        "list",
+			Description: "List the services whose status can be checked.",
+		},
+	},
+}
+
 var ErrNilChecker = errors.New("nil service-status checker")
 
 var sharedDefaultChecker = defaultChecker()
