@@ -1,7 +1,6 @@
 # Engineering Skills & Workflow Standards (chatops)
 
-This document defines expectations for contributors
-to the chatops Go project.
+This document defines expectations for contributors to the chatops Go project.
 
 ---
 
