@@ -1,7 +1,7 @@
 // Package slack implements a chat.Conn for Slack using Socket Mode.
 //
-// The backend is selected with slack:// and reads tokens from SLACK_BOT_TOKEN
-// and SLACK_APP_TOKEN. Messages must begin with Slack's native <@USERID>
+// The backend is selected with slack:// and reads its bot and app tokens from
+// the configured credential store. Messages must begin with Slack's native <@USERID>
 // recipient mention, which is removed before the command is delivered.
 //
 // Each root message starts a conversation. Replies in the same Slack thread
@@ -13,7 +13,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"os"
 	"sync"
 	"sync/atomic"
 
@@ -21,15 +20,16 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/hangxie/chatops/chat"
+	"github.com/hangxie/chatops/cred"
 )
 
 const (
 	// Scheme is the URL scheme this backend serves in a chat.Registry.
 	Scheme = "slack"
-	// BotTokenEnv names the environment variable holding the bot OAuth token.
-	BotTokenEnv = "SLACK_BOT_TOKEN"
-	// AppTokenEnv names the environment variable holding the Socket Mode app token.
-	AppTokenEnv = "SLACK_APP_TOKEN"
+	// BotTokenKey names the credential holding the bot OAuth token.
+	BotTokenKey = "slack-bot-token"
+	// AppTokenKey names the credential holding the Socket Mode app token.
+	AppTokenKey = "slack-app-token"
 )
 
 type socketClient interface {
@@ -110,17 +110,17 @@ type Conn struct {
 }
 
 // Opener is the chat.OpenerFunc for this backend. slack:// takes no host,
-// path, query parameters, or fragment; credentials come from the environment.
-func Opener(ctx context.Context, u *url.URL) (chat.Conn, error) {
+// path, query parameters, or fragment; credentials come from creds.
+func Opener(ctx context.Context, u *url.URL, creds cred.Store) (chat.Conn, error) {
 	if u.Host != "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
 		return nil, fmt.Errorf("slack: URL %q takes no configuration", u.String())
 	}
-	return Open(ctx)
+	return Open(ctx, creds)
 }
 
-// Open connects to Slack using credentials from BotTokenEnv and AppTokenEnv.
-func Open(ctx context.Context) (*Conn, error) {
-	return open(ctx, os.Getenv, defaultClients)
+// Open connects to Slack using BotTokenKey and AppTokenKey from creds.
+func Open(ctx context.Context, creds cred.Store) (*Conn, error) {
+	return open(ctx, creds, defaultClients)
 }
 
 func defaultClients(botToken, appToken string) (socketClient, messageAPI) {
@@ -128,17 +128,26 @@ func defaultClients(botToken, appToken string) (socketClient, messageAPI) {
 	return &socketAdapter{client: socketmode.New(client)}, &webAPI{client: client}
 }
 
-func open(ctx context.Context, getenv func(string) string, clients clientFactory) (*Conn, error) {
+func open(ctx context.Context, creds cred.Store, clients clientFactory) (*Conn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("slack: %w", err)
 	}
-	botToken := getenv(BotTokenEnv)
-	if botToken == "" {
-		return nil, fmt.Errorf("slack: %s is not set", BotTokenEnv)
+	if creds == nil {
+		return nil, fmt.Errorf("slack: credential store is not configured")
 	}
-	appToken := getenv(AppTokenEnv)
+	botToken, err := creds.Get(ctx, BotTokenKey)
+	if err != nil {
+		return nil, fmt.Errorf("slack: resolve %s: %w", BotTokenKey, err)
+	}
+	if botToken == "" {
+		return nil, fmt.Errorf("slack: credential %s is empty", BotTokenKey)
+	}
+	appToken, err := creds.Get(ctx, AppTokenKey)
+	if err != nil {
+		return nil, fmt.Errorf("slack: resolve %s: %w", AppTokenKey, err)
+	}
 	if appToken == "" {
-		return nil, fmt.Errorf("slack: %s is not set", AppTokenEnv)
+		return nil, fmt.Errorf("slack: credential %s is empty", AppTokenKey)
 	}
 
 	socket, api := clients(botToken, appToken)

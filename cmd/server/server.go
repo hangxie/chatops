@@ -19,7 +19,7 @@ import (
 type Cmd struct {
 	ChatURL        string   `name:"chat" required:"" help:"Chat backend URL (for example, slack:// or telnet://localhost:6023)."`
 	PlannerURL     string   `name:"planner" required:"" help:"Planner backend URL (for example, ping://)."`
-	CredentialsURL string   `name:"credentials" help:"Optional credential store URL for planners and tools."`
+	CredentialsURL string   `name:"credentials" help:"Optional credential store URL for chat backends, planners, and tools."`
 	ConnectionID   string   `name:"connection-id" default:"default" help:"Stable ID used to scope planner conversation state."`
 	MaxConcurrency int      `name:"max-concurrency" default:"8" help:"Maximum number of conversations processed concurrently."`
 	Tools          []string `name:"tool" help:"Selectable tool to expose; repeat to allow multiple tools (default: all)."`
@@ -66,7 +66,7 @@ func (c *Cmd) run(ctx context.Context) (err error) {
 		}()
 	}
 
-	conn, err := registry.Chat().Open(ctx, c.ChatURL)
+	conn, err := registry.Chat().Open(ctx, c.ChatURL, credentials)
 	if err != nil {
 		return fmt.Errorf("server: open chat: %w", err)
 	}

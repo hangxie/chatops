@@ -138,7 +138,7 @@ type Conn interface {
 
 Messages are grouped into **conversations** — the topic or thread a piece of work is about. Each backend computes a stable conversation ID from its native addressing (e.g. a Slack backend derives it from channel and thread; telnet has a single conversation) and translates it back on send. Callers treat `Message.ConversationID` as an opaque string scoped to one `Conn`: to reply, send with the `ConversationID` of the message being answered.
 
-A connection is identified by a single URL — the scheme selects the backend and the rest of the URL locates the server. As with `cred`, credentials for the backend itself are **never** part of the URL; each backend takes them from its standard environment variables (for example `SLACK_BOT_TOKEN`).
+A connection is identified by a single URL — the scheme selects the backend and the rest of the URL locates the server. Credential values are **never** part of the URL; backends resolve them from the `cred.Store` passed to `Registry.Open` under documented conventional key names. A backend that needs no credentials ignores the store.
 
 Available backends:
 
@@ -162,7 +162,7 @@ import (
 reg := chat.NewRegistry(
     chat.Backend{Scheme: telnet.Scheme, Opener: telnet.Opener},
 )
-conn, err := reg.Open(context.Background(), "telnet://chat.example.com:6023")
+conn, err := reg.Open(context.Background(), "telnet://chat.example.com:6023", credentials)
 if err != nil {
     // handle error
 }
@@ -184,7 +184,7 @@ Backends also expose a typed `Open` function for direct use, e.g. `telnet.Open(c
 
 ### Slack backend
 
-The Slack backend uses the Events API and interactive payloads over Socket Mode for inbound messages, `chat.postMessage` for outbound replies, and `chat.update` to remove consumed controls. Its `slack://` URL takes no host, path, or query configuration. `SLACK_BOT_TOKEN` supplies the bot OAuth token and `SLACK_APP_TOKEN` supplies an app-level token with `connections:write`; see the user guide for the required app event subscriptions and bot scopes. Startup calls `auth.test` to validate the bot token and obtain its user ID before opening Socket Mode.
+The Slack backend uses the Events API and interactive payloads over Socket Mode for inbound messages, `chat.postMessage` for outbound replies, and `chat.update` to remove consumed controls. Its `slack://` URL takes no host, path, or query configuration. It resolves the bot OAuth token from `slack-bot-token` and the app-level token with `connections:write` from `slack-app-token`; see the user guide for the required app event subscriptions and bot scopes. Startup calls `auth.test` to validate the bot token and obtain its user ID before opening Socket Mode.
 
 Every accepted Socket Mode envelope is acknowledged before its event is processed. Human message and `app_mention` events become `chat.Message` values only when their text starts with the exact `<@USERID>` obtained for the authenticated bot. The backend strips that stable bot identity before planning, so changing the bot's display name requires no ChatOps configuration. Mentions of other users, bot mentions later in the text, unmentioned messages, bot messages, message subtypes, events without a sender, and empty commands are ignored. The conversation ID combines the Slack channel ID with the root message timestamp. A root message and all replies in its thread therefore share one engine conversation, and `Send` posts back into that thread. Routing entries refresh on receive and send, expire after 24 hours of inactivity, and are limited to 4,096 entries. An indexed min-heap makes refresh, expiry, and capacity eviction O(log n); reaching capacity evicts the earliest-expiring route.
 
@@ -202,7 +202,7 @@ The connection carries a single conversation whose ID is the `telnet.Conversatio
 2. Define a `Conn` type implementing the `chat.Conn` interface:
    - Compute `Message.ConversationID` on receive from the backend's native addressing (e.g. Slack channel + thread), and translate it back on send. Wrap `chat.ErrUnknownConversation` (with `%w`) when a sent ID does not map to a conversation.
    - After `Close`, `Receive` and `Send` report an error wrapping `chat.ErrClosed`; `Close` must also unblock a pending `Receive`.
-3. Provide an `Open` function taking `context.Context` plus backend-specific location parameters and returning `(*Conn, error)`. Take credentials from the backend's standard environment variables; never accept them as parameters or URL elements.
+3. Provide an `Open` function taking `context.Context`, a `cred.Store`, and any backend-specific location parameters, and returning `(*Conn, error)`. Resolve credential values from the store under documented conventional key names; never accept values as URL elements.
 4. Export the scheme and an opener so callers can wire the backend into a `chat.Registry` (backends never self-register via `init()`), and add it to the CLI's shared registry wiring in `internal/registry` (used by both `cmd/server` and `cmd/chats`):
 
    ```go
@@ -210,8 +210,8 @@ The connection carries a single conversation whose ID is the `telnet.Conversatio
    const Scheme = "my-backend"
 
    // Opener is the chat.OpenerFunc for this backend.
-   func Opener(ctx context.Context, u *url.URL) (chat.Conn, error) {
-       return Open(ctx, u.Host)
+   func Opener(ctx context.Context, u *url.URL, creds cred.Store) (chat.Conn, error) {
+       return Open(ctx, creds, u.Host)
    }
    ```
 

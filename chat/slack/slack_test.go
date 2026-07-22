@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,7 +17,33 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hangxie/chatops/chat"
+	"github.com/hangxie/chatops/cred"
 )
+
+type credentialStore struct {
+	values map[string]string
+	err    error
+}
+
+func (s *credentialStore) Get(_ context.Context, key string) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+	value, ok := s.values[key]
+	if !ok {
+		return "", fmt.Errorf("%s: %w", key, cred.ErrNotFound)
+	}
+	return value, nil
+}
+
+func (*credentialStore) Close() error { return nil }
+
+func slackCredentials() *credentialStore {
+	return &credentialStore{values: map[string]string{
+		BotTokenKey: "xoxb-test",
+		AppTokenKey: "xapp-test",
+	}}
+}
 
 type fakeSocket struct {
 	events chan socketmode.Event
@@ -119,8 +146,6 @@ func testConn(t *testing.T) (*Conn, *fakeSocket, *fakeAPI) {
 }
 
 func Test_Opener_rejects_configuration(t *testing.T) {
-	t.Setenv(BotTokenEnv, "xoxb-test")
-	t.Setenv(AppTokenEnv, "xapp-test")
 	testCases := map[string]string{
 		"host":     "slack://workspace",
 		"path":     "slack:///channel",
@@ -131,45 +156,54 @@ func Test_Opener_rejects_configuration(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			u, err := url.Parse(rawURL)
 			require.NoError(t, err)
-			_, err = Opener(context.Background(), u)
+			_, err = Opener(context.Background(), u, slackCredentials())
 			require.ErrorContains(t, err, "takes no configuration")
 		})
 	}
 }
 
-func Test_Open_requires_tokens(t *testing.T) {
+func Test_Open_requires_credentials(t *testing.T) {
+	testErr := errors.New("store failed")
 	testCases := map[string]struct {
-		botToken string
-		appToken string
-		errMsg   string
+		credentials cred.Store
+		errMsg      string
+		errIs       error
 	}{
-		"bot-token": {appToken: "xapp-test", errMsg: BotTokenEnv},
-		"app-token": {botToken: "xoxb-test", errMsg: AppTokenEnv},
+		"no-store":  {errMsg: "credential store is not configured"},
+		"bot-token": {credentials: &credentialStore{values: map[string]string{AppTokenKey: "xapp-test"}}, errMsg: BotTokenKey, errIs: cred.ErrNotFound},
+		"app-token": {credentials: &credentialStore{values: map[string]string{BotTokenKey: "xoxb-test"}}, errMsg: AppTokenKey, errIs: cred.ErrNotFound},
+		"empty-bot-token": {credentials: &credentialStore{values: map[string]string{
+			BotTokenKey: "", AppTokenKey: "xapp-test",
+		}}, errMsg: BotTokenKey},
+		"empty-app-token": {credentials: &credentialStore{values: map[string]string{
+			BotTokenKey: "xoxb-test", AppTokenKey: "",
+		}}, errMsg: AppTokenKey},
+		"store-error": {credentials: &credentialStore{err: testErr}, errMsg: "resolve", errIs: testErr},
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(BotTokenEnv, tc.botToken)
-			t.Setenv(AppTokenEnv, tc.appToken)
-			_, err := Open(context.Background())
+			_, err := Open(context.Background(), tc.credentials)
 			require.ErrorContains(t, err, tc.errMsg)
+			if tc.errIs != nil {
+				require.ErrorIs(t, err, tc.errIs)
+			}
 		})
 	}
 }
 
 func Test_Open_via_registry(t *testing.T) {
-	t.Setenv(BotTokenEnv, "")
-	t.Setenv(AppTokenEnv, "")
 	registry := chat.NewRegistry(chat.Backend{Scheme: Scheme, Opener: Opener})
-	_, err := registry.Open(context.Background(), "slack://")
-	require.ErrorContains(t, err, BotTokenEnv)
+	_, err := registry.Open(context.Background(), "slack://", nil)
+	require.ErrorContains(t, err, "credential store is not configured")
 }
 
 func Test_open_startup(t *testing.T) {
-	tokens := map[string]string{BotTokenEnv: "xoxb-test", AppTokenEnv: "xapp-test"}
-	getenv := func(name string) string { return tokens[name] }
+	credentials := slackCredentials()
 	t.Run("connected", func(t *testing.T) {
 		socket := newFakeSocket()
-		conn, err := open(context.Background(), getenv, func(_, _ string) (socketClient, messageAPI) {
+		conn, err := open(context.Background(), credentials, func(botToken, appToken string) (socketClient, messageAPI) {
+			require.Equal(t, "xoxb-test", botToken)
+			require.Equal(t, "xapp-test", appToken)
 			return socket, newFakeAPI()
 		})
 		require.NoError(t, err)
@@ -180,7 +214,7 @@ func Test_open_startup(t *testing.T) {
 		socket := newFakeSocket()
 		socket.connected = false
 		socket.runErr = testErr
-		_, err := open(context.Background(), getenv, func(_, _ string) (socketClient, messageAPI) {
+		_, err := open(context.Background(), credentials, func(_, _ string) (socketClient, messageAPI) {
 			return socket, newFakeAPI()
 		})
 		require.ErrorIs(t, err, testErr)
@@ -193,7 +227,7 @@ func Test_open_startup(t *testing.T) {
 			<-socket.started
 			cancel()
 		}()
-		_, err := open(ctx, getenv, func(_, _ string) (socketClient, messageAPI) {
+		_, err := open(ctx, credentials, func(_, _ string) (socketClient, messageAPI) {
 			return socket, newFakeAPI()
 		})
 		require.ErrorIs(t, err, context.Canceled)
@@ -204,7 +238,7 @@ func Test_open_cancelled_context(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	factoryCalled := false
-	_, err := open(ctx, func(string) string { return "token" }, func(_, _ string) (socketClient, messageAPI) {
+	_, err := open(ctx, slackCredentials(), func(_, _ string) (socketClient, messageAPI) {
 		factoryCalled = true
 		return newFakeSocket(), newFakeAPI()
 	})
@@ -213,7 +247,6 @@ func Test_open_cancelled_context(t *testing.T) {
 }
 
 func Test_open_identifies_bot(t *testing.T) {
-	tokens := map[string]string{BotTokenEnv: "xoxb-test", AppTokenEnv: "xapp-test"}
 	testErr := errors.New("auth failed")
 	testCases := map[string]struct {
 		api    *fakeAPI
@@ -225,7 +258,7 @@ func Test_open_identifies_bot(t *testing.T) {
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			_, err := open(context.Background(), func(key string) string { return tokens[key] }, func(_, _ string) (socketClient, messageAPI) {
+			_, err := open(context.Background(), slackCredentials(), func(_, _ string) (socketClient, messageAPI) {
 				return newFakeSocket(), tc.api
 			})
 			require.ErrorContains(t, err, tc.errMsg)

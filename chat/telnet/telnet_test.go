@@ -73,7 +73,7 @@ func testRegistry() *chat.Registry {
 
 func Test_Open_via_registry(t *testing.T) {
 	s := startServer(t)
-	conn, err := testRegistry().Open(testCtx(t), "telnet://"+s.addr())
+	conn, err := testRegistry().Open(testCtx(t), "telnet://"+s.addr(), nil)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, conn.Close())
@@ -92,7 +92,7 @@ func Test_Open_registry_url_errors(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			_, err := testRegistry().Open(testCtx(t), tc.url)
+			_, err := testRegistry().Open(testCtx(t), tc.url, nil)
 			require.ErrorContains(t, err, tc.errMsg)
 		})
 	}
@@ -103,7 +103,7 @@ func Test_Open_registry_default_port(t *testing.T) {
 	// port 23. Nothing is expected to listen there, so the dial error
 	// names it; in the unlikely case something does listen, connecting
 	// at all still proves the default was applied.
-	conn, err := testRegistry().Open(testCtx(t), "telnet://127.0.0.1")
+	conn, err := testRegistry().Open(testCtx(t), "telnet://127.0.0.1", nil)
 	if err == nil {
 		require.NoError(t, conn.Close())
 		return

@@ -66,7 +66,7 @@ Available settings:
 | --- | --- | --- | --- |
 | `--chat` | Yes | — | Chat backend URL, such as `slack://` or `telnet://localhost:6023`. |
 | `--planner` | Yes | — | Planner backend URL, such as `ping://`. |
-| `--credentials` | No | None | Credential store URL used by planners and tools. |
+| `--credentials` | No | None | Credential store URL used by chat backends, planners, and tools. |
 | `--connection-id` | No | `default` | Stable identifier used to scope planner conversation state. |
 | `--max-concurrency` | No | `8` | Maximum conversations processed concurrently; the maximum value is `256`. |
 | `--tool` | No | All selectable tools | Tool to expose to planners; repeat the flag to expose multiple tools. |
@@ -92,7 +92,7 @@ The current server supports these URLs:
 
 | Component | Scheme | URL form | Notes |
 | --- | --- | --- | --- |
-| Chat | `slack` | `slack://` | Uses Socket Mode with `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`; replies are threaded. |
+| Chat | `slack` | `slack://` | Uses Socket Mode with `slack-bot-token` and `slack-app-token` from the credential store; replies are threaded. |
 | Chat | `telnet` | `telnet://host:port` | Port defaults to `23`; the protocol is newline-delimited text without telnet option negotiation. |
 | Planner | `ping` | `ping://` | Recognizes ping requests and requires no credentials. |
 | Planner | `openai-chat-completions` | `openai-chat-completions://host[:port][/path]?model=NAME` | Drives any OpenAI Chat Completions endpoint (OpenAI, Gemini, Ollama, …). See [OpenAI-compatible planner](#openai-compatible-planner). |
@@ -114,7 +114,7 @@ At `info` the server logs startup configuration and, per message, `message recei
 {"time":"2026-07-21T12:00:00Z","level":"INFO","msg":"plan produced","conversation_id":"C123","sender":"alice","steps":2,"tools":["reply://","status://"]}
 ```
 
-Credentials are never logged: planner and tool URLs are logged, but secrets live in the credential store, not the URL.
+Credentials are never logged: component URLs are logged, but secrets live in the credential store, not the URL.
 
 ### OpenAI-compatible planner
 
@@ -220,16 +220,22 @@ The app is named `chatops` by default. Pass a different name as an argument (or 
 
 When pasting the manifest by hand instead, edit the `name` fields in [`scripts/slack-app-manifest.json`](scripts/slack-app-manifest.json) before pasting.
 
-Both paths finish with the same two manual steps, because Slack does not expose these credentials through the manifest API: install the app to your workspace to obtain the bot token (`SLACK_BOT_TOKEN`, `xoxb-…`), and generate an app-level token with the `connections:write` scope for the Socket Mode token (`SLACK_APP_TOKEN`, `xapp-…`). The script prints the exact links for both. To serve channels beyond direct messages, add the matching `message.*` events and history scopes to the manifest before creating the app, and invite the bot to each channel.
+Both paths finish with the same two manual steps, because Slack does not expose these credentials through the manifest API: install the app to your workspace to obtain the bot token (`xoxb-…`), and generate an app-level token with the `connections:write` scope for the Socket Mode token (`xapp-…`). Store them under `slack-bot-token` and `slack-app-token`, respectively. The script prints the exact links for both. To serve channels beyond direct messages, add the matching `message.*` events and history scopes to the manifest before creating the app, and invite the bot to each channel.
 
-Set both tokens and start the server with the configuration-free `slack://` URL:
+Add both tokens to the credential store and start the server with the configuration-free `slack://` URL:
+
+```json
+{
+  "slack-bot-token": "xoxb-...",
+  "slack-app-token": "xapp-..."
+}
+```
 
 ```bash
-export SLACK_BOT_TOKEN=xoxb-...
-export SLACK_APP_TOKEN=xapp-...
-
-chatops server --chat slack:// --planner ping://
+chatops server --chat slack:// --planner ping:// --credentials json-file:///etc/chatops/credentials.json
 ```
+
+When upgrading from an earlier release, remove `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` from the server environment and put their values under the keys above. Go callers must pass a `cred.Store` to `chat.Registry.Open` and `slack.Open`; custom chat opener functions now receive the store as their third argument.
 
 Every typed command must start by mentioning the bot, including typed follow-up answers such as `@chatops yes`. Slack represents that recipient as a stable user-ID mention in the event payload; the backend requires that the leading mention exactly match the authenticated bot ID and strips it before passing `yes` to the planner. Mentions of other users do not authorize commands, and an `app_mention` with the bot mention later in its text is ignored. Renaming the bot from `@chatops` to `@bot` requires no server configuration change.
 
@@ -243,12 +249,13 @@ The `json-file` credential store expects a single JSON object whose values are s
 
 ```json
 {
-  "db-password": "example-password",
-  "api-token": "example-token"
+  "slack-bot-token": "xoxb-...",
+  "slack-app-token": "xapp-...",
+  "openai-api-key": "sk-..."
 }
 ```
 
-Credential values do not belong in backend, planner, or tool URLs. Backends that require authentication resolve it from the credential store or their standard environment variables.
+Credential values do not belong in chat backend, planner, or tool URLs. Components that require authentication resolve it from the credential store. Credentials needed to open the store itself use that store backend's standard configuration chain.
 
 ### Chats
 
