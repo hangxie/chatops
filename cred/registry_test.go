@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hangxie/chatops/cred"
+	"github.com/hangxie/chatops/internal/testutils"
 )
 
 func fakeOpener(store cred.Store, err error) cred.OpenerFunc {
@@ -48,7 +49,7 @@ func Test_NewRegistry_empty_is_valid(t *testing.T) {
 }
 
 func Test_Registry_normalizes_scheme_to_lowercase(t *testing.T) {
-	store := &fakeStore{creds: map[string]string{}}
+	store := &testutils.CredentialStore{}
 	reg := cred.NewRegistry(cred.Backend{Scheme: "MiXeD", Opener: fakeOpener(store, nil)})
 
 	// url.Parse lowercases the scheme, so lookup must be lowercase
@@ -64,7 +65,7 @@ func Test_Registry_normalizes_scheme_to_lowercase(t *testing.T) {
 }
 
 func Test_Registry_Open(t *testing.T) {
-	store := &fakeStore{creds: map[string]string{"db-password": "hunter2"}}
+	store := &testutils.CredentialStore{Values: map[cred.Key]string{cred.PlannerAPIKey: "sk-test"}}
 	reg := cred.NewRegistry(cred.Backend{Scheme: "fake", Opener: fakeOpener(store, nil)})
 
 	testCases := map[string]struct {
@@ -99,7 +100,7 @@ func Test_Registry_Open_passes_url_and_context_to_opener(t *testing.T) {
 		Opener: func(ctx context.Context, u *url.URL) (cred.Store, error) {
 			gotURL = u
 			gotCtxValue = ctx.Value(ctxKey{})
-			return &fakeStore{}, nil
+			return testutils.CredentialStore{}, nil
 		},
 	})
 

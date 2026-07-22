@@ -26,11 +26,8 @@
 // backend so an LLM-backed planner can offer them to the model (see
 // Registry.Open); a nil set is treated as empty.
 //
-// Credential values are never part of the URL; backends resolve them
-// (e.g. API keys) from the cred.Store passed to Open, under
-// conventional key names prefixed by the backend name (for example
-// openai-api-key, anthropic-api-key), overridable per instance with
-// the cred-prefix query parameter.
+// Credential values are never part of the URL; the selected backend resolves
+// the single predefined planner API key from the cred.Store passed to Open.
 //
 // A plan is a sequence of tool invocations, each naming the tool by
 // the URL it is opened from (see the tool package). Saying something

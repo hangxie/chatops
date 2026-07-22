@@ -16,14 +16,8 @@
 // server or the proxmox host), and query parameters carry any further
 // instance configuration.
 //
-// Credential values are never part of the URL; tools resolve them
-// from the cred.Store passed to Open. Each tool defines conventional
-// key names prefixed by its name (for example k8s-ca, k8s-cert,
-// k8s-key or harbor-user, harbor-password), and the prefix can be
-// overridden per instance with the cred-prefix query parameter (e.g.
-// "kubernetes://prod.example.com:6443?cred-prefix=k8s-prod" resolves
-// k8s-prod-ca and so on) so multiple instances of the same tool can
-// use distinct credentials.
+// Credential values are never part of the URL; tools resolve predefined
+// cred.Key identifiers from the cred.Store passed to Open.
 package tool
 
 import (

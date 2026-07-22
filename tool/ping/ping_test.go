@@ -25,7 +25,7 @@ func Test_Opener_via_registry(t *testing.T) {
 		"host":           {url: "ping://somehost", errMsg: "takes no endpoint"},
 		"host-port":      {url: "ping://somehost:1234", errMsg: "takes no endpoint"},
 		"path":           {url: "ping:///some/path", errMsg: "takes no endpoint"},
-		"query":          {url: "ping://?cred-prefix=x", errMsg: "takes no endpoint"},
+		"query":          {url: "ping://?region=x", errMsg: "takes no endpoint"},
 		"empty-query":    {url: "ping://?", errMsg: "takes no endpoint"},
 		"userinfo":       {url: "ping://secret@", errMsg: "takes no endpoint"},
 		"fragment":       {url: "ping://#fragment", errMsg: "takes no endpoint"},

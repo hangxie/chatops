@@ -33,7 +33,7 @@ func Test_Planner_opens_ping(t *testing.T) {
 }
 
 func Test_Planner_opens_openai(t *testing.T) {
-	p, err := registry.Planner().Open(context.Background(), "openai-chat-completions://api.openai.com/v1?model=gpt-5", nil, registry.Tool())
+	p, err := registry.Planner().Open(context.Background(), "openai-chat-completions://api.openai.com/v1?model=gpt-5&keyless=true", nil, registry.Tool())
 	require.NoError(t, err)
 	require.NotNil(t, p)
 	require.NoError(t, p.Close())

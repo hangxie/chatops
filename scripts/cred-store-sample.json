@@ -1,0 +1,9 @@
+{
+  "slack": {
+    "bot-token": "xoxb-replace-with-your-slack-bot-token",
+    "app-token": "xapp-replace-with-your-slack-app-token"
+  },
+  "planner": {
+    "api-key": "sk-replace-with-your-planner-api-key"
+  }
+}

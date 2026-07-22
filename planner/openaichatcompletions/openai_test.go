@@ -14,28 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hangxie/chatops/cred"
+	"github.com/hangxie/chatops/internal/testutils"
 	"github.com/hangxie/chatops/planner"
 	"github.com/hangxie/chatops/tool"
 	"github.com/hangxie/chatops/tool/reply"
 )
-
-// fakeCreds is a minimal cred.Store for exercising API-key resolution.
-type fakeCreds struct {
-	values map[string]string
-	err    error
-}
-
-func (f fakeCreds) Get(_ context.Context, key string) (string, error) {
-	if f.err != nil {
-		return "", f.err
-	}
-	if v, ok := f.values[key]; ok {
-		return v, nil
-	}
-	return "", cred.ErrNotFound
-}
-
-func (fakeCreds) Close() error { return nil }
 
 func fakeToolOpener(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
 	return nil, nil
@@ -54,21 +37,21 @@ func Test_Opener_parses_endpoint_and_model(t *testing.T) {
 		wantModel   string
 	}{
 		"host-default-path": {
-			url: "openai-chat-completions://api.openai.com?model=gpt-5", wantBaseURL: "https://api.openai.com/v1", wantModel: "gpt-5",
+			url: "openai-chat-completions://api.openai.com?model=gpt-5&keyless=true", wantBaseURL: "https://api.openai.com/v1", wantModel: "gpt-5",
 		},
 		"host-and-path": {
-			url:         "openai-chat-completions://generativelanguage.googleapis.com/v1beta/openai?model=gemini-3.1-flash-lite",
+			url:         "openai-chat-completions://generativelanguage.googleapis.com/v1beta/openai?model=gemini-3.1-flash-lite&keyless=true",
 			wantBaseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
 			wantModel:   "gemini-3.1-flash-lite",
 		},
 		"insecure-local": {
-			url: "openai-chat-completions://localhost:11434/v1?insecure=true&model=llama3", wantBaseURL: "http://localhost:11434/v1", wantModel: "llama3",
+			url: "openai-chat-completions://localhost:11434/v1?insecure=true&model=llama3&keyless=true", wantBaseURL: "http://localhost:11434/v1", wantModel: "llama3",
 		},
 		"trailing-slash-trimmed": {
-			url: "openai-chat-completions://host/v1/?model=m", wantBaseURL: "https://host/v1", wantModel: "m",
+			url: "openai-chat-completions://host/v1/?model=m&keyless=true", wantBaseURL: "https://host/v1", wantModel: "m",
 		},
 		"encoded-path-preserved": {
-			url: "openai-chat-completions://host/v1%3Ftenant?model=m", wantBaseURL: "https://host/v1%3Ftenant", wantModel: "m",
+			url: "openai-chat-completions://host/v1%3Ftenant?model=m&keyless=true", wantBaseURL: "https://host/v1%3Ftenant", wantModel: "m",
 		},
 	}
 
@@ -98,6 +81,12 @@ func Test_Opener_rejects_invalid_url(t *testing.T) {
 		"no-host":       {url: "openai-chat-completions://?model=m", errMsg: "must specify the endpoint host"},
 		"no-host-path":  {url: "openai-chat-completions:///v1?model=m", errMsg: "must specify the endpoint host"},
 		"no-host-insec": {url: "openai-chat-completions://?insecure=true&model=m", errMsg: "must specify the endpoint host"},
+		"cred-prefix":   {url: "openai-chat-completions://host?model=m&cred-prefix=openai", errMsg: `unknown query parameter "cred-prefix"`},
+		"bad-keyless":   {url: "openai-chat-completions://host?model=m&keyless=yes", errMsg: "keyless must be true or false"},
+		"bad-insecure":  {url: "openai-chat-completions://host?model=m&insecure=yes", errMsg: "insecure must be true or false"},
+		"duplicate-model": {
+			url: "openai-chat-completions://host?model=a&model=b", errMsg: `query parameter "model" must appear once`,
+		},
 	}
 
 	for name, tc := range testCases {
@@ -115,7 +104,7 @@ func Test_Opener_offers_enabled_tool_actions(t *testing.T) {
 		tool.Backend{Scheme: "status", Opener: fakeToolOpener, Descriptor: &statusDesc},
 		tool.Backend{Scheme: "ping", Opener: fakeToolOpener, Descriptor: &pingDesc},
 	)
-	opened, err := openerViaRegistry(t, "openai-chat-completions://host/v1?model=m", nil, tools)
+	opened, err := openerViaRegistry(t, "openai-chat-completions://host/v1?model=m&keyless=true", nil, tools)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, opened.Close()) }()
 	planner := opened.(*Planner)
@@ -134,32 +123,37 @@ func Test_Opener_resolves_api_key(t *testing.T) {
 		creds      cred.Store
 		wantAPIKey string
 		wantErr    string
+		wantErrIs  error
 	}{
 		"present": {
-			url:        "openai-chat-completions://host/v1?model=m&cred-prefix=openai",
-			creds:      fakeCreds{values: map[string]string{"openai-api-key": "sk-1"}},
+			url:        "openai-chat-completions://host/v1?model=m&keyless=false",
+			creds:      testutils.CredentialStore{Values: map[cred.Key]string{cred.PlannerAPIKey: "sk-1"}},
 			wantAPIKey: "sk-1",
 		},
-		"missing-is-not-error": {
-			url:   "openai-chat-completions://host/v1?model=m&cred-prefix=openai",
-			creds: fakeCreds{values: map[string]string{}},
+		"missing": {
+			url:       "openai-chat-completions://host/v1?model=m",
+			creds:     testutils.CredentialStore{},
+			wantErr:   "planner.api-key",
+			wantErrIs: cred.ErrNotFound,
 		},
-		"no-prefix-skips-lookup": {
-			url:   "openai-chat-completions://host/v1?model=m",
-			creds: fakeCreds{values: map[string]string{"openai-api-key": "sk-1"}},
+		"explicit-keyless-skips-lookup": {
+			url:   "openai-chat-completions://host/v1?model=m&keyless=true",
+			creds: testutils.CredentialStore{Err: errors.New("must not be called")},
 		},
 		"nil-store": {
-			url: "openai-chat-completions://host/v1?model=m&cred-prefix=openai", creds: nil,
+			url: "openai-chat-completions://host/v1?model=m", creds: nil,
+			wantErr:   "credential store is not configured; use keyless=true for an unauthenticated endpoint",
+			wantErrIs: cred.ErrStoreNotConfigured,
 		},
-		"cred-prefix-selects-key": {
-			url:        "openai-chat-completions://host/v1?model=m&cred-prefix=gemini",
-			creds:      fakeCreds{values: map[string]string{"gemini-api-key": "g-1"}},
-			wantAPIKey: "g-1",
+		"empty": {
+			url:     "openai-chat-completions://host/v1?model=m",
+			creds:   testutils.CredentialStore{Values: map[cred.Key]string{cred.PlannerAPIKey: ""}},
+			wantErr: "planner.api-key is empty",
 		},
 		"store-error": {
-			url:     "openai-chat-completions://host/v1?model=m&cred-prefix=openai",
-			creds:   fakeCreds{err: errors.New("boom")},
-			wantErr: "resolve API key",
+			url:     "openai-chat-completions://host/v1?model=m",
+			creds:   testutils.CredentialStore{Err: errors.New("boom")},
+			wantErr: "resolve planner.api-key",
 		},
 	}
 
@@ -168,6 +162,9 @@ func Test_Opener_resolves_api_key(t *testing.T) {
 			opened, err := openerViaRegistry(t, tc.url, tc.creds, nil)
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
+				if tc.wantErrIs != nil {
+					require.ErrorIs(t, err, tc.wantErrIs)
+				}
 				return
 			}
 			require.NoError(t, err)
@@ -182,7 +179,10 @@ func Test_Opener_resolves_api_key(t *testing.T) {
 func plannerAgainst(t *testing.T, server *httptest.Server, creds cred.Store, tools *tool.Registry) planner.Planner {
 	t.Helper()
 	host := strings.TrimPrefix(server.URL, "http://")
-	rawURL := "openai-chat-completions://" + host + "/v1?insecure=true&model=test-model&cred-prefix=openai"
+	rawURL := "openai-chat-completions://" + host + "/v1?insecure=true&model=test-model"
+	if creds == nil {
+		rawURL += "&keyless=true"
+	}
 	opened, err := openerViaRegistry(t, rawURL, creds, tools)
 	require.NoError(t, err)
 	return opened
@@ -202,7 +202,7 @@ func Test_Plan_maps_completion_to_steps(t *testing.T) {
 
 	statusDesc := &tool.Descriptor{Summary: "status", Actions: []tool.Action{{Name: "check", TakesTarget: true, TargetDesc: "the service"}}}
 	tools := tool.NewRegistry(tool.Backend{Scheme: "status", Opener: fakeToolOpener, Descriptor: statusDesc})
-	creds := fakeCreds{values: map[string]string{"openai-api-key": "sk-test"}}
+	creds := testutils.CredentialStore{Values: map[cred.Key]string{cred.PlannerAPIKey: "sk-test"}}
 	p := plannerAgainst(t, server, creds, tools)
 	defer func() { require.NoError(t, p.Close()) }()
 

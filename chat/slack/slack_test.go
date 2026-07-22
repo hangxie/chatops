@@ -3,7 +3,6 @@ package slack
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,30 +17,13 @@ import (
 
 	"github.com/hangxie/chatops/chat"
 	"github.com/hangxie/chatops/cred"
+	"github.com/hangxie/chatops/internal/testutils"
 )
 
-type credentialStore struct {
-	values map[string]string
-	err    error
-}
-
-func (s *credentialStore) Get(_ context.Context, key string) (string, error) {
-	if s.err != nil {
-		return "", s.err
-	}
-	value, ok := s.values[key]
-	if !ok {
-		return "", fmt.Errorf("%s: %w", key, cred.ErrNotFound)
-	}
-	return value, nil
-}
-
-func (*credentialStore) Close() error { return nil }
-
-func slackCredentials() *credentialStore {
-	return &credentialStore{values: map[string]string{
-		BotTokenKey: "xoxb-test",
-		AppTokenKey: "xapp-test",
+func slackCredentials() testutils.CredentialStore {
+	return testutils.CredentialStore{Values: map[cred.Key]string{
+		cred.SlackBotToken: "xoxb-test",
+		cred.SlackAppToken: "xapp-test",
 	}}
 }
 
@@ -170,15 +152,15 @@ func Test_Open_requires_credentials(t *testing.T) {
 		errIs       error
 	}{
 		"no-store":  {errMsg: "credential store is not configured"},
-		"bot-token": {credentials: &credentialStore{values: map[string]string{AppTokenKey: "xapp-test"}}, errMsg: BotTokenKey, errIs: cred.ErrNotFound},
-		"app-token": {credentials: &credentialStore{values: map[string]string{BotTokenKey: "xoxb-test"}}, errMsg: AppTokenKey, errIs: cred.ErrNotFound},
-		"empty-bot-token": {credentials: &credentialStore{values: map[string]string{
-			BotTokenKey: "", AppTokenKey: "xapp-test",
-		}}, errMsg: BotTokenKey},
-		"empty-app-token": {credentials: &credentialStore{values: map[string]string{
-			BotTokenKey: "xoxb-test", AppTokenKey: "",
-		}}, errMsg: AppTokenKey},
-		"store-error": {credentials: &credentialStore{err: testErr}, errMsg: "resolve", errIs: testErr},
+		"bot-token": {credentials: testutils.CredentialStore{Values: map[cred.Key]string{cred.SlackAppToken: "xapp-test"}}, errMsg: cred.SlackBotToken.String(), errIs: cred.ErrNotFound},
+		"app-token": {credentials: testutils.CredentialStore{Values: map[cred.Key]string{cred.SlackBotToken: "xoxb-test"}}, errMsg: cred.SlackAppToken.String(), errIs: cred.ErrNotFound},
+		"empty-bot-token": {credentials: testutils.CredentialStore{Values: map[cred.Key]string{
+			cred.SlackBotToken: "", cred.SlackAppToken: "xapp-test",
+		}}, errMsg: cred.SlackBotToken.String()},
+		"empty-app-token": {credentials: testutils.CredentialStore{Values: map[cred.Key]string{
+			cred.SlackBotToken: "xoxb-test", cred.SlackAppToken: "",
+		}}, errMsg: cred.SlackAppToken.String()},
+		"store-error": {credentials: testutils.CredentialStore{Err: testErr}, errMsg: "resolve", errIs: testErr},
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
