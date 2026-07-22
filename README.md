@@ -52,6 +52,40 @@ Commands:
   version    Show build version.
 ```
 
+## Running the system package
+
+The Debian and RPM packages install a `chatops.service` systemd unit and a dedicated `chatops` system user. The service is not enabled or started automatically because the server requires deployment-specific chat and planner URLs.
+
+Set the chat and planner URLs in `/etc/chatops/chatops.env`, adjust the other named settings as needed, then enable and start the service:
+
+```ini
+CHAT=slack://
+PLANNER=ping://
+CRED_STORE=json-file:///etc/chatops/credentials.json
+CONNECTION_ID=operations
+MAX_CONCURRENCY=8
+LOG_LEVEL=info
+LOG_FORMAT=json
+EXTRA_ARGS=--tool ping --tool status
+```
+
+`EXTRA_ARGS` is expanded into separate command-line arguments and is intended for repeatable `--tool` selections or future options without a dedicated setting. Leave `CRED_STORE` or `EXTRA_ARGS` empty when they are not needed.
+
+```bash
+sudoedit /etc/chatops/chatops.env
+sudo systemctl enable --now chatops.service
+sudo systemctl status chatops.service
+```
+
+For a JSON credential store, place the file under `/etc/chatops`, make it readable by the service group, and set its URL in `CRED_STORE`:
+
+```bash
+sudo chown root:chatops /etc/chatops/credentials.json
+sudo chmod 0640 /etc/chatops/credentials.json
+```
+
+Package upgrades preserve the environment file. Restart the service after changing its arguments or credentials with `sudo systemctl restart chatops.service`.
+
 ### Server
 
 The server requires one chat backend URL and one planner URL:

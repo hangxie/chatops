@@ -79,6 +79,7 @@ docker-build:  ## Build docker image for local test
 .PHONY: test
 test: deps tools  ## Run unit tests
 	@echo "==> Running unit tests"
+	@package/scripts/package-test.sh
 	@mkdir -p $(BUILD_DIR)/test
 	@set -euo pipefail ; \
 		cd $(BUILD_DIR)/test; \

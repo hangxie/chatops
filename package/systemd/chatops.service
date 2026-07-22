@@ -1,0 +1,28 @@
+[Unit]
+Description=ChatOps bot service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chatops
+Group=chatops
+EnvironmentFile=-/etc/chatops/chatops.env
+ExecStart=/usr/bin/chatops server \
+    --chat=${CHAT} \
+    --planner=${PLANNER} \
+    --credentials=${CRED_STORE} \
+    --connection-id=${CONNECTION_ID} \
+    --max-concurrency=${MAX_CONCURRENCY} \
+    --log-level=${LOG_LEVEL} \
+    --log-format=${LOG_FORMAT} \
+    $EXTRA_ARGS
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target
