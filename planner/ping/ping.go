@@ -150,7 +150,7 @@ func (p *Planner) Plan(ctx context.Context, req planner.Request) (planner.Plan, 
 		return pingPlan(), nil
 	}
 	if wasPending && (text == "no" || text == "n") {
-		return replyPlan(conv, declineText), nil
+		return replyPlan(declineText), nil
 	}
 	if text == "ping" {
 		return pingPlan(), nil
@@ -158,9 +158,9 @@ func (p *Planner) Plan(ctx context.Context, req planner.Request) (planner.Plan, 
 	if pingWordRE.MatchString(text) {
 		p.evictStale(now)
 		p.pending[key] = now
-		return confirmationPlan(conv), nil
+		return confirmationPlan(), nil
 	}
-	return replyPlan(conv, unknownText), nil
+	return replyPlan(unknownText), nil
 }
 
 // evictStale drops expired confirmations and then the oldest ones
@@ -195,24 +195,22 @@ func (p *Planner) Close() error {
 // pingPlan is the single-step plan invoking the ping tool.
 func pingPlan() planner.Plan {
 	return planner.Plan{Steps: []planner.Step{
-		{Tool: pingToolURL, Call: tool.Call{Action: "ping"}},
+		{Tool: pingToolURL, Call: tool.Call{}},
 	}}
 }
 
-// replyPlan is the single-step plan posting text into conversation
-// conv through the reply tool.
-func replyPlan(conv, text string) planner.Plan {
+// replyPlan is the single-step plan posting text through the reply tool.
+// The target conversation is injected by the executor.
+func replyPlan(text string) planner.Plan {
 	return planner.Plan{Steps: []planner.Step{
 		{Tool: replyToolURL, Call: tool.Call{
-			Action:     "send",
-			Target:     conv,
-			Parameters: map[string]string{"text": text},
+			Arguments: map[string]string{"text": text},
 		}},
 	}}
 }
 
-func confirmationPlan(conv string) planner.Plan {
-	plan := replyPlan(conv, askText)
+func confirmationPlan() planner.Plan {
+	plan := replyPlan(askText)
 	plan.Steps[0].Call.Choices = append([]tool.Choice(nil), confirmationChoices...)
 	return plan
 }

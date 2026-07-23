@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 
 	"github.com/hangxie/chatops/planner"
@@ -11,28 +12,20 @@ import (
 	"github.com/hangxie/chatops/tool/reply"
 )
 
-// callArgs is the union of argument shapes the model may send: text for
-// reply, target/parameters for a tool (the action is in the function name).
-// Parameters decode as raw JSON since a typed function may declare
-// non-string values; they are stringified later (see paramsToStrings).
-type callArgs struct {
-	Text       string                     `json:"text"`
-	Target     string                     `json:"target"`
-	Parameters map[string]json.RawMessage `json:"parameters"`
-}
-
 // stepsFromMessage maps one assistant message to plan steps: prose and reply
 // calls become reply steps into conv, other tool calls become "<scheme>://"
 // steps. Model output is untrusted, so each call is resolved via funcs and
 // validated before a step is produced. It errors on bad JSON, an unavailable
 // function, empty reply text, or invalid arguments.
-func stepsFromMessage(msg respMessage, conv string, funcs map[string]toolFunc) (planner.Plan, error) {
+func stepsFromMessage(msg respMessage, funcs map[string]toolFunc) (planner.Plan, error) {
 	var steps []planner.Step
 	if text := strings.TrimSpace(msg.Content); text != "" {
-		steps = append(steps, replyStep(conv, text, nil))
+		steps = append(steps, replyStep(text, nil))
 	}
 	for _, call := range msg.ToolCalls {
-		var args callArgs
+		// A typed function may declare non-string scalars, so arguments
+		// decode as raw JSON and are stringified later (see paramsToStrings).
+		var args map[string]json.RawMessage
 		if raw := call.Function.Arguments; raw != "" {
 			if err := json.Unmarshal([]byte(raw), &args); err != nil {
 				return planner.Plan{}, fmt.Errorf("openai: decode arguments for %q: %w", call.Function.Name, err)
@@ -40,52 +33,44 @@ func stepsFromMessage(msg respMessage, conv string, funcs map[string]toolFunc) (
 		}
 		name := call.Function.Name
 		if name == replyFunc {
-			if strings.TrimSpace(args.Text) == "" {
+			text := stringArg(args["text"])
+			if strings.TrimSpace(text) == "" {
 				return planner.Plan{}, fmt.Errorf("openai: reply call has empty text")
 			}
-			steps = append(steps, replyStep(conv, args.Text, nil))
+			steps = append(steps, replyStep(text, nil))
 			continue
 		}
 		tf, ok := funcs[name]
 		if !ok {
 			return planner.Plan{}, fmt.Errorf("openai: completion called unavailable function %q", name)
 		}
-		if err := validateArgs(name, tf.action, args); err != nil {
+		if err := validateArgs(name, tf.params, args); err != nil {
 			return planner.Plan{}, err
 		}
 		steps = append(steps, planner.Step{
 			Tool: tf.scheme + "://",
-			// Trim so what validateArgs checked is what the tool receives.
-			Call: tool.Call{Action: tf.action.Name, Target: strings.TrimSpace(args.Target), Parameters: paramsToStrings(args.Parameters)},
+			Call: tool.Call{Arguments: paramsToStrings(tf.params, args)},
 		})
 	}
 	return planner.Plan{Steps: steps}, nil
 }
 
-// validateArgs rejects a tool call whose arguments violate the action's
-// schema: a missing/forbidden target, a missing-required or undeclared
-// parameter, or a wrong scalar type. JSON null and empty values count as
-// absent, matching paramsToStrings.
-func validateArgs(fn string, a tool.Action, args callArgs) error {
-	if a.TakesTarget {
-		if strings.TrimSpace(args.Target) == "" {
-			return fmt.Errorf("openai: function %q requires a target", fn)
-		}
-	} else if strings.TrimSpace(args.Target) != "" {
-		return fmt.Errorf("openai: function %q does not take a target", fn)
-	}
-
-	declared := make(map[string]tool.Param, len(a.Parameters))
-	for _, p := range a.Parameters {
+// validateArgs rejects a tool call whose arguments violate the tool's flat
+// schema: a missing-required or undeclared parameter, or a wrong scalar
+// type. JSON null and empty values count as absent, matching
+// paramsToStrings.
+func validateArgs(fn string, params []tool.Param, args map[string]json.RawMessage) error {
+	declared := make(map[string]tool.Param, len(params))
+	for _, p := range params {
 		declared[p.Name] = p
 	}
-	for name := range args.Parameters {
+	for name := range args {
 		if _, ok := declared[name]; !ok {
 			return fmt.Errorf("openai: function %q got undeclared parameter %q", fn, name)
 		}
 	}
-	for _, p := range a.Parameters {
-		raw, present := args.Parameters[p.Name]
+	for _, p := range params {
+		raw, present := args[p.Name]
 		if present && argAbsent(raw) {
 			present = false
 		}
@@ -100,6 +85,19 @@ func validateArgs(fn string, a tool.Action, args callArgs) error {
 		}
 	}
 	return nil
+}
+
+// stringArg decodes a raw JSON value as a string, returning "" when it is
+// absent or not a JSON string.
+func stringArg(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return s
 }
 
 // argAbsent reports whether a raw JSON parameter value should be treated as
@@ -134,20 +132,39 @@ func checkScalarType(p tool.Param, raw json.RawMessage) error {
 			return errors.New("must be a number")
 		}
 	case "integer":
-		var f float64
-		if json.Unmarshal(raw, &f) != nil || strings.ContainsAny(strings.TrimSpace(string(raw)), ".eE") {
+		// JSON Schema defines "integer" mathematically, so an integer-valued
+		// number in any JSON form ("3", "3.0", "1e3") is accepted; only a
+		// non-integer value (e.g. "3.5") is rejected.
+		if _, ok := canonicalInt(raw); !ok {
 			return errors.New("must be an integer")
 		}
 	}
 	return nil
 }
 
+// canonicalInt reports whether raw is a JSON number with an integer value and
+// returns its canonical decimal form ("1e3" -> "1000", "3.0" -> "3"). It uses
+// big.Rat so large integers keep full precision, unlike a float64 round-trip.
+func canonicalInt(raw json.RawMessage) (string, bool) {
+	r := new(big.Rat)
+	if _, ok := r.SetString(strings.TrimSpace(string(raw))); !ok || !r.IsInt() {
+		return "", false
+	}
+	return r.Num().String(), true
+}
+
 // paramsToStrings converts raw JSON parameter values into the string map
-// tool.Call carries: a JSON string yields its value, other scalars their
-// literal text. Null/empty are dropped, and it returns nil when none remain.
-func paramsToStrings(raw map[string]json.RawMessage) map[string]string {
+// tool.Call carries: a JSON string yields its value, an integer parameter its
+// canonical decimal form (so a tool that parses it as an int is not tripped by
+// "3.0" or "1e3"), and other scalars their literal text. Null/empty are
+// dropped, and it returns nil when none remain.
+func paramsToStrings(params []tool.Param, raw map[string]json.RawMessage) map[string]string {
 	if len(raw) == 0 {
 		return nil
+	}
+	types := make(map[string]string, len(params))
+	for _, p := range params {
+		types[p.Name] = p.Type
 	}
 	out := make(map[string]string, len(raw))
 	for key, value := range raw {
@@ -155,7 +172,12 @@ func paramsToStrings(raw map[string]json.RawMessage) map[string]string {
 		if text == "" || text == "null" {
 			continue
 		}
-		if strings.HasPrefix(text, `"`) {
+		switch {
+		case types[key] == "integer":
+			if canon, ok := canonicalInt(value); ok {
+				text = canon
+			}
+		case strings.HasPrefix(text, `"`):
 			var s string
 			if err := json.Unmarshal(value, &s); err == nil {
 				text = s
@@ -169,13 +191,13 @@ func paramsToStrings(raw map[string]json.RawMessage) map[string]string {
 	return out
 }
 
-// replyStep is a step posting text back into conversation conv through
-// the reply tool, mirroring the shape the ping planner emits.
-func replyStep(conv, text string, choices []tool.Choice) planner.Step {
+// replyStep is a step posting text back to the requester through the reply
+// tool, mirroring the shape the ping planner emits. The target conversation
+// is injected by the executor, so the step carries only the text and any
+// interactive choices.
+func replyStep(text string, choices []tool.Choice) planner.Step {
 	return planner.Step{Tool: reply.URL, Call: tool.Call{
-		Action:     "send",
-		Target:     conv,
-		Parameters: map[string]string{"text": text},
-		Choices:    choices,
+		Arguments: map[string]string{"text": text},
+		Choices:   choices,
 	}}
 }

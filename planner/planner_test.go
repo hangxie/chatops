@@ -24,14 +24,12 @@ func (f *fakePlanner) Plan(_ context.Context, req planner.Request) (planner.Plan
 	}
 	if req.Text == "go" {
 		return planner.Plan{Steps: []planner.Step{
-			{Tool: "ping://", Call: tool.Call{Action: "ping"}},
+			{Tool: "ping://", Call: tool.Call{}},
 		}}, nil
 	}
 	return planner.Plan{Steps: []planner.Step{
 		{Tool: "reply://", Call: tool.Call{
-			Action:     "send",
-			Target:     req.ConversationID,
-			Parameters: map[string]string{"text": "what do you mean, " + req.Sender + "?"},
+			Arguments: map[string]string{"text": "what do you mean, " + req.Sender + "?"},
 		}},
 	}}, nil
 }
@@ -54,16 +52,14 @@ func Test_Planner_contract(t *testing.T) {
 		"tool-step": {
 			req: planner.Request{Text: "go", ConversationID: "conv-1", Sender: "alice"},
 			expected: planner.Plan{Steps: []planner.Step{
-				{Tool: "ping://", Call: tool.Call{Action: "ping"}},
+				{Tool: "ping://", Call: tool.Call{}},
 			}},
 		},
 		"reply-step": {
 			req: planner.Request{Text: "hmm", ConversationID: "conv-1", Sender: "alice"},
 			expected: planner.Plan{Steps: []planner.Step{
 				{Tool: "reply://", Call: tool.Call{
-					Action:     "send",
-					Target:     "conv-1",
-					Parameters: map[string]string{"text": "what do you mean, alice?"},
+					Arguments: map[string]string{"text": "what do you mean, alice?"},
 				}},
 			}},
 		},

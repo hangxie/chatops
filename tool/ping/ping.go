@@ -1,6 +1,6 @@
-// Package ping implements a dummy tool.Tool that answers "pong" to
-// the "ping" action, useful as a liveness check and as the reference
-// implementation of the tool interface.
+// Package ping implements a dummy tool.Tool that always answers "pong",
+// useful as a liveness check and as the reference implementation of the
+// tool interface.
 //
 // The package exports Scheme and Opener for wiring the tool into a
 // tool.Registry under the "ping" URL scheme. The tool has no endpoint
@@ -8,8 +8,7 @@
 //
 //	ping://
 //
-// The only supported action is "ping"; Call.Target and
-// Call.Parameters are ignored.
+// The tool takes no arguments; Call.Arguments is ignored.
 package ping
 
 import (
@@ -27,10 +26,7 @@ const Scheme = "ping"
 // Descriptor is the tool's self-description for planners; wire it into a
 // tool.Backend alongside Scheme and Opener.
 var Descriptor = tool.Descriptor{
-	Summary: "Liveness check; replies \"pong\" to confirm the bot is responsive.",
-	Actions: []tool.Action{
-		{Name: "ping", Description: `Reply "pong".`},
-	},
+	Description: "Liveness check; replies \"pong\" to confirm the bot is responsive.",
 }
 
 // Opener is the tool.OpenerFunc for this tool: the URL carries no
@@ -55,15 +51,10 @@ func Open(_ context.Context) (*Tool, error) {
 	return &Tool{}, nil
 }
 
-// Invoke answers the "ping" action with "pong" and reports an error
-// wrapping tool.ErrUnknownAction for any other action. Call.Target
-// and Call.Parameters are ignored.
-func (t *Tool) Invoke(ctx context.Context, call tool.Call) (tool.Result, error) {
+// Invoke always answers "pong". Call.Arguments is ignored.
+func (t *Tool) Invoke(ctx context.Context, _ tool.Call) (tool.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return tool.Result{}, fmt.Errorf("ping: %w", err)
-	}
-	if call.Action != "ping" {
-		return tool.Result{}, fmt.Errorf("ping: %q: %w", call.Action, tool.ErrUnknownAction)
 	}
 	return tool.Result{Text: "pong"}, nil
 }

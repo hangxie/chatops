@@ -10,21 +10,12 @@ import (
 	"github.com/hangxie/chatops/tool"
 )
 
-// funcSchema is the decoded shape of one action function's JSON Schema.
+// funcSchema is the decoded shape of one tool function's flat JSON Schema.
 type funcSchema struct {
 	Type       string `json:"type"`
-	Properties struct {
-		Target *struct {
-			Type        string `json:"type"`
-			Description string `json:"description"`
-		} `json:"target"`
-		Parameters *struct {
-			Properties map[string]struct {
-				Type        string `json:"type"`
-				Description string `json:"description"`
-			} `json:"properties"`
-			Required []string `json:"required"`
-		} `json:"parameters"`
+	Properties map[string]struct {
+		Type        string `json:"type"`
+		Description string `json:"description"`
 	} `json:"properties"`
 	Required []string `json:"required"`
 }
@@ -44,12 +35,12 @@ func defsByName(defs []toolDef) map[string]functionDef {
 	return byName
 }
 
-func Test_buildCatalog_offers_reply_and_per_action_functions(t *testing.T) {
+func Test_buildCatalog_offers_reply_and_per_tool_functions(t *testing.T) {
 	descriptors := map[string]tool.Descriptor{
-		"status": {Summary: "status summary", Actions: []tool.Action{{Name: "check"}}},
-		"ping":   {Summary: "ping summary", Actions: []tool.Action{{Name: "ping"}}},
+		"status-check": {Description: "status check summary"},
+		"ping":         {Description: "ping summary"},
 	}
-	defs, funcs, err := buildCatalog([]string{"status", "ping"}, descriptors)
+	defs, funcs, err := buildCatalog([]string{"status-check", "ping"}, descriptors)
 	require.NoError(t, err)
 
 	names := make([]string, len(defs))
@@ -57,20 +48,19 @@ func Test_buildCatalog_offers_reply_and_per_action_functions(t *testing.T) {
 		require.Equal(t, "function", def.Type)
 		names[i] = def.Function.Name
 	}
-	// reply is always first; then one function per action, schemes sorted.
-	require.Equal(t, []string{"reply", "ping-ping", "status-check"}, names)
+	// reply is always first; then one function per tool, schemes sorted.
+	require.Equal(t, []string{"reply", "ping", "status-check"}, names)
 
-	// The reply function's schema requires text; each tool function names a
-	// concrete action and maps back to its (scheme, action).
+	// The reply function's schema requires text; each tool function is named
+	// by its scheme and maps back to it.
 	require.JSONEq(t, string(replyParams), string(defs[0].Function.Parameters))
-	require.Equal(t, "ping", funcs["ping-ping"].scheme)
-	require.Equal(t, "ping", funcs["ping-ping"].action.Name)
-	require.Equal(t, "status", funcs["status-check"].scheme)
-	require.Equal(t, "check", funcs["status-check"].action.Name)
+	require.Equal(t, "ping", funcs["ping"].scheme)
+	require.Equal(t, "status-check", funcs["status-check"].scheme)
 	require.Len(t, funcs, 2)
 
 	byName := defsByName(defs)
-	require.Equal(t, "ping summary", byName["ping-ping"].Description)
+	require.Equal(t, "ping summary", byName["ping"].Description)
+	require.Equal(t, "status check summary", byName["status-check"].Description)
 }
 
 func Test_validateSchemes(t *testing.T) {
@@ -78,7 +68,7 @@ func Test_validateSchemes(t *testing.T) {
 		schemes []string
 		wantErr string
 	}{
-		"valid":              {schemes: []string{"ping", "status", "k8s-prod"}},
+		"valid":              {schemes: []string{"ping", "status-check", "k8s-prod"}},
 		"empty":              {schemes: nil},
 		"dot-invalid":        {schemes: []string{"service.status"}, wantErr: "cannot be an OpenAI function name"},
 		"plus-invalid":       {schemes: []string{"a+b"}, wantErr: "cannot be an OpenAI function name"},
@@ -108,14 +98,14 @@ func Test_buildCatalog_with_no_schemes_still_offers_reply(t *testing.T) {
 }
 
 func Test_buildCatalog_does_not_mutate_input(t *testing.T) {
-	schemes := []string{"status", "ping"}
+	schemes := []string{"status-check", "ping"}
 	descriptors := map[string]tool.Descriptor{
-		"status": {Summary: "s", Actions: []tool.Action{{Name: "check"}}},
-		"ping":   {Summary: "p", Actions: []tool.Action{{Name: "ping"}}},
+		"status-check": {Description: "s"},
+		"ping":         {Description: "p"},
 	}
 	_, _, err := buildCatalog(schemes, descriptors)
 	require.NoError(t, err)
-	require.Equal(t, []string{"status", "ping"}, schemes)
+	require.Equal(t, []string{"status-check", "ping"}, schemes)
 }
 
 func Test_buildCatalog_errors_on_missing_descriptor(t *testing.T) {
@@ -131,24 +121,20 @@ func Test_buildCatalog_rejects_invalid_and_colliding_names(t *testing.T) {
 		descriptors map[string]tool.Descriptor
 		wantErr     string
 	}{
-		"invalid-action-char": {
-			schemes:     []string{"status"},
-			descriptors: map[string]tool.Descriptor{"status": {Summary: "s", Actions: []tool.Action{{Name: "check it"}}}},
+		"invalid-scheme-char": {
+			schemes:     []string{"check it"},
+			descriptors: map[string]tool.Descriptor{"check it": {Description: "s"}},
 			wantErr:     "invalid function name",
 		},
-		"too-long-combined": {
-			schemes:     []string{"status"},
-			descriptors: map[string]tool.Descriptor{"status": {Summary: "s", Actions: []tool.Action{{Name: strings.Repeat("a", 64)}}}},
+		"too-long-scheme": {
+			schemes:     []string{strings.Repeat("a", 65)},
+			descriptors: map[string]tool.Descriptor{strings.Repeat("a", 65): {Description: "s"}},
 			wantErr:     "invalid function name",
 		},
-		"name-collision": {
-			// "a-b" + "c" and "a" + "b-c" both yield "a-b-c".
-			schemes: []string{"a-b", "a"},
-			descriptors: map[string]tool.Descriptor{
-				"a-b": {Summary: "s", Actions: []tool.Action{{Name: "c"}}},
-				"a":   {Summary: "s", Actions: []tool.Action{{Name: "b-c"}}},
-			},
-			wantErr: "collides",
+		"duplicate-scheme": {
+			schemes:     []string{"dup", "dup"},
+			descriptors: map[string]tool.Descriptor{"dup": {Description: "s"}},
+			wantErr:     "collides",
 		},
 	}
 	for name, tc := range testCases {
@@ -159,103 +145,78 @@ func Test_buildCatalog_rejects_invalid_and_colliding_names(t *testing.T) {
 	}
 }
 
-func Test_buildCatalog_builds_action_functions(t *testing.T) {
+func Test_buildCatalog_builds_tool_functions(t *testing.T) {
 	descriptors := map[string]tool.Descriptor{
-		"status": {
-			Summary: "check external service status",
-			Actions: []tool.Action{
-				{Name: "check", Description: "check one", TakesTarget: true, TargetDesc: "the service"},
-				{Name: "list", Description: "list all"},
+		"status-check": {
+			Description: "check one external service",
+			Parameters: []tool.Param{
+				{Name: "service", Type: "string", Required: true, Description: "the service"},
 			},
 		},
+		"status-list": {Description: "list all services"},
 	}
-	defs, funcs, err := buildCatalog([]string{"status"}, descriptors)
+	defs, funcs, err := buildCatalog([]string{"status-check", "status-list"}, descriptors)
 	require.NoError(t, err)
 
 	byName := defsByName(defs)
 	require.Contains(t, byName, "status-check")
 	require.Contains(t, byName, "status-list")
 
-	// check: description combines summary and action; target is present and
-	// required; no parameters are declared.
+	// check: description is the tool's; the required "service" argument sits
+	// directly on the flat schema.
 	check := byName["status-check"]
-	require.Equal(t, "check external service status — check one", check.Description)
+	require.Equal(t, "check one external service", check.Description)
 	cs := decodeSchema(t, check.Parameters)
 	require.Equal(t, "object", cs.Type)
-	require.NotNil(t, cs.Properties.Target)
-	require.Equal(t, "the service", cs.Properties.Target.Description)
-	require.Equal(t, []string{"target"}, cs.Required)
-	require.Nil(t, cs.Properties.Parameters)
-	require.Equal(t, "status", funcs["status-check"].scheme)
-	require.Equal(t, "check", funcs["status-check"].action.Name)
+	require.Equal(t, "the service", cs.Properties["service"].Description)
+	require.Equal(t, "string", cs.Properties["service"].Type)
+	require.Equal(t, []string{"service"}, cs.Required)
+	require.Equal(t, "status-check", funcs["status-check"].scheme)
 
-	// list: takes no target, so nothing is required.
+	// list: takes no arguments, so nothing is required.
 	list := byName["status-list"]
-	require.Equal(t, "check external service status — list all", list.Description)
+	require.Equal(t, "list all services", list.Description)
 	ls := decodeSchema(t, list.Parameters)
-	require.Nil(t, ls.Properties.Target)
+	require.Empty(t, ls.Properties)
 	require.Empty(t, ls.Required)
-	require.Equal(t, "status", funcs["status-list"].scheme)
-	require.Equal(t, "list", funcs["status-list"].action.Name)
+	require.Equal(t, "status-list", funcs["status-list"].scheme)
 }
 
-func Test_actionSchema_target_and_required_params(t *testing.T) {
-	// An action with a target and a required parameter: both "target" and
-	// "parameters" are required, and the required param is listed.
-	scale := tool.Action{
-		Name: "scale", TakesTarget: true, TargetDesc: "the deployment",
-		Parameters: []tool.Param{
-			{Name: "replicas", Type: "integer", Required: true, Description: "desired count"},
-			{Name: "force", Type: "boolean"},
-		},
+func Test_toolSchema_required_and_optional_params(t *testing.T) {
+	// A tool with a required and an optional parameter lists only the
+	// required one, and preserves each declared scalar type.
+	params := []tool.Param{
+		{Name: "replicas", Type: "integer", Required: true, Description: "desired count"},
+		{Name: "force", Type: "boolean"},
 	}
-	s := decodeSchema(t, mustJSON(actionSchema(scale)))
-	require.Equal(t, []string{"target", "parameters"}, s.Required)
-	require.Equal(t, "integer", s.Properties.Parameters.Properties["replicas"].Type)
-	require.Equal(t, "boolean", s.Properties.Parameters.Properties["force"].Type)
-	require.Equal(t, []string{"replicas"}, s.Properties.Parameters.Required)
-
-	// An action whose only parameter is optional keeps parameters present
-	// but unrequired; the target is still required.
-	restart := tool.Action{
-		Name: "restart", TakesTarget: true, TargetDesc: "the deployment",
-		Parameters: []tool.Param{{Name: "replicas", Type: "integer"}},
-	}
-	r := decodeSchema(t, mustJSON(actionSchema(restart)))
-	require.Equal(t, []string{"target"}, r.Required)
-	require.NotNil(t, r.Properties.Parameters)
-	require.Empty(t, r.Properties.Parameters.Required)
+	s := decodeSchema(t, mustJSON(toolSchema(params)))
+	require.Equal(t, "object", s.Type)
+	require.Equal(t, "integer", s.Properties["replicas"].Type)
+	require.Equal(t, "boolean", s.Properties["force"].Type)
+	require.Equal(t, []string{"replicas"}, s.Required)
 }
 
-func Test_actionSchema_no_target_and_default_type(t *testing.T) {
-	// No target; a required param makes "parameters" required, and a param
-	// with no type defaults to string. The schema uses no const or oneOf.
-	set := tool.Action{
-		Name: "set",
-		Parameters: []tool.Param{
-			{Name: "key", Required: true}, // no Type -> string
-			{Name: "value", Type: "string"},
-		},
+func Test_toolSchema_default_type_and_no_const_or_oneOf(t *testing.T) {
+	// A parameter with no declared type defaults to string; the schema uses
+	// no const or oneOf so restrictive endpoints accept it.
+	params := []tool.Param{
+		{Name: "key", Required: true}, // no Type -> string
+		{Name: "value", Type: "string"},
 	}
-	raw := mustJSON(actionSchema(set))
+	raw := mustJSON(toolSchema(params))
 	require.NotContains(t, string(raw), "oneOf")
 	require.NotContains(t, string(raw), "const")
 
 	s := decodeSchema(t, raw)
-	require.Nil(t, s.Properties.Target)
-	require.Equal(t, []string{"parameters"}, s.Required)
-	require.Equal(t, "string", s.Properties.Parameters.Properties["key"].Type)
-	require.Equal(t, []string{"key"}, s.Properties.Parameters.Required)
+	require.Equal(t, "string", s.Properties["key"].Type)
+	require.Equal(t, []string{"key"}, s.Required)
 }
 
-func Test_actionSchema_no_target_no_params(t *testing.T) {
-	// An action with neither target nor parameters is an empty object with
-	// no required list.
-	raw := mustJSON(actionSchema(tool.Action{Name: "ping"}))
-	s := decodeSchema(t, raw)
+func Test_toolSchema_no_params(t *testing.T) {
+	// A tool with no parameters is an empty object with no required list.
+	s := decodeSchema(t, mustJSON(toolSchema(nil)))
 	require.Equal(t, "object", s.Type)
-	require.Nil(t, s.Properties.Target)
-	require.Nil(t, s.Properties.Parameters)
+	require.Empty(t, s.Properties)
 	require.Empty(t, s.Required)
 }
 
@@ -270,22 +231,4 @@ func Test_mustJSON_panics_on_unmarshalable_value(t *testing.T) {
 	require.PanicsWithValue(t, "openai: marshal static schema: json: unsupported type: chan int", func() {
 		mustJSON(make(chan int))
 	})
-}
-
-func Test_actionFuncDesc(t *testing.T) {
-	testCases := map[string]struct {
-		summary string
-		action  tool.Action
-		want    string
-	}{
-		"summary-and-action": {summary: "the tool", action: tool.Action{Description: "does x"}, want: "the tool — does x"},
-		"action-only":        {summary: "", action: tool.Action{Description: "does x"}, want: "does x"},
-		"summary-only":       {summary: "the tool", action: tool.Action{}, want: "the tool"},
-		"neither":            {summary: "", action: tool.Action{}, want: ""},
-	}
-	for name, tc := range testCases {
-		t.Run(name, func(t *testing.T) {
-			require.Equal(t, tc.want, actionFuncDesc(tc.summary, tc.action))
-		})
-	}
 }

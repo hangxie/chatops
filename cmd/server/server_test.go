@@ -79,7 +79,7 @@ func Test_Cmd_parse(t *testing.T) {
 				"--connection-id", "operations",
 				"--max-concurrency", "3",
 				"--tool", "ping",
-				"--tool", "status",
+				"--tool", "status-check",
 				"--log-level", "debug",
 				"--log-format", "text",
 			},
@@ -89,7 +89,7 @@ func Test_Cmd_parse(t *testing.T) {
 				CredentialsURL: "json-file:///etc/chatops/credentials.json",
 				ConnectionID:   "operations",
 				MaxConcurrency: 3,
-				Tools:          []string{"ping", "status"},
+				Tools:          []string{"ping", "status-check"},
 				LogLevel:       "debug",
 				LogFormat:      "text",
 			},
@@ -133,7 +133,7 @@ func Test_Cmd_parse(t *testing.T) {
 
 func Test_run_rejects_invalid_tool_before_opening_backends(t *testing.T) {
 	command := Cmd{ChatURL: "unknown://", PlannerURL: "unknown://", Tools: []string{"bogus"}}
-	require.EqualError(t, command.run(context.Background()), `server: configure tools: tool: unknown tool "bogus"; available tools: ping, status`)
+	require.EqualError(t, command.run(context.Background()), `server: configure tools: tool: unknown tool "bogus"; available tools: ping, status-check, status-list`)
 }
 
 func Test_run_ping_round_trip_and_graceful_cancellation(t *testing.T) {

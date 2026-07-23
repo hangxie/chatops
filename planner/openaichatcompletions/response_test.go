@@ -11,10 +11,9 @@ import (
 )
 
 func Test_stepsFromMessage(t *testing.T) {
-	const conv = "C123"
 	toolCallStatus := toolCall{
 		Type:     "function",
-		Function: functionCall{Name: "status-check", Arguments: `{"target":"github","parameters":{"verbose":"true"}}`},
+		Function: functionCall{Name: "status-check", Arguments: `{"service":"github","verbose":"true"}`},
 	}
 	replyCall := toolCall{
 		Type:     "function",
@@ -28,60 +27,51 @@ func Test_stepsFromMessage(t *testing.T) {
 	}{
 		"content-only": {
 			msg:  respMessage{Content: "  hello there  "},
-			want: []planner.Step{wantReply(conv, "hello there")},
+			want: []planner.Step{wantReply("hello there")},
 		},
 		"reply-function": {
 			msg:  respMessage{ToolCalls: []toolCall{replyCall}},
-			want: []planner.Step{wantReply(conv, "on it")},
+			want: []planner.Step{wantReply("on it")},
 		},
 		"single-tool-call": {
 			msg: respMessage{ToolCalls: []toolCall{toolCallStatus}},
 			want: []planner.Step{{
-				Tool: "status://",
-				Call: tool.Call{Action: "check", Target: "github", Parameters: map[string]string{"verbose": "true"}},
+				Tool: "status-check://",
+				Call: tool.Call{Arguments: map[string]string{"service": "github", "verbose": "true"}},
 			}},
 		},
 		"content-and-tool-call": {
 			msg: respMessage{Content: "checking", ToolCalls: []toolCall{toolCallStatus}},
 			want: []planner.Step{
-				wantReply(conv, "checking"),
-				{Tool: "status://", Call: tool.Call{Action: "check", Target: "github", Parameters: map[string]string{"verbose": "true"}}},
+				wantReply("checking"),
+				{Tool: "status-check://", Call: tool.Call{Arguments: map[string]string{"service": "github", "verbose": "true"}}},
 			},
 		},
-		"target-trimmed": {
-			// A target with surrounding whitespace is normalized before it
-			// reaches the tool, matching validateArgs' trimmed check.
-			msg: respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"target":"  github  "}`}}}},
-			want: []planner.Step{{
-				Tool: "status://",
-				Call: tool.Call{Action: "check", Target: "github"},
-			}},
+		"tool-with-no-arguments-object": {
+			msg:  respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-list", Arguments: `{}`}}}},
+			want: []planner.Step{{Tool: "status-list://", Call: tool.Call{}}},
 		},
-		"other-scheme": {
-			msg:  respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "ping-ping", Arguments: `{}`}}}},
-			want: []planner.Step{{Tool: "ping://", Call: tool.Call{Action: "ping"}}},
-		},
-		"function-no-arguments": {
-			// The action comes from the function name, so a call to a
-			// no-argument action with no arguments is a valid step.
-			msg:  respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "ping-ping"}}}},
-			want: []planner.Step{{Tool: "ping://", Call: tool.Call{Action: "ping"}}},
+		"tool-with-empty-arguments": {
+			// A tool with no required arguments and no arguments string is a
+			// valid step carrying an empty call.
+			msg:  respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-list"}}}},
+			want: []planner.Step{{Tool: "status-list://", Call: tool.Call{}}},
 		},
 		"typed-parameters": {
-			// A typed tool function may send non-string parameter values;
-			// they are validated against the schema then stringified.
-			msg: respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"target":"x","parameters":{"replicas":3,"force":true,"note":"hi"}}`}}}},
+			// A typed tool function may send non-string values; they are
+			// validated against the schema then stringified.
+			msg: respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"service":"x","replicas":3,"force":true,"note":"hi"}`}}}},
 			want: []planner.Step{{
-				Tool: "status://",
-				Call: tool.Call{Action: "check", Target: "x", Parameters: map[string]string{"replicas": "3", "force": "true", "note": "hi"}},
+				Tool: "status-check://",
+				Call: tool.Call{Arguments: map[string]string{"service": "x", "replicas": "3", "force": "true", "note": "hi"}},
 			}},
 		},
 		"null-declared-parameter-dropped": {
 			// A declared optional parameter sent as null counts as absent.
-			msg: respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"target":"x","parameters":{"note":null}}`}}}},
+			msg: respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"service":"x","note":null}`}}}},
 			want: []planner.Step{{
-				Tool: "status://",
-				Call: tool.Call{Action: "check", Target: "x"},
+				Tool: "status-check://",
+				Call: tool.Call{Arguments: map[string]string{"service": "x"}},
 			}},
 		},
 		"empty-message": {
@@ -108,81 +98,110 @@ func Test_stepsFromMessage(t *testing.T) {
 			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "reply", Arguments: `{"text":"  "}`}}}},
 			wantErr: "reply call has empty text",
 		},
-		// Argument validation against the descriptor.
-		"missing-required-target": {
-			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{}`}}}},
-			wantErr: `function "status-check" requires a target`,
+		"reply-missing-text-key": {
+			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "reply", Arguments: `{}`}}}},
+			wantErr: "reply call has empty text",
 		},
-		"target-not-allowed": {
-			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-list", Arguments: `{"target":"x"}`}}}},
-			wantErr: `function "status-list" does not take a target`,
+		"reply-non-string-text": {
+			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "reply", Arguments: `{"text":5}`}}}},
+			wantErr: "reply call has empty text",
+		},
+		"all-arguments-dropped": {
+			// Every supplied argument is null, so the call carries no arguments.
+			msg:  respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-opt", Arguments: `{"opt":null}`}}}},
+			want: []planner.Step{{Tool: "status-opt://", Call: tool.Call{}}},
+		},
+		// Argument validation against the descriptor.
+		"missing-required-parameter": {
+			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{}`}}}},
+			wantErr: `missing required parameter "service"`,
 		},
 		"undeclared-parameter": {
-			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"target":"x","parameters":{"bogus":"y"}}`}}}},
+			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"service":"x","bogus":"y"}`}}}},
 			wantErr: `undeclared parameter "bogus"`,
 		},
-		"missing-required-parameter": {
-			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-scale", Arguments: `{"target":"x"}`}}}},
-			wantErr: `missing required parameter "replicas"`,
+		"parameter-on-no-arg-tool": {
+			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-list", Arguments: `{"service":"x"}`}}}},
+			wantErr: `undeclared parameter "service"`,
 		},
 		"wrong-boolean-type": {
-			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"target":"x","parameters":{"force":"yes"}}`}}}},
+			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"service":"x","force":"yes"}`}}}},
 			wantErr: `parameter "force": must be a boolean`,
 		},
 		"wrong-string-type": {
-			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"target":"x","parameters":{"note":5}}`}}}},
+			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"service":"x","note":5}`}}}},
 			wantErr: `parameter "note": must be a string`,
 		},
 		"wrong-number-type": {
-			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"target":"x","parameters":{"ratio":"nope"}}`}}}},
+			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"service":"x","ratio":"nope"}`}}}},
 			wantErr: `parameter "ratio": must be a number`,
 		},
 		"number-parameter-valid": {
-			msg: respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"target":"x","parameters":{"ratio":1.5}}`}}}},
+			msg: respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"service":"x","ratio":1.5}`}}}},
 			want: []planner.Step{{
-				Tool: "status://",
-				Call: tool.Call{Action: "check", Target: "x", Parameters: map[string]string{"ratio": "1.5"}},
+				Tool: "status-check://",
+				Call: tool.Call{Arguments: map[string]string{"service": "x", "ratio": "1.5"}},
 			}},
 		},
 		"untyped-parameter-validated-as-string": {
-			msg: respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"target":"x","parameters":{"tag":"v1"}}`}}}},
+			msg: respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-check", Arguments: `{"service":"x","tag":"v1"}`}}}},
 			want: []planner.Step{{
-				Tool: "status://",
-				Call: tool.Call{Action: "check", Target: "x", Parameters: map[string]string{"tag": "v1"}},
+				Tool: "status-check://",
+				Call: tool.Call{Arguments: map[string]string{"service": "x", "tag": "v1"}},
+			}},
+		},
+		"integer-valued-float": {
+			// JSON Schema "integer" is mathematical, so 3.0 is a valid integer
+			// and is normalized to canonical decimal for the tool.
+			msg: respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-scale", Arguments: `{"replicas":3.0}`}}}},
+			want: []planner.Step{{
+				Tool: "status-scale://",
+				Call: tool.Call{Arguments: map[string]string{"replicas": "3"}},
+			}},
+		},
+		"integer-in-exponent-form": {
+			msg: respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-scale", Arguments: `{"replicas":1e3}`}}}},
+			want: []planner.Step{{
+				Tool: "status-scale://",
+				Call: tool.Call{Arguments: map[string]string{"replicas": "1000"}},
+			}},
+		},
+		"large-integer-keeps-precision": {
+			// Beyond float64's exact range; big.Rat preserves the value.
+			msg: respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-scale", Arguments: `{"replicas":9007199254740993}`}}}},
+			want: []planner.Step{{
+				Tool: "status-scale://",
+				Call: tool.Call{Arguments: map[string]string{"replicas": "9007199254740993"}},
 			}},
 		},
 		"non-integer-value": {
-			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-scale", Arguments: `{"target":"x","parameters":{"replicas":2.5}}`}}}},
+			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-scale", Arguments: `{"replicas":2.5}`}}}},
 			wantErr: `parameter "replicas": must be an integer`,
 		},
 		"non-numeric-integer": {
-			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-scale", Arguments: `{"target":"x","parameters":{"replicas":"x"}}`}}}},
+			msg:     respMessage{ToolCalls: []toolCall{{Function: functionCall{Name: "status-scale", Arguments: `{"replicas":"x"}`}}}},
 			wantErr: `parameter "replicas": must be an integer`,
 		},
 	}
 
 	funcs := map[string]toolFunc{
-		"status-check": {scheme: "status", action: tool.Action{
-			Name: "check", TakesTarget: true,
-			Parameters: []tool.Param{
-				{Name: "verbose", Type: "string"},
-				{Name: "replicas", Type: "integer"},
-				{Name: "force", Type: "boolean"},
-				{Name: "note", Type: "string"},
-				{Name: "ratio", Type: "number"},
-				{Name: "tag"}, // no type -> validated as string
-			},
+		"status-check": {scheme: "status-check", params: []tool.Param{
+			{Name: "service", Type: "string", Required: true},
+			{Name: "verbose", Type: "string"},
+			{Name: "replicas", Type: "integer"},
+			{Name: "force", Type: "boolean"},
+			{Name: "note", Type: "string"},
+			{Name: "ratio", Type: "number"},
+			{Name: "tag"}, // no type -> validated as string
 		}},
-		"status-list": {scheme: "status", action: tool.Action{Name: "list"}},
-		"status-scale": {scheme: "status", action: tool.Action{
-			Name: "scale", TakesTarget: true,
-			Parameters: []tool.Param{{Name: "replicas", Type: "integer", Required: true}},
-		}},
-		"ping-ping": {scheme: "ping", action: tool.Action{Name: "ping"}},
+		"status-list":  {scheme: "status-list"},
+		"status-scale": {scheme: "status-scale", params: []tool.Param{{Name: "replicas", Type: "integer", Required: true}}},
+		"status-opt":   {scheme: "status-opt", params: []tool.Param{{Name: "opt", Type: "string"}}},
+		"ping":         {scheme: "ping"},
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			plan, err := stepsFromMessage(tc.msg, conv, funcs)
+			plan, err := stepsFromMessage(tc.msg, funcs)
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
 				return
@@ -193,11 +212,10 @@ func Test_stepsFromMessage(t *testing.T) {
 	}
 }
 
-// wantReply is the reply step the mapping is expected to emit.
-func wantReply(conv, text string) planner.Step {
+// wantReply is the reply step the mapping is expected to emit. The target
+// conversation is injected by the executor, so the step carries only text.
+func wantReply(text string) planner.Step {
 	return planner.Step{Tool: reply.URL, Call: tool.Call{
-		Action:     "send",
-		Target:     conv,
-		Parameters: map[string]string{"text": text},
+		Arguments: map[string]string{"text": text},
 	}}
 }

@@ -44,6 +44,7 @@ func Planner() *planner.Registry {
 func Tool() *tool.Registry {
 	return tool.NewRegistry(
 		tool.Backend{Scheme: toolping.Scheme, Opener: toolping.Opener, Descriptor: &toolping.Descriptor},
-		tool.Backend{Scheme: toolstatus.Scheme, Opener: toolstatus.Opener, Descriptor: &toolstatus.Descriptor},
+		tool.Backend{Scheme: toolstatus.CheckScheme, Opener: toolstatus.CheckOpener, Descriptor: &toolstatus.CheckDescriptor},
+		tool.Backend{Scheme: toolstatus.ListScheme, Opener: toolstatus.ListOpener, Descriptor: &toolstatus.ListDescriptor},
 	)
 }

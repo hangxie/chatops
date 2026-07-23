@@ -233,9 +233,9 @@ The `tool` package provides a generic way to invoke operational tools (kubernete
 
 ```go
 type Tool interface {
-    // Invoke performs the operation described by call and returns its
-    // outcome. It returns an error wrapping ErrUnknownAction when
-    // call.Action is not one the tool supports.
+    // Invoke performs the tool's operation with the arguments in call and
+    // returns its outcome. It returns an error when the arguments are
+    // invalid or the operation fails.
     Invoke(ctx context.Context, call Call) (Result, error)
 
     // Close releases any resources held by the tool.
@@ -243,7 +243,7 @@ type Tool interface {
 }
 ```
 
-A call carries enough detail for the tool to act, without prescribing how it maps to actual API calls or commands: an **action** (the verb, e.g. `restart`), a **target** (what it applies to, e.g. `deployment/web`; may be empty), and optional key-value **parameters**. The result carries **text** — the human-readable outcome, composed by the tool and ready to post to chat as-is — plus optional machine-readable key-value **details**; callers never need the details to render a reply. Text is empty only when the tool has already delivered the outcome to the human itself (like the reply tool, whose action is posting into chat), so callers relay non-empty text and stay silent on empty text.
+Each tool performs a single intent, so a call names no verb — the tool *is* the intent. A call carries only a flat bag of **arguments** (e.g. `service`: `github`), keyed by the parameter names the tool declares in its descriptor; this mirrors the Model Context Protocol, where each tool has a name and a flat input schema and a call supplies only arguments. The result carries **text** — the human-readable outcome, composed by the tool and ready to post to chat as-is — plus optional machine-readable key-value **details**; callers never need the details to render a reply. Text is empty only when the tool has already delivered the outcome to the human itself (like the reply tool, whose intent is posting into chat), so callers relay non-empty text and stay silent on empty text.
 
 A tool instance is identified by a single URL — the scheme selects the implementation, host/port/path locate the endpoint it operates on, and query parameters carry further non-secret instance configuration. Credential *values* are **never** part of the URL; tools resolve predefined `cred.Key` identifiers from the `cred.Store` passed to `Open`. Adding a credential-bearing tool therefore extends the application credential schema rather than accepting caller-selected key prefixes.
 
@@ -252,12 +252,13 @@ Available tools:
 | Scheme  | Sub-package   | Tool URL                        |
 | ------- | ------------- | ------------------------------- |
 | `ping`  | `tool/ping`   | `ping://`                       |
-| `status` | `tool/status` | `status://`                     |
+| `status-check` | `tool/status` | `status-check://`        |
+| `status-list` | `tool/status` | `status-list://`          |
 | `reply` | `tool/reply`  | `reply://` (no registry opener) |
 
 ### Usage
 
-Build a registry from the tools you want, open the tool by URL with a credential store, then invoke actions:
+Build a registry from the tools you want, open the tool by URL with a credential store, then invoke it:
 
 ```go
 import (
@@ -277,7 +278,7 @@ if err != nil {
 }
 defer tl.Close()
 
-result, err := tl.Invoke(context.Background(), tool.Call{Action: "ping"})
+result, err := tl.Invoke(context.Background(), tool.Call{})
 if err != nil {
     // handle error
 }
@@ -288,13 +289,13 @@ Tools also expose a typed `Open` function for direct use, e.g. `ping.Open(ctx)`.
 
 ### ping tool
 
-A dummy tool that answers `pong` to the `ping` action, useful as a liveness check and as the reference implementation of the interface. It has no endpoint and takes no credentials, so the URL is a bare `ping://` (anything beyond the scheme — host, path, query, userinfo, or non-empty fragment — is rejected; a bare trailing `#` parses identically to the bare URL and is accepted). The only supported action is `ping`; `Target` and `Parameters` are ignored, and any other action reports an error wrapping `tool.ErrUnknownAction`. It exports a `tool.Descriptor` (its single `ping` action) as a reference for the typed-schema wiring.
+A dummy tool that always answers `pong`, useful as a liveness check and as the reference implementation of the interface. It has no endpoint and takes no credentials, so the URL is a bare `ping://` (anything beyond the scheme — host, path, query, userinfo, or non-empty fragment — is rejected; a bare trailing `#` parses identically to the bare URL and is accepted). The tool takes no arguments; `Call.Arguments` is ignored. It exports a `tool.Descriptor` as a reference for the typed-schema wiring.
 
-### status tool
+### status tools
 
-The service-status tool checks public third-party status APIs and normalizes their different schemas. It has no credentials or caller-configurable endpoint, so its only URL is the bare `status://`; keeping upstream URLs in the compiled provider catalog prevents planner output from turning the tool into an arbitrary HTTP client.
+The service-status tools check public third-party status APIs and normalize their different schemas. They have no credentials or caller-configurable endpoint, so their only URLs are the bare `status-check://` and `status-list://`; keeping upstream URLs in the compiled provider catalog prevents planner output from turning the tools into an arbitrary HTTP client.
 
-The `check` action requires one canonical provider or alias in `Call.Target` and takes no parameters. The canonical providers are `github`, `anthropic`, `cloudflare`, `openai`, `gemini`, `slack`, and `docker-hub`; the special target `all` checks every canonical provider. The `list` action takes no target or parameters and returns the canonical provider names. See the user guide for the complete alias table. The tool exports a `tool.Descriptor` declaring both actions (with `check` taking a service-name target), so an LLM planner is offered `check`/`list` as an enum rather than guessing action names.
+`status-check://` requires one canonical provider or alias in `Call.Arguments["service"]`. The canonical providers are `github`, `anthropic`, `cloudflare`, `openai`, `gemini`, `slack`, and `docker-hub`; the special service `all` checks every canonical provider. `status-list://` takes no arguments and returns the canonical provider names. See the user guide for the complete alias table. Each tool exports a `tool.Descriptor` (the check tool declaring its required `service` argument), so an LLM planner is offered `status-check` and `status-list` as separate typed functions rather than guessing a verb.
 
 Providers use adapters for their public status platform: GitHub, Anthropic, Cloudflare, and OpenAI use the common Statuspage summary schema; Slack uses the Slack Status API; Gemini combines active incidents for the stable Vertex Gemini and Workspace Gemini product IDs from Google's public JSON feeds; and Docker Hub uses the Status.io public API. Health is normalized to `operational`, `maintenance`, `degraded`, `partial_outage`, `major_outage`, or `unknown`.
 
@@ -312,13 +313,15 @@ import "github.com/hangxie/chatops/tool/reply"
 rt, err := reply.Open(ctx, conn) // conn is the chat.Conn messages arrive on
 ```
 
-The only supported action is `send`: `Target` is the conversation ID to post into (the `ConversationID` of the message being answered) and `Parameters["text"]` is the text to post. Sending is the whole outcome, so `Result.Text` stays empty — callers that post non-empty `Result.Text` back to chat will not double-post. The tool never closes the connection; that stays with the caller.
+The reply tool reads `Arguments["text"]` for the text to post and `Arguments["conversation"]` for the conversation ID to post into (the `ConversationID` of the message being answered). The conversation is injected by the executor, not the model: planners leave it unset and the engine sets it to the conversation the request arrived on. Sending is the whole outcome, so `Result.Text` stays empty — callers that post non-empty `Result.Text` back to chat will not double-post. The tool never closes the connection; that stays with the caller.
 
 ### Adding a new tool
 
+Each tool performs a single intent. A tool that would otherwise offer several verbs is split into one sub-package exposing one scheme, opener, and descriptor per intent (as `tool/status` does with `status-check` and `status-list`).
+
 1. Create a sub-package under `tool/` named after the tool (e.g. `tool/kubernetes`).
 2. Define a `Tool` type implementing the `tool.Tool` interface:
-   - `Invoke` maps the call's action/target/parameters onto the tool's API, wrapping `tool.ErrUnknownAction` (with `%w`) when the action is not supported so callers can detect it with `errors.Is`.
+   - `Invoke` reads the arguments it needs from `Call.Arguments` and maps them onto the tool's API, returning an error when a required argument is missing or invalid.
    - Compose `Result.Text` as the complete human-readable answer; put supplementary machine-readable output in `Result.Details`.
    - `Close` releases connections or other resources.
 3. Provide an `Open` function taking `context.Context` plus tool-specific parameters and returning `(*Tool, error)`. Resolve credentials from the `cred.Store` using predefined `cred.Key` identifiers; never accept credential values as parameters or URL elements.
@@ -334,14 +337,14 @@ The only supported action is `send`: `Target` is the conversation ID to post int
    }
    ```
 
-5. Export a `tool.Descriptor` describing the tool and wire it into the `Backend` alongside the scheme and opener — it is required, so `NewRegistry` panics on a backend without one. The descriptor lets an LLM planner offer each of the tool's actions as its own typed function (named `<tool>-<action>`, each with its described `target` and typed parameters and their required fields) instead of making the model guess the vocabulary. Keep the described actions and parameters in step with `Invoke`.
+5. Export a `tool.Descriptor` describing the tool and wire it into the `Backend` alongside the scheme and opener — it is required, so `NewRegistry` panics on a backend without one. The descriptor lets an LLM planner offer the tool as its own typed function (named for the scheme, with a flat input schema of its typed arguments and their required fields) instead of making the model guess the vocabulary. Keep the described arguments in step with `Invoke`.
 
    ```go
    // Descriptor is the tool's self-description for planners.
    var Descriptor = tool.Descriptor{
-       Summary: "One-line, model-facing description of the tool.",
-       Actions: []tool.Action{
-           {Name: "restart", Description: "Restart the target.", TakesTarget: true, TargetDesc: "the deployment"},
+       Description: "One-line, model-facing description of the tool.",
+       Parameters: []tool.Param{
+           {Name: "deployment", Type: "string", Required: true, Description: "the deployment to restart"},
        },
    }
    ```
@@ -350,8 +353,8 @@ The only supported action is `send`: `Target` is the conversation ID to post int
    tool.Backend{Scheme: mytool.Scheme, Opener: mytool.Opener, Descriptor: &mytool.Descriptor}
    ```
 
-6. Add a test file with table-driven tests covering `Open` failures, supported and unknown actions, context cancellation, `Close` semantics, opening through a `tool.Registry` with the exported scheme, and that every described action is one `Invoke` accepts.
-7. List the tool in the table above and document its actions and credential identifiers in a section like the ping one.
+6. Add a test file with table-driven tests covering `Open` failures, valid and invalid arguments, context cancellation, `Close` semantics, opening through a `tool.Registry` with the exported scheme, and that the descriptor validates.
+7. List the tool in the table above and document its arguments and credential identifiers in a section like the ping one.
 
 ## Planners (`planner`)
 
@@ -445,7 +448,7 @@ A planner backed by any service that speaks the OpenAI Chat Completions API, so 
 
 - The host is required, so a hostless or mistyped URL (e.g. the typo `openai-chat-completions:///host/v1` with three slashes, which parses to an empty host) is rejected rather than silently defaulting to some provider.
 - Each enabled tool's scheme is offered to the model as a function name, so the schemes must satisfy the OpenAI function-name rules (letters, digits, `_`, `-`, up to 64 characters). A tool whose scheme uses `+` or `.` is rejected when the planner is opened, rather than making every completion request fail.
-- On each message the planner makes one Chat Completions request, offering the enabled operational tools (from the tool set passed to `Open`) plus a built-in `reply` function. Tools are offered generically: each is a function taking an `action`, an optional `target`, and optional string `parameters`, mirroring `tool.Call`.
+- On each message the planner makes one Chat Completions request, offering the enabled operational tools (from the tool set passed to `Open`) plus a built-in `reply` function. Each tool is offered as one function named for its scheme, with a flat input schema built from the tool's descriptor — its typed arguments and their required fields — mirroring the Model Context Protocol.
 - The model's response maps to plan steps: assistant prose and each `reply` call become `reply://` steps, and each operational tool call becomes a step invoking that tool by its `<scheme>://` URL.
 - The exchange is single-shot — tool results are not fed back to the model — and the planner keeps no per-conversation history yet.
 
@@ -462,7 +465,7 @@ bot>  pong
 
 1. Create a sub-package under `planner/` named after the backend (e.g. `planner/openaichatcompletions`, `planner/anthropic`).
 2. Define a `Planner` type implementing the `planner.Planner` interface:
-   - `Plan` turns one inbound message into steps; express replies and clarifying questions as steps invoking the `reply://` tool with the request's `ConversationID` as the call target. Keep any per-conversation context keyed by the `(ConnectionID, ConversationID)` pair — never by `ConversationID` alone, which collides across chat connections — and make the planner safe for concurrent use.
+   - `Plan` turns one inbound message into steps; express replies and clarifying questions as steps invoking the `reply://` tool with the text in `Arguments["text"]` (the executor injects the target conversation). Keep any per-conversation context keyed by the `(ConnectionID, ConversationID)` pair — never by `ConversationID` alone, which collides across chat connections — and make the planner safe for concurrent use.
    - `Close` releases connections or other resources.
 3. Provide an `Open` function taking `context.Context` plus backend-specific parameters and returning `(*Planner, error)`. Resolve authentication from `cred.PlannerAPIKey` when needed; never accept credential values as parameters or URL elements.
 4. Export the scheme and an opener so callers can wire the backend into a `planner.Registry` (backends never self-register via `init()`):

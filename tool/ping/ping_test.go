@@ -42,7 +42,7 @@ func Test_Opener_via_registry(t *testing.T) {
 			defer func() {
 				require.NoError(t, tl.Close())
 			}()
-			result, err := tl.Invoke(context.Background(), tool.Call{Action: "ping"})
+			result, err := tl.Invoke(context.Background(), tool.Call{})
 			require.NoError(t, err)
 			require.Equal(t, "pong", result.Text)
 		})
@@ -56,25 +56,16 @@ func Test_Invoke(t *testing.T) {
 		require.NoError(t, tl.Close())
 	}()
 
-	testCases := map[string]struct {
-		call  tool.Call
-		errIs error
-	}{
-		"ping":                  {call: tool.Call{Action: "ping"}},
-		"ping-ignores-target":   {call: tool.Call{Action: "ping", Target: "somewhere"}},
-		"ping-ignores-params":   {call: tool.Call{Action: "ping", Parameters: map[string]string{"count": "3"}}},
-		"unknown-action":        {call: tool.Call{Action: "pong"}, errIs: tool.ErrUnknownAction},
-		"empty-action":          {call: tool.Call{}, errIs: tool.ErrUnknownAction},
-		"case-sensitive-action": {call: tool.Call{Action: "PING"}, errIs: tool.ErrUnknownAction},
+	// The tool always answers "pong" and ignores any arguments.
+	testCases := map[string]tool.Call{
+		"empty":           {},
+		"ignores-args":    {Arguments: map[string]string{"count": "3"}},
+		"ignores-subject": {Arguments: map[string]string{"subject": "somewhere"}},
 	}
 
-	for name, tc := range testCases {
+	for name, call := range testCases {
 		t.Run(name, func(t *testing.T) {
-			result, err := tl.Invoke(context.Background(), tc.call)
-			if tc.errIs != nil {
-				require.ErrorIs(t, err, tc.errIs)
-				return
-			}
+			result, err := tl.Invoke(context.Background(), call)
 			require.NoError(t, err)
 			require.Equal(t, tool.Result{Text: "pong"}, result)
 		})
@@ -90,7 +81,7 @@ func Test_Invoke_cancelled_context(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = tl.Invoke(ctx, tool.Call{Action: "ping"})
+	_, err = tl.Invoke(ctx, tool.Call{})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -102,19 +93,7 @@ func Test_Close_is_idempotent(t *testing.T) {
 }
 
 func Test_Descriptor(t *testing.T) {
-	require.NotEmpty(t, ping.Descriptor.Summary)
-	require.Len(t, ping.Descriptor.Actions, 1)
-
-	action := ping.Descriptor.Actions[0]
-	require.Equal(t, "ping", action.Name)
-	require.False(t, action.TakesTarget)
-	require.Empty(t, action.Parameters)
-
-	// The described action must be one Invoke actually accepts, so the
-	// descriptor cannot drift from the implementation.
-	tl, err := ping.Open(context.Background())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, tl.Close()) }()
-	_, err = tl.Invoke(context.Background(), tool.Call{Action: action.Name})
-	require.NoError(t, err)
+	require.NotEmpty(t, ping.Descriptor.Description)
+	require.Empty(t, ping.Descriptor.Parameters)
+	require.NoError(t, ping.Descriptor.Validate())
 }

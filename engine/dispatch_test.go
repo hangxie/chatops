@@ -90,8 +90,8 @@ func runWithLogger(t *testing.T, level slog.Level) []map[string]any {
 	defer cancel()
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1", Sender: "alice", Text: "do it"}}}
 	p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{
-		{Tool: "reply://", Call: tool.Call{Action: "send", Parameters: map[string]string{"text": "working"}}},
-		{Tool: "fake://", Call: tool.Call{Action: "restart", Target: "web"}},
+		{Tool: "reply://", Call: tool.Call{Arguments: map[string]string{"text": "working"}}},
+		{Tool: "fake://", Call: tool.Call{Arguments: map[string]string{"unit": "web"}}},
 	}}}}
 	taskTool := &fakeTool{result: tool.Result{Text: "restarted web"}}
 	tools := tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: func(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
@@ -118,7 +118,7 @@ func Test_handle_logs_planner_and_tool_flow(t *testing.T) {
 	require.True(t, hasRecord(recs, "engine started", map[string]any{"connection_id": "chat-1"}))
 	require.True(t, hasRecord(recs, "message received", map[string]any{"conversation_id": "c1", "sender": "alice"}))
 	require.True(t, hasRecord(recs, "plan produced", map[string]any{"conversation_id": "c1", "steps": float64(2)}))
-	require.True(t, hasRecord(recs, "executing step", map[string]any{"tool": "fake://", "action": "restart", "target": "web"}))
+	require.True(t, hasRecord(recs, "executing step", map[string]any{"tool": "fake://"}))
 	// The reply step posts directly and returns no text, so the posted-result
 	// record belongs to the tool step that produced output.
 	require.True(t, hasRecord(recs, "result posted", map[string]any{"tool": "fake://"}))

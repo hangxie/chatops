@@ -66,7 +66,7 @@ CONNECTION_ID=operations
 MAX_CONCURRENCY=8
 LOG_LEVEL=info
 LOG_FORMAT=json
-EXTRA_ARGS=--tool ping --tool status
+EXTRA_ARGS=--tool ping --tool status-check --tool status-list
 ```
 
 `EXTRA_ARGS` is expanded into separate command-line arguments and is intended for repeatable `--tool` selections or future options without a dedicated setting. Leave `CRED_STORE` or `EXTRA_ARGS` empty when they are not needed.
@@ -117,7 +117,8 @@ chatops server \
     --connection-id operations \
     --max-concurrency 8 \
     --tool ping \
-    --tool status \
+    --tool status-check \
+    --tool status-list \
     --log-level info \
     --log-format json
 ```
@@ -132,20 +133,20 @@ The current server supports these URLs:
 | Planner | `openai-chat-completions` | `openai-chat-completions://host[:port][/path]?model=NAME` | Drives any OpenAI Chat Completions endpoint (OpenAI, Gemini, Ollama, …). See [OpenAI-compatible planner](#openai-compatible-planner). |
 | Credentials | `json-file` | `json-file:///path/to/file.json` | Strict JSON document with optional `slack` and `planner` sections. |
 
-With no `--tool` flag, the server exposes every compiled-in selectable tool, preserving the default behavior. Repeat `--tool` to expose an explicit allowlist; for example, `--tool ping --tool status` exposes exactly `ping://` and `status://`. An unknown name prevents startup and reports the available choices. A planner that attempts to use a compiled-in tool omitted from the allowlist receives the same unknown-tool error as any unavailable tool.
+With no `--tool` flag, the server exposes every compiled-in selectable tool, preserving the default behavior. Repeat `--tool` to expose an explicit allowlist; for example, `--tool ping --tool status-check` exposes exactly `ping://` and `status-check://`. An unknown name prevents startup and reports the available choices. A planner that attempts to use a compiled-in tool omitted from the allowlist receives the same unknown-tool error as any unavailable tool.
 
 The server's internal `reply://` tool is bound directly to each live chat conversation and is therefore neither listed nor controlled by `--tool`. The first SIGINT or SIGTERM cancels in-flight work and closes resources gracefully; a second signal uses the operating system's default handling.
 
-A failure while handling one message — the planner erroring, a plan naming an unknown tool, a tool rejecting an action or failing, even a tool panicking — is not fatal: the server logs the full error at `error`, posts a brief `sorry, I couldn't complete that request` back to that conversation, and keeps serving other messages. Only losing the chat connection or receiving a shutdown signal stops the server.
+A failure while handling one message — the planner erroring, a plan naming an unknown tool, a tool rejecting its arguments or failing, even a tool panicking — is not fatal: the server logs the full error at `error`, posts a brief `sorry, I couldn't complete that request` back to that conversation, and keeps serving other messages. Only losing the chat connection or receiving a shutdown signal stops the server.
 
 ### Logging
 
 The server emits structured logs (Go's `log/slog`) to standard error, describing how each message flows through the planner and the tools. `--log-level` sets the verbosity and `--log-format` selects `json` (default) or `text`.
 
-At `info` the server logs startup configuration and, per message, `message received`, `plan produced` (with the step count and the tools the planner chose), each `executing step` (with the tool, action, and target), `result posted`, and any error, all tagged with the `conversation_id` and `sender`. Raise to `--log-level debug` to also see the message text, the planner request, and each tool being opened and invoked. A representative `info` line:
+At `info` the server logs startup configuration and, per message, `message received`, `plan produced` (with the step count and the tools the planner chose), each `executing step` (with the tool), `result posted`, and any error, all tagged with the `conversation_id` and `sender`. Raise to `--log-level debug` to also see the message text, the planner request, and each tool being opened and invoked. A representative `info` line:
 
 ```json
-{"time":"2026-07-21T12:00:00Z","level":"INFO","msg":"plan produced","conversation_id":"C123","sender":"alice","steps":2,"tools":["reply://","status://"]}
+{"time":"2026-07-21T12:00:00Z","level":"INFO","msg":"plan produced","conversation_id":"C123","sender":"alice","steps":2,"tools":["reply://","status-check://"]}
 ```
 
 Credentials are never logged: component URLs are logged, but secrets live in the credential store, not the URL.
@@ -154,7 +155,7 @@ Credentials are never logged: component URLs are logged, but secrets live in the
 
 The `openai-chat-completions://` planner turns chat messages into plans using any service that speaks the OpenAI Chat Completions API. Because the endpoint is part of the URL, the same planner drives OpenAI, Google Gemini's OpenAI-compatible endpoint, a local Ollama, vLLM, LocalAI, and similar servers.
 
-On each message the planner makes one completion request, offering the enabled operational tools (from `--tool`) plus a built-in `reply` function. The model's answer maps directly to plan steps: assistant prose and each `reply` call become `reply://` steps posted to the requester, and each operational tool call becomes a step invoking that tool. Every tool describes itself (see [Adding a new tool](DEVELOPMENT.md)), so each of its actions is offered as its own typed function named `<tool>-<action>`, carrying that action's described `target` and typed `parameters` with their required fields — so the model calls a valid action with the arguments it actually needs instead of guessing. Each function schema is a plain object (no `oneOf` or `const`), keeping it within the schema subset that OpenAI-compatible endpoints such as Gemini accept.
+On each message the planner makes one completion request, offering the enabled operational tools (from `--tool`) plus a built-in `reply` function. The model's answer maps directly to plan steps: assistant prose and each `reply` call become `reply://` steps posted to the requester, and each operational tool call becomes a step invoking that tool. Every tool performs a single intent and describes itself (see [Adding a new tool](DEVELOPMENT.md)), so it is offered as its own typed function named for the tool, carrying its typed arguments with their required fields — so the model calls the tool with the arguments it actually needs instead of guessing. This mirrors the Model Context Protocol, where each tool has a flat input schema. Each function schema is a plain object (no `oneOf` or `const`), keeping it within the schema subset that OpenAI-compatible endpoints such as Gemini accept.
 
 The URL configures the endpoint and model:
 
@@ -181,23 +182,23 @@ chatops server --chat telnet://localhost:6023 \
 # Local Ollama (no key required)
 chatops server --chat telnet://localhost:6023 \
     --planner 'openai-chat-completions://localhost:11434/v1?insecure=true&keyless=true&model=llama3' \
-    --tool ping --tool status
+    --tool ping --tool status-check --tool status-list
 ```
 
 The exchange is single-shot: tool results are not fed back to the model, and the planner keeps no per-conversation history yet.
 
 ### Service status tool
 
-The `status://` tool lets a planner check public service-status APIs without credentials. A planner invokes it with a `check` action and a provider target, or uses the `list` action to discover canonical targets:
+The status tools let a planner check public service-status APIs without credentials. The `status-check://` tool takes a `service` argument, and the `status-list://` tool discovers the canonical services:
 
 ```go
 planner.Step{
-    Tool: "status://",
-    Call: tool.Call{Action: "check", Target: "github"},
+    Tool: "status-check://",
+    Call: tool.Call{Arguments: map[string]string{"service": "github"}},
 }
 ```
 
-| Target | Service | Aliases |
+| Service | Provider | Aliases |
 | --- | --- | --- |
 | `github` | GitHub | `gh` |
 | `anthropic` | Anthropic and Claude | `claude` |
@@ -206,7 +207,7 @@ planner.Step{
 | `gemini` | Google Gemini across the Workspace Gemini and Vertex Gemini public incident feeds | `google`, `google-gemini`, `gemini-api`, `vertex-gemini`, `gemini-workspace` |
 | `slack` | Slack | — |
 | `docker-hub` | Docker Hub | `docker`, `dockerhub` |
-| `all` | Every canonical target above | — |
+| `all` | Every canonical service above | — |
 
 The result text is ready for the engine to relay directly to chat, and `Result.Details` maps each checked canonical provider to its normalized health: `operational`, `maintenance`, `degraded`, `partial_outage`, `major_outage`, or `unknown`. For example:
 
@@ -217,7 +218,7 @@ The result text is ready for the engine to relay directly to chat, and `Result.D
   https://status.openai.com/...
 ```
 
-Provider requests for `all` are made concurrently with at most four in flight. A provider timeout, HTTP failure, or malformed response produces an `unknown` result instead of failing the tool step and stopping the engine; invalid actions, targets, or parameters remain errors.
+Provider requests for `all` are made concurrently with at most four in flight. A provider timeout, HTTP failure, or malformed response produces an `unknown` result instead of failing the tool step and stopping the engine; a missing or unknown `service` remains an error.
 
 ### Slack
 

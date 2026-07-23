@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"strings"
 
@@ -40,7 +41,7 @@ func (e *Engine) handle(ctx context.Context, msg chat.Message) error {
 	log.Info("plan produced", "steps", len(plan.Steps), "tools", stepTools(plan.Steps))
 
 	for i, step := range plan.Steps {
-		stepLog := log.With("step", i+1, "tool", step.Tool, "action", step.Call.Action, "target", step.Call.Target)
+		stepLog := log.With("step", i+1, "tool", step.Tool)
 		stepLog.Info("executing step")
 		result, invokeErr := e.invoke(ctx, stepLog, msg.ConversationID, step)
 		if invokeErr != nil {
@@ -86,7 +87,14 @@ func (e *Engine) invoke(ctx context.Context, log *slog.Logger, conversationID st
 		if !strings.EqualFold(step.Tool, reply.URL) {
 			return tool.Result{}, fmt.Errorf("reply: URL %q takes no endpoint or configuration", step.Tool)
 		}
-		step.Call.Target = conversationID
+		// Inject the conversation the request arrived on; the planner leaves
+		// it unset so replies land on the right connection. Copy the
+		// arguments rather than mutating the planner's map, which a
+		// concurrent-safe planner may share across conversations.
+		args := make(map[string]string, len(step.Call.Arguments)+1)
+		maps.Copy(args, step.Call.Arguments)
+		args["conversation"] = conversationID
+		step.Call.Arguments = args
 		log.Debug("posting reply to conversation")
 		return e.reply.Invoke(ctx, step.Call)
 	}

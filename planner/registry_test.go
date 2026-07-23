@@ -129,7 +129,7 @@ func Test_Registry_Open_passes_arguments_to_opener(t *testing.T) {
 	tools := tool.NewRegistry(tool.Backend{
 		Scheme:     "widget",
 		Opener:     fakeToolOpener,
-		Descriptor: &tool.Descriptor{Summary: "widget", Actions: []tool.Action{{Name: "do"}}},
+		Descriptor: &tool.Descriptor{Description: "widget"},
 	})
 	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
 	_, err := reg.Open(ctx, "capture://host/some/path?model=gpt-5", creds, tools)

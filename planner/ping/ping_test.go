@@ -18,18 +18,18 @@ import (
 // pingPlan is the plan invoking the ping tool.
 func pingPlan() planner.Plan {
 	return planner.Plan{Steps: []planner.Step{
-		{Tool: "ping://", Call: tool.Call{Action: "ping"}},
+		{Tool: "ping://", Call: tool.Call{}},
 	}}
 }
 
-// replyPlan is the plan posting text back into conversation conv.
-func replyPlan(conv, text string, choices ...tool.Choice) planner.Plan {
+// replyPlan is the plan posting text back to the requester. The target
+// conversation is injected by the executor, so the plan carries only the
+// text; conv names the conversation each case operates in for readability.
+func replyPlan(_, text string, choices ...tool.Choice) planner.Plan {
 	return planner.Plan{Steps: []planner.Step{
 		{Tool: reply.URL, Call: tool.Call{
-			Action:     "send",
-			Target:     conv,
-			Parameters: map[string]string{"text": text},
-			Choices:    choices,
+			Arguments: map[string]string{"text": text},
+			Choices:   choices,
 		}},
 	}}
 }

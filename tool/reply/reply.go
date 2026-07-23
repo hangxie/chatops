@@ -14,12 +14,14 @@
 //
 // URL exports that canonical spelling for planners and executors.
 //
-// The only supported action is "send": Call.Target is the
-// conversation ID to post into (chat.Message.ConversationID of the
-// message being answered), Call.Parameters["text"] is the text to
-// post, and Call.Choices carries optional interactive responses.
-// Sending is the whole outcome, so Result.Text stays empty and
-// callers that post non-empty Result.Text back to chat do not
+// The reply tool reads Call.Arguments["text"] for the text to post and
+// Call.Arguments["conversation"] for the conversation ID to post into
+// (chat.Message.ConversationID of the message being answered). The
+// conversation is injected by the executor, not the model: planners
+// leave it empty and the executor sets it to the conversation the
+// request arrived on. Call.Choices carries optional interactive
+// responses. Sending is the whole outcome, so Result.Text stays empty
+// and callers that post non-empty Result.Text back to chat do not
 // double-post.
 package reply
 
@@ -54,25 +56,21 @@ func Open(_ context.Context, conn chat.Conn) (*Tool, error) {
 	return &Tool{conn: conn}, nil
 }
 
-// Invoke answers the "send" action by posting
-// call.Parameters["text"] into the conversation identified by
-// call.Target, and reports an error wrapping tool.ErrUnknownAction
-// for any other action. A missing target or missing/empty text is an
-// error; errors from the underlying send (e.g. wrapping
-// chat.ErrUnknownConversation) are passed through wrapped.
+// Invoke posts call.Arguments["text"] into the conversation identified
+// by call.Arguments["conversation"]. A missing conversation or
+// missing/empty text is an error; errors from the underlying send (e.g.
+// wrapping chat.ErrUnknownConversation) are passed through wrapped.
 func (t *Tool) Invoke(ctx context.Context, call tool.Call) (tool.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return tool.Result{}, fmt.Errorf("reply: %w", err)
 	}
-	if call.Action != "send" {
-		return tool.Result{}, fmt.Errorf("reply: %q: %w", call.Action, tool.ErrUnknownAction)
+	conversation := call.Arguments["conversation"]
+	if conversation == "" {
+		return tool.Result{}, errors.New("reply: no target conversation")
 	}
-	if call.Target == "" {
-		return tool.Result{}, errors.New("reply: send with no target conversation")
-	}
-	text := call.Parameters["text"]
+	text := call.Arguments["text"]
 	if text == "" {
-		return tool.Result{}, errors.New(`reply: send with no "text" parameter`)
+		return tool.Result{}, errors.New(`reply: no "text" argument`)
 	}
 	var choices []chat.Choice
 	if call.Choices != nil {
@@ -81,7 +79,7 @@ func (t *Tool) Invoke(ctx context.Context, call tool.Call) (tool.Result, error) 
 			choices[i] = chat.Choice{Label: choice.Label, Value: choice.Value}
 		}
 	}
-	msg := chat.Message{ConversationID: call.Target, Text: text, Choices: choices}
+	msg := chat.Message{ConversationID: conversation, Text: text, Choices: choices}
 	if err := t.conn.Send(ctx, msg); err != nil {
 		return tool.Result{}, fmt.Errorf("reply: %w", err)
 	}

@@ -53,17 +53,13 @@ func Test_Invoke(t *testing.T) {
 	}{
 		"send": {
 			call: tool.Call{
-				Action:     "send",
-				Target:     "conv-1",
-				Parameters: map[string]string{"text": "on it"},
+				Arguments: map[string]string{"conversation": "conv-1", "text": "on it"},
 			},
 			sent: []chat.Message{{ConversationID: "conv-1", Text: "on it"}},
 		},
 		"send-with-choices": {
 			call: tool.Call{
-				Action:     "send",
-				Target:     "conv-1",
-				Parameters: map[string]string{"text": "continue?"},
+				Arguments: map[string]string{"conversation": "conv-1", "text": "continue?"},
 				Choices: []tool.Choice{
 					{Label: "Yes", Value: "yes"},
 					{Label: "No", Value: "no"},
@@ -78,35 +74,25 @@ func Test_Invoke(t *testing.T) {
 				},
 			}},
 		},
-		"unknown-action": {
-			call:  tool.Call{Action: "shout", Target: "conv-1", Parameters: map[string]string{"text": "hi"}},
-			errIs: tool.ErrUnknownAction,
-		},
-		"empty-action": {
-			call:  tool.Call{Target: "conv-1", Parameters: map[string]string{"text": "hi"}},
-			errIs: tool.ErrUnknownAction,
-		},
-		"missing-target": {
-			call:   tool.Call{Action: "send", Parameters: map[string]string{"text": "hi"}},
+		"missing-conversation": {
+			call:   tool.Call{Arguments: map[string]string{"text": "hi"}},
 			errMsg: "no target conversation",
 		},
 		"missing-text": {
-			call:   tool.Call{Action: "send", Target: "conv-1", Parameters: map[string]string{}},
-			errMsg: `no "text" parameter`,
+			call:   tool.Call{Arguments: map[string]string{"conversation": "conv-1"}},
+			errMsg: `no "text" argument`,
 		},
-		"nil-parameters": {
-			call:   tool.Call{Action: "send", Target: "conv-1"},
-			errMsg: `no "text" parameter`,
+		"nil-arguments": {
+			call:   tool.Call{},
+			errMsg: "no target conversation",
 		},
 		"empty-text": {
-			call:   tool.Call{Action: "send", Target: "conv-1", Parameters: map[string]string{"text": ""}},
-			errMsg: `no "text" parameter`,
+			call:   tool.Call{Arguments: map[string]string{"conversation": "conv-1", "text": ""}},
+			errMsg: `no "text" argument`,
 		},
 		"send-failure": {
 			call: tool.Call{
-				Action:     "send",
-				Target:     "no-such-conv",
-				Parameters: map[string]string{"text": "hi"},
+				Arguments: map[string]string{"conversation": "no-such-conv", "text": "hi"},
 			},
 			sendErr: fmt.Errorf("fake: %w", chat.ErrUnknownConversation),
 			errIs:   chat.ErrUnknownConversation,
@@ -148,9 +134,7 @@ func Test_Invoke_cancelled_context(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err = tl.Invoke(ctx, tool.Call{
-		Action:     "send",
-		Target:     "conv-1",
-		Parameters: map[string]string{"text": "hi"},
+		Arguments: map[string]string{"conversation": "conv-1", "text": "hi"},
 	})
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, conn.sent)
