@@ -103,7 +103,8 @@ Available settings:
 | `--credentials` | No | None | Credential store URL used by chat backends, planners, and tools. |
 | `--connection-id` | No | `default` | Stable identifier used to scope planner conversation state. |
 | `--max-concurrency` | No | `8` | Maximum conversations processed concurrently; the maximum value is `256`. |
-| `--tool` | No | All selectable tools | Tool to expose to planners; repeat the flag to expose multiple tools. |
+| `--tool` | No | All selectable tools | Tool to expose to planners, as a bare name (`k8s-get`) or a configuring URL (`k8s-get://?context=prod`); repeat the flag to expose multiple tools. |
+| `--tool-url` | No | None | Configuring tool URL (`k8s-get://?context=prod`) applied without restricting the exposed set; repeat to configure multiple tools. |
 | `--log-level` | No | `info` | Log verbosity: `debug`, `info`, `warn`, or `error`. |
 | `--log-format` | No | `json` | Log output format: `json` or `text`. |
 
@@ -133,7 +134,11 @@ The current server supports these URLs:
 | Planner | `openai-chat-completions` | `openai-chat-completions://host[:port][/path]?model=NAME` | Drives any OpenAI Chat Completions endpoint (OpenAI, Gemini, Ollama, …). See [OpenAI-compatible planner](#openai-compatible-planner). |
 | Credentials | `json-file` | `json-file:///path/to/file.json` | Strict JSON document with optional `slack` and `planner` sections. A relative path or a leading `~` (e.g. `json-file://~/creds.json`) is accepted. |
 
-With no `--tool` flag, the server exposes every compiled-in selectable tool, preserving the default behavior. Repeat `--tool` to expose an explicit allowlist; for example, `--tool ping --tool status-check` exposes exactly `ping://` and `status-check://`. An unknown name prevents startup and reports the available choices. A planner that attempts to use a compiled-in tool omitted from the allowlist receives the same unknown-tool error as any unavailable tool.
+With no `--tool` flag, the server exposes every compiled-in selectable tool, preserving the default behavior. Repeat `--tool` to expose an explicit allowlist; for example, `--tool ping --tool status-check` exposes exactly `ping://` and `status-check://`. An unknown name, or a selector whose scheme names no tool, prevents startup and reports the available choices. A planner that attempts to use a compiled-in tool omitted from the allowlist receives the same unknown-tool error as any unavailable tool.
+
+Each `--tool` selector is either a bare tool name or a full tool URL carrying operator configuration: the scheme selects the tool, and any URL query is remembered as that tool's configuration. Planners choose only *which* tool to invoke and emit a bare scheme URL; the server serves the operator-configured URL in its place. So `--tool 'k8s-get://?context=prod'` exposes `k8s-get` pinned to that context, while `--tool k8s-get` exposes it with no configuration (the kubeconfig's current context). Configuration is per tool, so a shared cluster is repeated across `k8s-get` and `k8s-list`. The URL query keys a tool accepts are documented with that tool; an invalid one surfaces when the tool is first invoked.
+
+Because `--tool` is an allowlist, configuring one tool with it drops every tool not listed. To configure a tool while leaving the exposed set alone, use `--tool-url`: it attaches a configuring URL to a tool without restricting anything, so `--tool-url 'k8s-get://?context=prod'` pins `k8s-get` and still exposes every other tool by default. A `--tool-url` whose scheme is not exposed (a tool a present `--tool` allowlist excludes, or an unknown one) prevents startup. In short: reach for `--tool` to curate the exposed set and `--tool-url` to configure tools within it.
 
 The server's internal `reply://` tool is bound directly to each live chat conversation and is therefore neither listed nor controlled by `--tool`. The first SIGINT or SIGTERM cancels in-flight work and closes resources gracefully; a second signal uses the operating system's default handling.
 
@@ -226,14 +231,15 @@ Two tools read Kubernetes resources for chat. `k8s-list://` lists resources of o
 
 #### Connecting to a cluster
 
-Credentials never appear in a tool URL. How to reach a cluster — the API server address, the CA bundle that verifies its certificate, and the client certificate or token that authenticates to it — all come from a kubeconfig, exactly as `kubectl` reads one. The kubeconfig is located through the standard rules: the `KUBECONFIG` environment variable if set, otherwise `~/.kube/config`. When neither is present and the server runs inside a pod, it falls back to the pod's in-cluster service account (its token and the cluster CA are mounted automatically). Configuring `KUBECONFIG` once therefore serves every present and future Kubernetes tool; the tool URL only names which cluster and defaults to apply:
+Credentials never appear in a tool URL. How to reach a cluster — the API server address, the CA bundle that verifies its certificate, and the client certificate or token that authenticates to it — all come from a kubeconfig, exactly as `kubectl` reads one. The kubeconfig is located through the standard rules: the `KUBECONFIG` environment variable if set, otherwise `~/.kube/config`. When neither is present and the server runs inside a pod, it falls back to the pod's in-cluster service account (its token and the cluster CA are mounted automatically). Configuring `KUBECONFIG` once therefore serves every present and future Kubernetes tool; the tool URL only names which cluster and defaults to apply. That URL is the `--tool` selector the server is started with (see [Configuration](#configuration)):
 
 ```text
 k8s-get://                             current context, or in-cluster when running in a pod
 k8s-get://?context=prod                a named kubeconfig context
-k8s-get://?context=prod&namespace=web  a default namespace for calls that omit one
 k8s-get://?kubeconfig=/path/to/config  an explicit kubeconfig file, overriding KUBECONFIG
 ```
+
+For example, `--tool-url 'k8s-get://?context=prod' --tool-url 'k8s-list://?context=prod'` pins both tools to the `prod` context while leaving every other tool exposed; the same query is repeated because configuration is per tool. (Use `--tool 'k8s-get://?context=prod'` instead when you also want to restrict the exposed set to a curated allowlist.) The planner selects only which tool to call, so it never needs to know the context. The default namespace comes from the selected context; a request targets a specific namespace through the tools' `namespace` argument.
 
 Because the kubeconfig carries the server URL, the CA, and the client credentials together, there is nothing else to configure per tool. To point the server at a cluster reachable with a CA and a client certificate, embed them in a kubeconfig context — for example generated with `kubectl config set-cluster`, `set-credentials`, and `set-context` — then set `KUBECONFIG` to that file in the service environment (see [Running the system package](#running-the-system-package)). A bearer token or an exec credential plugin works the same way; the tools honor whatever the kubeconfig context specifies.
 
@@ -245,11 +251,11 @@ KUBECONFIG=/etc/chatops/kubeconfig
 
 #### Listing and getting
 
-`k8s-list://` reads these arguments: `kind` (required), `namespace` (optional; defaults to the configured namespace and is ignored for cluster-scoped types), and `all-namespaces` (optional boolean, listing across every namespace). The result is an aligned table of name and age, prefixed with the namespace across namespaces and suffixed with a status column when the type reports one:
+`k8s-list://` reads these arguments: `kind` (required), `namespace` (optional; defaults to the context's default namespace and is ignored for cluster-scoped types), and `all-namespaces` (optional boolean, listing across every namespace). The result is an aligned table of name and age, prefixed with the namespace across namespaces and suffixed with a status column when the type reports one:
 
 ```go
 planner.Step{
-    Tool: "k8s-list://?context=prod",
+    Tool: "k8s-list://",
     Call: tool.Call{Arguments: map[string]string{"kind": "pods", "namespace": "web"}},
 }
 ```
@@ -258,7 +264,7 @@ planner.Step{
 
 ```go
 planner.Step{
-    Tool: "k8s-get://?context=prod",
+    Tool: "k8s-get://",
     Call: tool.Call{Arguments: map[string]string{"kind": "statefulset", "name": "api,worker", "namespace": "web", "output": "yaml"}},
 }
 ```

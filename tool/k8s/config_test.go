@@ -58,12 +58,6 @@ func Test_newCluster(t *testing.T) {
 		require.Equal(t, "team-beta", c.defaultNamespace)
 	})
 
-	t.Run("explicit namespace wins", func(t *testing.T) {
-		c, err := newCluster(clusterConfig{kubeconfig: path, namespace: "override"})
-		require.NoError(t, err)
-		require.Equal(t, "override", c.defaultNamespace)
-	})
-
 	t.Run("missing kubeconfig errors", func(t *testing.T) {
 		_, err := newCluster(clusterConfig{kubeconfig: filepath.Join(t.TempDir(), "absent")})
 		require.ErrorContains(t, err, "load kubeconfig")
