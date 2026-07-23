@@ -13,6 +13,7 @@ import (
 	planneropenaichat "github.com/hangxie/chatops/planner/openaichatcompletions"
 	plannerping "github.com/hangxie/chatops/planner/ping"
 	"github.com/hangxie/chatops/tool"
+	toolk8s "github.com/hangxie/chatops/tool/k8s"
 	toolping "github.com/hangxie/chatops/tool/ping"
 	toolstatus "github.com/hangxie/chatops/tool/status"
 )
@@ -46,5 +47,7 @@ func Tool() *tool.Registry {
 		tool.Backend{Scheme: toolping.Scheme, Opener: toolping.Opener, Descriptor: &toolping.Descriptor},
 		tool.Backend{Scheme: toolstatus.CheckScheme, Opener: toolstatus.CheckOpener, Descriptor: &toolstatus.CheckDescriptor},
 		tool.Backend{Scheme: toolstatus.ListScheme, Opener: toolstatus.ListOpener, Descriptor: &toolstatus.ListDescriptor},
+		tool.Backend{Scheme: toolk8s.ListScheme, Opener: toolk8s.ListOpener, Descriptor: &toolk8s.ListDescriptor},
+		tool.Backend{Scheme: toolk8s.GetScheme, Opener: toolk8s.GetOpener, Descriptor: &toolk8s.GetDescriptor},
 	)
 }

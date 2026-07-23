@@ -133,7 +133,7 @@ func Test_Cmd_parse(t *testing.T) {
 
 func Test_run_rejects_invalid_tool_before_opening_backends(t *testing.T) {
 	command := Cmd{ChatURL: "unknown://", PlannerURL: "unknown://", Tools: []string{"bogus"}}
-	require.EqualError(t, command.run(context.Background()), `server: configure tools: tool: unknown tool "bogus"; available tools: ping, status-check, status-list`)
+	require.EqualError(t, command.run(context.Background()), `server: configure tools: tool: unknown tool "bogus"; available tools: k8s-get, k8s-list, ping, status-check, status-list`)
 }
 
 func Test_run_ping_round_trip_and_graceful_cancellation(t *testing.T) {

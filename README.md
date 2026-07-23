@@ -220,6 +220,62 @@ The result text is ready for the engine to relay directly to chat, and `Result.D
 
 Provider requests for `all` are made concurrently with at most four in flight. A provider timeout, HTTP failure, or malformed response produces an `unknown` result instead of failing the tool step and stopping the engine; a missing or unknown `service` remains an error.
 
+### Kubernetes resource tools
+
+Two tools read Kubernetes resources for chat. `k8s-list://` lists resources of one type in a namespace or across all namespaces, and `k8s-get://` fetches specific resources by name as a describe-style brief, JSON, or YAML. Both resolve the resource type through the API server's discovery data and read objects with the dynamic client, so they serve built-in resources and CustomResourceDefinitions alike. The type may be given as a plural, singular, short name, or kind: `pods`, `po`, `pod`, `deployment`, `StatefulSet`, `deployments.apps`, or any installed CRD name.
+
+#### Connecting to a cluster
+
+Credentials never appear in a tool URL. How to reach a cluster — the API server address, the CA bundle that verifies its certificate, and the client certificate or token that authenticates to it — all come from a kubeconfig, exactly as `kubectl` reads one. The kubeconfig is located through the standard rules: the `KUBECONFIG` environment variable if set, otherwise `~/.kube/config`. When neither is present and the server runs inside a pod, it falls back to the pod's in-cluster service account (its token and the cluster CA are mounted automatically). Configuring `KUBECONFIG` once therefore serves every present and future Kubernetes tool; the tool URL only names which cluster and defaults to apply:
+
+```text
+k8s-get://                             current context, or in-cluster when running in a pod
+k8s-get://?context=prod                a named kubeconfig context
+k8s-get://?context=prod&namespace=web  a default namespace for calls that omit one
+k8s-get://?kubeconfig=/path/to/config  an explicit kubeconfig file, overriding KUBECONFIG
+```
+
+Because the kubeconfig carries the server URL, the CA, and the client credentials together, there is nothing else to configure per tool. To point the server at a cluster reachable with a CA and a client certificate, embed them in a kubeconfig context — for example generated with `kubectl config set-cluster`, `set-credentials`, and `set-context` — then set `KUBECONFIG` to that file in the service environment (see [Running the system package](#running-the-system-package)). A bearer token or an exec credential plugin works the same way; the tools honor whatever the kubeconfig context specifies.
+
+The systemd unit reads its environment from the package's configuration file, so add the line there to share one cluster across the Kubernetes tools:
+
+```ini
+KUBECONFIG=/etc/chatops/kubeconfig
+```
+
+#### Listing and getting
+
+`k8s-list://` reads these arguments: `kind` (required), `namespace` (optional; defaults to the configured namespace and is ignored for cluster-scoped types), and `all-namespaces` (optional boolean, listing across every namespace). The result is an aligned table of name and age, prefixed with the namespace across namespaces and suffixed with a status column when the type reports one:
+
+```go
+planner.Step{
+    Tool: "k8s-list://?context=prod",
+    Call: tool.Call{Arguments: map[string]string{"kind": "pods", "namespace": "web"}},
+}
+```
+
+`k8s-get://` reads `kind` (required), `name` (required), `namespace` (optional, as above), and `output` (optional: `brief`, `json`, or `yaml`). The default `brief` output is a describe-style summary — identity, age, labels, a status hint, and the resource's recent events — so a separate describe verb is unnecessary. `json` and `yaml` emit the full manifest. Pass several names as a comma-separated list to fetch them together in one call:
+
+```go
+planner.Step{
+    Tool: "k8s-get://?context=prod",
+    Call: tool.Call{Arguments: map[string]string{"kind": "statefulset", "name": "api,worker", "namespace": "web", "output": "yaml"}},
+}
+```
+
+Secret values are always masked before rendering, in every output format: the `brief` summary omits a Secret's data entirely, and `json` and `yaml` keep the keys and shape but replace each value. The `kubectl.kubernetes.io/last-applied-configuration` annotation, which can carry a serialized copy of the original values, is stripped from Secrets as well, so a `Secret` never carries secret material into chat:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db
+  namespace: web
+data:
+  password: '**REDACTED**'
+  username: '**REDACTED**'
+```
+
 ### Slack
 
 The Slack backend uses Socket Mode, so the server does not need a public HTTP endpoint. Create a Slack app with Socket Mode and Interactivity enabled, generate an app-level token with the `connections:write` scope, and install the app to obtain its bot OAuth token. Give the bot the `chat:write` scope plus the read scopes required by the events you subscribe to. At startup, the backend calls `auth.test` with the bot token to validate authentication and obtain the exact bot user ID; this method requires no additional bot scope.
@@ -328,11 +384,14 @@ List the selectable operational tools the binary knows about, one scheme per lin
 
 ```console
 $ chatops tools
+k8s-get
+k8s-list
 ping
-status
+status-check
+status-list
 
 $ chatops tools --json
-["ping","status"]
+["k8s-get","k8s-list","ping","status-check","status-list"]
 ```
 
 ### Version

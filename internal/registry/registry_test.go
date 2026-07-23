@@ -40,7 +40,7 @@ func Test_Planner_opens_openai(t *testing.T) {
 }
 
 func Test_Tool_opens_status_tools(t *testing.T) {
-	require.Equal(t, []string{"ping", "status-check", "status-list"}, registry.Tool().Schemes())
+	require.Equal(t, []string{"k8s-get", "k8s-list", "ping", "status-check", "status-list"}, registry.Tool().Schemes())
 
 	tl, err := registry.Tool().Open(context.Background(), "status-list://", nil)
 	require.NoError(t, err)
