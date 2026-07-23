@@ -98,7 +98,7 @@ func Test_cli_run_tools(t *testing.T) {
 	stdout, stderr := testutils.CaptureStdoutStderr(func() {
 		require.NoError(t, runCLI(newParser(), []string{"tools"}, context.Background()))
 	})
-	require.Equal(t, "ping\nstatus-check\nstatus-list\n", stdout)
+	require.Equal(t, "k8s-get\nk8s-list\nping\nstatus-check\nstatus-list\n", stdout)
 	require.Empty(t, stderr)
 }
 
