@@ -138,6 +138,67 @@ func Test_Open_via_registry_relative_path(t *testing.T) {
 	require.Equal(t, "sk-test", value)
 }
 
+func Test_Open_expands_leading_tilde(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "creds.json"), []byte(`{"planner":{"api-key":"sk-home"}}`), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, "sub"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "sub", "creds.json"), []byte(`{"planner":{"api-key":"sk-sub"}}`), 0o600))
+
+	testCases := map[string]struct {
+		path string
+		want string
+	}{
+		"tilde-slash":         {path: "~/creds.json", want: "sk-home"},
+		"tilde-nested":        {path: "~/sub/creds.json", want: "sk-sub"},
+		"tilde-only-is-a-dir": {path: "~", want: ""}, // home dir is not a file
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			store, err := Open(context.Background(), tc.path)
+			if tc.want == "" {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			defer func() { require.NoError(t, store.Close()) }()
+			value, err := store.Get(context.Background(), cred.PlannerAPIKey)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, value)
+		})
+	}
+}
+
+func Test_Open_tilde_without_home(t *testing.T) {
+	// With no home directory resolvable, a "~" path reports an error rather
+	// than reading a bogus literal path.
+	t.Setenv("HOME", "")
+	_, err := Open(context.Background(), "~/creds.json")
+	require.ErrorContains(t, err, "home directory")
+}
+
+func Test_Open_via_registry_tilde_and_opaque(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "creds.json"), []byte(`{"planner":{"api-key":"sk-home"}}`), 0o600))
+
+	// Both the host-form tilde URL and the opaque form (json-file:~/...)
+	// resolve to the home-directory file rather than silently failing.
+	for name, rawURL := range map[string]string{
+		"host-tilde": "json-file://~/creds.json",
+		"opaque":     "json-file:~/creds.json",
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, err := testRegistry().Open(context.Background(), rawURL)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, store.Close()) }()
+			value, err := store.Get(context.Background(), cred.PlannerAPIKey)
+			require.NoError(t, err)
+			require.Equal(t, "sk-home", value)
+		})
+	}
+}
+
 func Test_Store_implements_cred_Store(t *testing.T) {
 	var _ cred.Store = (*Store)(nil)
 }

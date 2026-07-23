@@ -6,6 +6,10 @@
 //
 //	json-file:///etc/chatops/creds.json
 //	json-file://relative/path/creds.json
+//	json-file://~/creds.json
+//
+// A leading "~" (or "~/") in the path expands to the current user's home
+// directory, since a shell never expands a "~" embedded in a URL.
 //
 // The file uses a strict schema with optional Slack and planner sections:
 //
@@ -27,6 +31,8 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/hangxie/chatops/cred"
 )
@@ -38,8 +44,13 @@ const Scheme = "json-file"
 // JSON file.
 func Opener(ctx context.Context, u *url.URL) (cred.Store, error) {
 	// Rejoin host and path so both json-file:///abs/path and
-	// json-file://relative/path resolve to a usable file path.
-	return Open(ctx, u.Host+u.Path)
+	// json-file://relative/path resolve to a usable file path; fall back to
+	// the opaque form (json-file:path) so it is not silently dropped.
+	path := u.Host + u.Path
+	if path == "" {
+		path = u.Opaque
+	}
+	return Open(ctx, path)
 }
 
 // Store is a cred.Store backed by a JSON file. The file is read once
@@ -59,6 +70,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("jsonfile: %w", err)
 	}
+	path, err := expandHome(path)
+	if err != nil {
+		return nil, fmt.Errorf("jsonfile: %w", err)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("jsonfile: %w", err)
@@ -68,6 +83,23 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, fmt.Errorf("jsonfile: parse %s: %w", path, err)
 	}
 	return &Store{creds: creds}, nil
+}
+
+// expandHome expands a leading "~" or "~/" in path to the current user's
+// home directory. A "~" embedded in a URL is never expanded by the shell,
+// so the backend does it. Other forms (such as "~user") are left unchanged.
+func expandHome(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	if path == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, path[len("~/"):]), nil
 }
 
 func decodeCredentials(data []byte) (map[cred.Key]string, error) {
