@@ -272,8 +272,6 @@ Add both tokens to the credential store and start the server with the configurat
 chatops server --chat slack:// --planner ping:// --credentials json-file:///etc/chatops/credentials.json
 ```
 
-When upgrading from an earlier release, remove `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` from the server environment and put their values under the keys above. Go callers must pass a `cred.Store` to `chat.Registry.Open` and `slack.Open`; custom chat opener functions now receive the store as their third argument.
-
 Every typed command must start by mentioning the bot, including typed follow-up answers such as `@chatops yes`. Slack represents that recipient as a stable user-ID mention in the event payload; the backend requires that the leading mention exactly match the authenticated bot ID and strips it before passing `yes` to the planner. Mentions of other users do not authorize commands, and an `app_mention` with the bot mention later in its text is ignored. Renaming the bot from `@chatops` to `@bot` requires no server configuration change.
 
 Confirmation questions expose Yes and No buttons in Slack. A button click is acknowledged through Socket Mode and delivered to the planner as the corresponding plain-text answer, so it does not need another bot mention. Only controls and values attached to a prompt posted by this process are accepted; a prompt can be answered once, expires after ten minutes, and is held in a cache of at most 4,096 entries. Invalid, expired, foreign, and duplicate interactions are ignored. After a valid selection, the buttons are removed. Backends without interactive controls, including telnet, keep the `(yes/no)` text and accept a typed answer.
@@ -297,8 +295,6 @@ The `json-file` credential store uses a predefined schema:
 ```
 
 A complete sample with dummy values is available at [`scripts/cred-store-sample.json`](scripts/cred-store-sample.json). Both sections and every credential within them are optional, allowing configurations such as telnet plus the ping planner. Unknown sections, unknown fields, nulls, and non-string credential values are rejected when the store opens, so spelling and shape mistakes fail at startup. Credential values do not belong in chat backend, planner, or tool URLs. Credentials needed to open the store itself use that store backend's standard configuration chain.
-
-When upgrading a flat credential file, move the Slack values into the `slack` object and the one planner API key into `planner.api-key`; arbitrary top-level keys are no longer accepted. Remove `cred-prefix` from OpenAI-compatible planner URLs. For a keyless endpoint, add `keyless=true` explicitly. The `insecure` parameter now accepts only `true` or `false`; values previously treated as false, such as `1`, `yes`, or an empty value, now prevent startup. Go implementations of `cred.Store` must change `Get` from a string key to `cred.Key`, and callers must use the predefined constants.
 
 ### Chats
 
