@@ -83,7 +83,7 @@ Backends also expose a typed `Open` function for direct use, e.g. `jsonfile.Open
 
 ### json-file backend
 
-The store URL is the file path (relative paths work too: `json-file://relative/path.json`). The file uses a strict schema whose sections and credentials are optional:
+The store URL is the file path (relative paths work too: `json-file://relative/path.json`, and a leading `~` expands to the home directory: `json-file://~/creds.json`). The file uses a strict schema whose sections and credentials are optional:
 
 ```json
 {
