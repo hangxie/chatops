@@ -97,23 +97,20 @@ func Test_Opener_rejects_invalid_url(t *testing.T) {
 	}
 }
 
-func Test_Opener_offers_enabled_tool_actions(t *testing.T) {
-	statusDesc := tool.Descriptor{Summary: "status", Actions: []tool.Action{{Name: "list"}}}
-	pingDesc := tool.Descriptor{Summary: "ping", Actions: []tool.Action{{Name: "ping"}}}
+func Test_Opener_offers_enabled_tools(t *testing.T) {
+	statusDesc := tool.Descriptor{Description: "status list"}
+	pingDesc := tool.Descriptor{Description: "ping"}
 	tools := tool.NewRegistry(
-		tool.Backend{Scheme: "status", Opener: fakeToolOpener, Descriptor: &statusDesc},
+		tool.Backend{Scheme: "status-list", Opener: fakeToolOpener, Descriptor: &statusDesc},
 		tool.Backend{Scheme: "ping", Opener: fakeToolOpener, Descriptor: &pingDesc},
 	)
 	opened, err := openerViaRegistry(t, "openai-chat-completions://host/v1?model=m&keyless=true", nil, tools)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, opened.Close()) }()
 	planner := opened.(*Planner)
-	// Every enabled tool's actions become offered functions keyed back to
-	// their (scheme, action).
-	require.Equal(t, "status", planner.funcs["status-list"].scheme)
-	require.Equal(t, "list", planner.funcs["status-list"].action.Name)
-	require.Equal(t, "ping", planner.funcs["ping-ping"].scheme)
-	require.Equal(t, "ping", planner.funcs["ping-ping"].action.Name)
+	// Every enabled tool becomes an offered function keyed back to its scheme.
+	require.Equal(t, "status-list", planner.funcs["status-list"].scheme)
+	require.Equal(t, "ping", planner.funcs["ping"].scheme)
 	require.Len(t, planner.funcs, 2)
 }
 
@@ -196,12 +193,12 @@ func Test_Plan_maps_completion_to_steps(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
 		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"checking now",`+
-			`"tool_calls":[{"type":"function","function":{"name":"status-check","arguments":"{\"target\":\"github\"}"}}]}}]}`)
+			`"tool_calls":[{"type":"function","function":{"name":"status-check","arguments":"{\"service\":\"github\"}"}}]}}]}`)
 	}))
 	defer server.Close()
 
-	statusDesc := &tool.Descriptor{Summary: "status", Actions: []tool.Action{{Name: "check", TakesTarget: true, TargetDesc: "the service"}}}
-	tools := tool.NewRegistry(tool.Backend{Scheme: "status", Opener: fakeToolOpener, Descriptor: statusDesc})
+	statusDesc := &tool.Descriptor{Description: "check one service", Parameters: []tool.Param{{Name: "service", Type: "string", Required: true, Description: "the service"}}}
+	tools := tool.NewRegistry(tool.Backend{Scheme: "status-check", Opener: fakeToolOpener, Descriptor: statusDesc})
 	creds := testutils.CredentialStore{Values: map[cred.Key]string{cred.PlannerAPIKey: "sk-test"}}
 	p := plannerAgainst(t, server, creds, tools)
 	defer func() { require.NoError(t, p.Close()) }()
@@ -209,9 +206,11 @@ func Test_Plan_maps_completion_to_steps(t *testing.T) {
 	plan, err := p.Plan(context.Background(), planner.Request{Text: "is github up?", ConversationID: "C1"})
 	require.NoError(t, err)
 
+	// The reply step carries only the text; the executor injects the target
+	// conversation.
 	require.Equal(t, []planner.Step{
-		{Tool: reply.URL, Call: tool.Call{Action: "send", Target: "C1", Parameters: map[string]string{"text": "checking now"}}},
-		{Tool: "status://", Call: tool.Call{Action: "check", Target: "github"}},
+		{Tool: reply.URL, Call: tool.Call{Arguments: map[string]string{"text": "checking now"}}},
+		{Tool: "status-check://", Call: tool.Call{Arguments: map[string]string{"service": "github"}}},
 	}, plan.Steps)
 
 	// The request carried the model, the enabled tool functions, and the key.
@@ -281,14 +280,8 @@ func Test_Open_validates_config(t *testing.T) {
 		"missing-descriptor":  {ctx: context.Background(), cfg: Config{BaseURL: "https://x", Model: "m", ToolSchemes: []string{"ping"}}, errMsg: `enabled tool "ping" has no descriptor`},
 		"invalid-descriptor": {ctx: context.Background(), cfg: Config{
 			BaseURL: "https://x", Model: "m", ToolSchemes: []string{"ping"},
-			ToolDescriptors: map[string]tool.Descriptor{"ping": {Summary: "x"}}, // no actions
+			ToolDescriptors: map[string]tool.Descriptor{"ping": {}}, // no description
 		}, errMsg: "invalid"},
-		"bad-action-name": {ctx: context.Background(), cfg: Config{
-			BaseURL: "https://x", Model: "m", ToolSchemes: []string{"ping"},
-			// A valid descriptor whose action name yields an invalid
-			// function name is rejected while building the catalog.
-			ToolDescriptors: map[string]tool.Descriptor{"ping": {Summary: "x", Actions: []tool.Action{{Name: "do it"}}}},
-		}, errMsg: "invalid function name"},
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
@@ -351,9 +344,7 @@ func functionParams(defs []toolDef, name string) json.RawMessage {
 func Test_Open_snapshots_tool_config(t *testing.T) {
 	schemes := []string{"ping"}
 	descriptors := map[string]tool.Descriptor{
-		"ping": {Summary: "liveness", Actions: []tool.Action{
-			{Name: "ping", Parameters: []tool.Param{{Name: "loud", Type: "boolean"}}},
-		}},
+		"ping": {Description: "liveness", Parameters: []tool.Param{{Name: "loud", Type: "boolean"}}},
 	}
 	p, err := Open(context.Background(), Config{
 		BaseURL: "https://x", Model: "m", ToolSchemes: schemes, ToolDescriptors: descriptors,
@@ -361,22 +352,20 @@ func Test_Open_snapshots_tool_config(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, p.Close()) }()
 
-	require.Equal(t, "ping", p.funcs["ping-ping"].scheme)
-	require.Equal(t, "ping", p.funcs["ping-ping"].action.Name)
-	before := string(functionParams(p.defs, "ping-ping"))
+	require.Equal(t, "ping", p.funcs["ping"].scheme)
+	before := string(functionParams(p.defs, "ping"))
 	require.Contains(t, before, "loud")
 
-	// Mutating the caller's scheme slice and the descriptor's nested Actions
-	// and Parameters after Open must not change the offered catalog: Open
+	// Mutating the caller's scheme slice and the descriptor's nested
+	// Parameters after Open must not change the offered catalog: Open
 	// deep-copies the descriptors and the schemas are already serialized.
 	schemes[0] = "mutated"
-	acts := descriptors["ping"].Actions
-	acts[0].Name = "changed"
-	acts[0].Parameters[0].Name = "changed"
+	params := descriptors["ping"].Parameters
+	params[0].Name = "changed"
 	delete(descriptors, "ping")
 
-	require.Contains(t, p.funcs, "ping-ping")
-	require.NotContains(t, p.funcs, "mutated-ping")
-	require.JSONEq(t, before, string(functionParams(p.defs, "ping-ping")))
-	require.NotContains(t, string(functionParams(p.defs, "ping-ping")), "changed")
+	require.Contains(t, p.funcs, "ping")
+	require.NotContains(t, p.funcs, "mutated")
+	require.JSONEq(t, before, string(functionParams(p.defs, "ping")))
+	require.NotContains(t, string(functionParams(p.defs, "ping")), "changed")
 }

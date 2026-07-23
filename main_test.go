@@ -28,7 +28,7 @@ func Test_cli_parse(t *testing.T) {
 		"tools":             {args: []string{"tools"}, command: "tools"},
 		"tools-json":        {args: []string{"tools", "--json"}, command: "tools"},
 		"server":            {args: []string{"server", "--chat", "telnet://localhost:6023", "--planner", "ping://"}, command: "server"},
-		"server-tools":      {args: []string{"server", "--chat", "telnet://localhost:6023", "--planner", "ping://", "--tool", "ping", "--tool", "status"}, command: "server"},
+		"server-tools":      {args: []string{"server", "--chat", "telnet://localhost:6023", "--planner", "ping://", "--tool", "ping", "--tool", "status-check"}, command: "server"},
 		"server-no-chat":    {args: []string{"server", "--planner", "ping://"}, errMsg: "--chat"},
 		"server-no-planner": {args: []string{"server", "--chat", "telnet://localhost:6023"}, errMsg: "--planner"},
 		"no-args":           {args: nil, errMsg: "expected one of"},
@@ -98,7 +98,7 @@ func Test_cli_run_tools(t *testing.T) {
 	stdout, stderr := testutils.CaptureStdoutStderr(func() {
 		require.NoError(t, runCLI(newParser(), []string{"tools"}, context.Background()))
 	})
-	require.Equal(t, "ping\nstatus\n", stdout)
+	require.Equal(t, "ping\nstatus-check\nstatus-list\n", stdout)
 	require.Empty(t, stderr)
 }
 

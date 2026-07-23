@@ -15,11 +15,11 @@ func Test_Cmd_Run(t *testing.T) {
 	}{
 		"plain": {
 			cmd:    Cmd{},
-			stdout: "ping\nstatus\n",
+			stdout: "ping\nstatus-check\nstatus-list\n",
 		},
 		"json": {
 			cmd:    Cmd{JSON: true},
-			stdout: `["ping","status"]` + "\n",
+			stdout: `["ping","status-check","status-list"]` + "\n",
 		},
 	}
 

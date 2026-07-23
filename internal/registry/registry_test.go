@@ -39,14 +39,14 @@ func Test_Planner_opens_openai(t *testing.T) {
 	require.NoError(t, p.Close())
 }
 
-func Test_Tool_opens_status_tool(t *testing.T) {
-	require.Equal(t, []string{"ping", "status"}, registry.Tool().Schemes())
+func Test_Tool_opens_status_tools(t *testing.T) {
+	require.Equal(t, []string{"ping", "status-check", "status-list"}, registry.Tool().Schemes())
 
-	tl, err := registry.Tool().Open(context.Background(), "status://", nil)
+	tl, err := registry.Tool().Open(context.Background(), "status-list://", nil)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, tl.Close()) }()
 
-	result, err := tl.Invoke(context.Background(), tool.Call{Action: "list"})
+	result, err := tl.Invoke(context.Background(), tool.Call{})
 	require.NoError(t, err)
 	require.Contains(t, result.Text, "github")
 	require.Contains(t, result.Text, "docker-hub")

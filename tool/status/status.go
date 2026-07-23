@@ -12,25 +12,34 @@ import (
 	"github.com/hangxie/chatops/tool"
 )
 
-const Scheme = "status"
+// The status package splits into two single-intent tools: one checks a
+// named service, the other lists the checkable services.
+const (
+	CheckScheme = "status-check"
+	ListScheme  = "status-list"
+)
 
-// Descriptor is the tool's self-description for planners; wire it into a
-// tool.Backend alongside Scheme and Opener.
-var Descriptor = tool.Descriptor{
-	Summary: "Check the public status of common external services (GitHub, OpenAI, Slack, ...).",
-	Actions: []tool.Action{
-		{
-			Name:        "check",
-			Description: "Report the current status of one service.",
-			TakesTarget: true,
-			TargetDesc:  "The service to check, e.g. github, openai, slack, cloudflare (use list to see all).",
+// serviceParam names the argument the check tool reads.
+const serviceParam = "service"
+
+// CheckDescriptor and ListDescriptor are the tools' self-descriptions for
+// planners; wire each into a tool.Backend alongside its scheme and opener.
+var (
+	CheckDescriptor = tool.Descriptor{
+		Description: "Report the current public status of one external service (GitHub, OpenAI, Slack, ...).",
+		Parameters: []tool.Param{
+			{
+				Name:        serviceParam,
+				Type:        "string",
+				Required:    true,
+				Description: "The service to check, e.g. github, openai, slack, cloudflare (use status-list to see all).",
+			},
 		},
-		{
-			Name:        "list",
-			Description: "List the services whose status can be checked.",
-		},
-	},
-}
+	}
+	ListDescriptor = tool.Descriptor{
+		Description: "List the external services whose public status can be checked.",
+	}
+)
 
 var ErrNilChecker = errors.New("nil service-status checker")
 
@@ -55,71 +64,86 @@ var displayNames = map[string]string{
 	"docker-hub": "Docker Hub",
 }
 
-// Opener opens the default public service-status catalog.
-func Opener(ctx context.Context, u *url.URL, creds cred.Store) (tool.Tool, error) {
-	return NewOpener(sharedDefaultChecker)(ctx, u, creds)
+// CheckOpener and ListOpener open the check and list tools against the
+// default public service-status catalog.
+func CheckOpener(ctx context.Context, u *url.URL, creds cred.Store) (tool.Tool, error) {
+	return NewCheckOpener(sharedDefaultChecker)(ctx, u, creds)
 }
 
-// NewOpener creates an opener backed by checker, primarily for explicit wiring and tests.
-func NewOpener(checker *Checker) tool.OpenerFunc {
+func ListOpener(ctx context.Context, u *url.URL, creds cred.Store) (tool.Tool, error) {
+	return NewListOpener(sharedDefaultChecker)(ctx, u, creds)
+}
+
+// NewCheckOpener and NewListOpener create openers backed by checker,
+// primarily for explicit wiring and tests.
+func NewCheckOpener(checker *Checker) tool.OpenerFunc {
+	return openerFor(checker, func(c *Checker) tool.Tool { return &checkTool{checker: c} })
+}
+
+func NewListOpener(checker *Checker) tool.OpenerFunc {
+	return openerFor(checker, func(c *Checker) tool.Tool { return &listTool{checker: c} })
+}
+
+// openerFor builds an opener that rejects any endpoint or configuration in
+// the URL and constructs a single-intent tool via build.
+func openerFor(checker *Checker, build func(*Checker) tool.Tool) tool.OpenerFunc {
 	return func(ctx context.Context, u *url.URL, _ cred.Store) (tool.Tool, error) {
 		if u.Host != "" || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Opaque != "" || u.User != nil || u.Fragment != "" {
 			return nil, fmt.Errorf("status: URL %q takes no endpoint or configuration", u.String())
 		}
-		return Open(ctx, checker)
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("status: %w", err)
+		}
+		if checker == nil {
+			return nil, fmt.Errorf("status: %w", ErrNilChecker)
+		}
+		return build(checker), nil
 	}
 }
 
-// Tool checks external service status. It holds no resources itself.
-type Tool struct {
+// checkTool reports the status of one named service.
+type checkTool struct {
 	checker *Checker
 }
 
-// Open returns a service-status tool backed by checker.
-func Open(ctx context.Context, checker *Checker) (*Tool, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("status: %w", err)
-	}
-	if checker == nil {
-		return nil, fmt.Errorf("status: %w", ErrNilChecker)
-	}
-	return &Tool{checker: checker}, nil
-}
-
-// Invoke supports "check" for one provider or all providers, and "list".
-func (t *Tool) Invoke(ctx context.Context, call tool.Call) (tool.Result, error) {
+// Invoke checks the service named by call.Arguments["service"].
+func (t *checkTool) Invoke(ctx context.Context, call tool.Call) (tool.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return tool.Result{}, fmt.Errorf("status: %w", err)
 	}
-	switch call.Action {
-	case "check":
-		if strings.TrimSpace(call.Target) == "" {
-			return tool.Result{}, errors.New("status: check target is required")
-		}
-		if len(call.Parameters) != 0 {
-			return tool.Result{}, errors.New("status: check takes no parameters")
-		}
-		snapshots, err := t.checker.Check(ctx, call.Target)
-		if err != nil {
-			return tool.Result{}, err
-		}
-		details := make(map[string]string, len(snapshots))
-		for _, snapshot := range snapshots {
-			details[snapshot.Provider] = string(snapshot.Health)
-		}
-		return tool.Result{Text: formatSnapshots(snapshots), Details: details}, nil
-	case "list":
-		if call.Target != "" || len(call.Parameters) != 0 {
-			return tool.Result{}, errors.New("status: list takes no target or parameters")
-		}
-		return tool.Result{Text: "Supported services: " + strings.Join(t.checker.Names(), ", ")}, nil
-	default:
-		return tool.Result{}, fmt.Errorf("status: %q: %w; supported actions: check, list", call.Action, tool.ErrUnknownAction)
+	service := strings.TrimSpace(call.Arguments[serviceParam])
+	if service == "" {
+		return tool.Result{}, errors.New("status: check requires a service")
 	}
+	snapshots, err := t.checker.Check(ctx, service)
+	if err != nil {
+		return tool.Result{}, err
+	}
+	details := make(map[string]string, len(snapshots))
+	for _, snapshot := range snapshots {
+		details[snapshot.Provider] = string(snapshot.Health)
+	}
+	return tool.Result{Text: formatSnapshots(snapshots), Details: details}, nil
 }
 
 // Close releases nothing; HTTP resources are owned by the checker.
-func (t *Tool) Close() error { return nil }
+func (t *checkTool) Close() error { return nil }
+
+// listTool lists the services whose status can be checked.
+type listTool struct {
+	checker *Checker
+}
+
+// Invoke lists the checkable services. Call.Arguments is ignored.
+func (t *listTool) Invoke(ctx context.Context, _ tool.Call) (tool.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return tool.Result{}, fmt.Errorf("status: %w", err)
+	}
+	return tool.Result{Text: "Supported services: " + strings.Join(t.checker.Names(), ", ")}, nil
+}
+
+// Close releases nothing; HTTP resources are owned by the checker.
+func (t *listTool) Close() error { return nil }
 
 func formatSnapshots(snapshots []Snapshot) string {
 	lines := make([]string, 0, len(snapshots)*3)

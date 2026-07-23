@@ -3,7 +3,6 @@ package tool_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,15 +11,16 @@ import (
 )
 
 // fakeTool is a minimal tool.Tool used to exercise the interface
-// contract the way a real tool is expected to behave: it supports a
-// single "echo" action and reports ErrUnknownAction for anything else.
+// contract the way a real tool is expected to behave: a single-intent
+// tool that echoes its "subject" argument and errors on an empty one.
 type fakeTool struct{}
 
 func (f *fakeTool) Invoke(_ context.Context, call tool.Call) (tool.Result, error) {
-	if call.Action != "echo" {
-		return tool.Result{}, fmt.Errorf("%q: %w", call.Action, tool.ErrUnknownAction)
+	subject := call.Arguments["subject"]
+	if subject == "" {
+		return tool.Result{}, errors.New("echo: missing subject")
 	}
-	return tool.Result{Text: "echo " + call.Target, Details: call.Parameters}, nil
+	return tool.Result{Text: "echo " + subject, Details: call.Arguments}, nil
 }
 
 func (f *fakeTool) Close() error {
@@ -36,34 +36,29 @@ func Test_Tool_contract(t *testing.T) {
 	testCases := map[string]struct {
 		call     tool.Call
 		expected tool.Result
-		errIs    error
+		wantErr  bool
 	}{
-		"known-action": {
-			call:     tool.Call{Action: "echo", Target: "world"},
-			expected: tool.Result{Text: "echo world"},
+		"with-subject": {
+			call:     tool.Call{Arguments: map[string]string{"subject": "world"}},
+			expected: tool.Result{Text: "echo world", Details: map[string]string{"subject": "world"}},
 		},
-		"known-action-with-parameters": {
-			call:     tool.Call{Action: "echo", Target: "world", Parameters: map[string]string{"lang": "en"}},
-			expected: tool.Result{Text: "echo world", Details: map[string]string{"lang": "en"}},
+		"with-extra-arguments": {
+			call:     tool.Call{Arguments: map[string]string{"subject": "world", "lang": "en"}},
+			expected: tool.Result{Text: "echo world", Details: map[string]string{"subject": "world", "lang": "en"}},
 		},
-		"unknown-action": {call: tool.Call{Action: "no-such-action"}, errIs: tool.ErrUnknownAction},
-		"empty-action":   {call: tool.Call{}, errIs: tool.ErrUnknownAction},
+		"missing-subject": {call: tool.Call{Arguments: map[string]string{"lang": "en"}}, wantErr: true},
+		"empty-call":      {call: tool.Call{}, wantErr: true},
 	}
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			result, err := tl.Invoke(context.Background(), tc.call)
-			if tc.errIs != nil {
-				require.ErrorIs(t, err, tc.errIs)
+			if tc.wantErr {
+				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
 			require.Equal(t, tc.expected, result)
 		})
 	}
-}
-
-func Test_ErrUnknownAction_is_stable_sentinel(t *testing.T) {
-	require.EqualError(t, tool.ErrUnknownAction, "unknown action")
-	require.True(t, errors.Is(fmt.Errorf("wrapped: %w", tool.ErrUnknownAction), tool.ErrUnknownAction))
 }

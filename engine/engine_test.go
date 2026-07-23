@@ -22,7 +22,7 @@ import (
 // stubDesc is a minimal valid descriptor for wiring test tools, which
 // must self-describe.
 func stubDesc() *tool.Descriptor {
-	return &tool.Descriptor{Summary: "stub", Actions: []tool.Action{{Name: "do"}}}
+	return &tool.Descriptor{Description: "stub"}
 }
 
 type fakeConn struct {
@@ -169,8 +169,8 @@ func Test_Run_plans_executes_and_replies(t *testing.T) {
 	defer cancel()
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "conversation-1", Sender: "alice", Text: "do it"}}}
 	p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{
-		{Tool: "reply://", Call: tool.Call{Action: "send", Target: "conversation-1", Parameters: map[string]string{"text": "working"}}},
-		{Tool: "fake://", Call: tool.Call{Action: "restart", Target: "web"}},
+		{Tool: "reply://", Call: tool.Call{Arguments: map[string]string{"text": "working"}}},
+		{Tool: "fake://", Call: tool.Call{Arguments: map[string]string{"unit": "web"}}},
 	}}}}
 	taskTool := &fakeTool{result: tool.Result{Text: "restarted web"}}
 	tools := tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: func(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
@@ -192,7 +192,7 @@ func Test_Run_plans_executes_and_replies(t *testing.T) {
 	require.Equal(t, []planner.Request{{
 		Text: "do it", ConnectionID: "chat-1", ConversationID: "conversation-1", Sender: "alice",
 	}}, p.requests)
-	require.Equal(t, []tool.Call{{Action: "restart", Target: "web"}}, taskTool.calls)
+	require.Equal(t, []tool.Call{{Arguments: map[string]string{"unit": "web"}}}, taskTool.calls)
 	require.Equal(t, []chat.Message{
 		{ConversationID: "conversation-1", Text: "working"},
 		{ConversationID: "conversation-1", Text: "restarted web"},
@@ -248,7 +248,10 @@ func Test_Run_message_failure_is_nonfatal(t *testing.T) {
 		"malformed-tool-url":  {planner: planStep("%", tool.Call{})},
 		"invoke-tool":         {planner: planStep("fake://", tool.Call{}), invoked: &fakeTool{err: testErr}},
 		"close-tool":          {planner: planStep("fake://", tool.Call{}), invoked: &fakeTool{closeErr: testErr}},
-		"misconfigured-reply": {planner: planStep("reply://send", tool.Call{Action: "send", Target: "c1", Parameters: map[string]string{"text": "hi"}})},
+		"misconfigured-reply": {planner: planStep("reply://send", tool.Call{Arguments: map[string]string{"text": "hi"}})},
+		// A reply step with no arguments: the engine injects the conversation
+		// into a fresh map, then reply fails for the missing text.
+		"reply-without-arguments": {planner: planStep("reply://", tool.Call{})},
 	}
 
 	for name, tc := range testCases {
@@ -408,7 +411,7 @@ func Test_Run_accepts_canonical_reply_URL_variants(t *testing.T) {
 			conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
 			p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{{
 				Tool: toolURL,
-				Call: tool.Call{Action: "send", Target: "c1", Parameters: map[string]string{"text": "hello"}},
+				Call: tool.Call{Arguments: map[string]string{"text": "hello"}},
 			}}}}}
 			e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
 			require.NoError(t, err)
@@ -437,7 +440,7 @@ func Test_Run_rejects_configured_reply_URL(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
-			p := planStep(toolURL, tool.Call{Action: "send", Target: "c1", Parameters: map[string]string{"text": "hello"}})
+			p := planStep(toolURL, tool.Call{Arguments: map[string]string{"text": "hello"}})
 			e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
 			require.NoError(t, err)
 
@@ -457,9 +460,14 @@ func Test_Run_rejects_configured_reply_URL(t *testing.T) {
 func Test_Run_binds_reply_to_originating_conversation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "origin"}}}
+	// Hold a reference to the planner's argument map so the test can prove the
+	// engine did not mutate it while injecting the conversation.
+	replyArgs := map[string]string{"text": "hello"}
 	p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{{
 		Tool: reply.URL,
-		Call: tool.Call{Action: "send", Target: "other", Parameters: map[string]string{"text": "hello"}},
+		// The planner leaves the conversation unset; the engine binds it to
+		// the originating conversation, so this reply lands on "origin".
+		Call: tool.Call{Arguments: replyArgs},
 	}}}}}
 	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
 	require.NoError(t, err)
@@ -473,6 +481,11 @@ func Test_Run_binds_reply_to_originating_conversation(t *testing.T) {
 	cancel()
 	require.NoError(t, <-result)
 	require.Equal(t, "origin", conn.sent[0].ConversationID)
+
+	// The engine must copy the arguments before injecting the conversation,
+	// not mutate the planner's map — a concurrent-safe planner may share it
+	// across conversations.
+	require.Equal(t, map[string]string{"text": "hello"}, replyArgs)
 }
 
 type parallelPlanner struct {

@@ -260,7 +260,7 @@ func (p *Planner) Plan(ctx context.Context, req planner.Request) (planner.Plan, 
 	if len(response.Choices) == 0 {
 		return planner.Plan{}, fmt.Errorf("openai: completion returned no choices")
 	}
-	return stepsFromMessage(response.Choices[0].Message, req.ConversationID, p.funcs)
+	return stepsFromMessage(response.Choices[0].Message, p.funcs)
 }
 
 // Close releases nothing beyond the idle HTTP connections, which the

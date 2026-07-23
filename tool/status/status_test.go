@@ -2,7 +2,6 @@ package status
 
 import (
 	"context"
-	"errors"
 	"net/url"
 	"testing"
 
@@ -11,14 +10,33 @@ import (
 	"github.com/hangxie/chatops/tool"
 )
 
-func Test_Tool_invoke(t *testing.T) {
+// openCheck and openList build the single-intent tools against checker
+// through their openers, using the bare URL each accepts.
+func openCheck(t *testing.T, checker *Checker) tool.Tool {
+	t.Helper()
+	u, err := url.Parse(CheckScheme + "://")
+	require.NoError(t, err)
+	tl, err := NewCheckOpener(checker)(context.Background(), u, nil)
+	require.NoError(t, err)
+	return tl
+}
+
+func openList(t *testing.T, checker *Checker) tool.Tool {
+	t.Helper()
+	u, err := url.Parse(ListScheme + "://")
+	require.NoError(t, err)
+	tl, err := NewListOpener(checker)(context.Background(), u, nil)
+	require.NoError(t, err)
+	return tl
+}
+
+func Test_checkTool_invoke(t *testing.T) {
 	checker, err := NewChecker([]Provider{fakeProvider{
 		name: "github",
 		snap: Snapshot{Health: HealthDegraded, Summary: "Degraded Performance", Incidents: []Incident{{Name: "API errors", Status: "monitoring", URL: "https://example.test/incident"}}},
 	}})
 	require.NoError(t, err)
-	tl, err := Open(context.Background(), checker)
-	require.NoError(t, err)
+	tl := openCheck(t, checker)
 
 	testCases := map[string]struct {
 		call        tool.Call
@@ -28,16 +46,13 @@ func Test_Tool_invoke(t *testing.T) {
 		errContains string
 	}{
 		"check": {
-			call:    tool.Call{Action: "check", Target: "github"},
+			call:    tool.Call{Arguments: map[string]string{serviceParam: "github"}},
 			text:    "[DEGRADED] GitHub — Degraded Performance\n  API errors (monitoring)\n  https://example.test/incident",
 			details: map[string]string{"github": "degraded"},
 		},
-		"list":           {call: tool.Call{Action: "list"}, text: "Supported services: github"},
-		"missing-target": {call: tool.Call{Action: "check"}, errContains: "target is required"},
-		"parameters":     {call: tool.Call{Action: "check", Target: "github", Parameters: map[string]string{"x": "y"}}, errContains: "parameters"},
-		"unknown-target": {call: tool.Call{Action: "check", Target: "missing"}, errIs: ErrUnknownProvider},
-		"list-target":    {call: tool.Call{Action: "list", Target: "github"}, errContains: "no target"},
-		"unknown-action": {call: tool.Call{Action: "remove"}, errIs: tool.ErrUnknownAction, errContains: "supported actions: check, list"},
+		"missing-service": {call: tool.Call{}, errContains: "requires a service"},
+		"blank-service":   {call: tool.Call{Arguments: map[string]string{serviceParam: "  "}}, errContains: "requires a service"},
+		"unknown-service": {call: tool.Call{Arguments: map[string]string{serviceParam: "missing"}}, errIs: ErrUnknownProvider},
 	}
 
 	for name, tc := range testCases {
@@ -59,30 +74,41 @@ func Test_Tool_invoke(t *testing.T) {
 	}
 }
 
+func Test_listTool_invoke(t *testing.T) {
+	checker, err := NewChecker([]Provider{fakeProvider{name: "github"}})
+	require.NoError(t, err)
+	tl := openList(t, checker)
+
+	// The list tool ignores any arguments and reports the catalog.
+	result, err := tl.Invoke(context.Background(), tool.Call{Arguments: map[string]string{"ignored": "x"}})
+	require.NoError(t, err)
+	require.Equal(t, "Supported services: github", result.Text)
+}
+
 func Test_Opener_validates_URL(t *testing.T) {
 	checker, err := NewChecker([]Provider{fakeProvider{name: "github"}})
 	require.NoError(t, err)
-	opener := NewOpener(checker)
 
 	testCases := map[string]struct {
-		rawURL string
-		err    bool
+		opener tool.OpenerFunc
+		scheme string
 	}{
-		"bare":  {rawURL: "status://"},
-		"host":  {rawURL: "status://github", err: true},
-		"query": {rawURL: "status://?timeout=1", err: true},
+		"check": {opener: NewCheckOpener(checker), scheme: CheckScheme},
+		"list":  {opener: NewListOpener(checker), scheme: ListScheme},
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			u, err := url.Parse(tc.rawURL)
-			require.NoError(t, err)
-			tl, err := opener(context.Background(), u, nil)
-			if tc.err {
-				require.Error(t, err)
-				return
+			for suffix, wantErr := range map[string]bool{"://": false, "://github": true, "://?timeout=1": true} {
+				u, err := url.Parse(tc.scheme + suffix)
+				require.NoError(t, err)
+				tl, err := tc.opener(context.Background(), u, nil)
+				if wantErr {
+					require.Error(t, err)
+					continue
+				}
+				require.NoError(t, err)
+				require.NoError(t, tl.Close())
 			}
-			require.NoError(t, err)
-			require.NoError(t, tl.Close())
 		})
 	}
 }
@@ -90,70 +116,68 @@ func Test_Opener_validates_URL(t *testing.T) {
 func Test_Tool_context_and_close(t *testing.T) {
 	checker, err := NewChecker([]Provider{fakeProvider{name: "github"}})
 	require.NoError(t, err)
-	tl, err := Open(context.Background(), checker)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tl := range []tool.Tool{openCheck(t, checker), openList(t, checker)} {
+		_, err = tl.Invoke(ctx, tool.Call{})
+		require.ErrorIs(t, err, context.Canceled)
+		require.NoError(t, tl.Close())
+		require.NoError(t, tl.Close())
+	}
+}
+
+func Test_Opener_rejects_nil_checker(t *testing.T) {
+	u, err := url.Parse(CheckScheme + "://")
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err = tl.Invoke(ctx, tool.Call{Action: "list"})
-	require.ErrorIs(t, err, context.Canceled)
-	require.NoError(t, tl.Close())
-	require.NoError(t, tl.Close())
+	_, err = NewCheckOpener(nil)(context.Background(), u, nil)
+	require.ErrorIs(t, err, ErrNilChecker)
 }
 
-func Test_Open_rejects_nil_checker(t *testing.T) {
-	_, err := Open(context.Background(), nil)
-	require.True(t, errors.Is(err, ErrNilChecker))
-}
-
-func Test_Open_honors_cancellation(t *testing.T) {
+func Test_Opener_honors_cancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := Open(ctx, &Checker{})
+	u, err := url.Parse(ListScheme + "://")
+	require.NoError(t, err)
+	_, err = NewListOpener(&Checker{})(ctx, u, nil)
 	require.ErrorIs(t, err, context.Canceled)
 }
 
 func Test_Opener_uses_default_catalog(t *testing.T) {
-	u, err := url.Parse("status://")
+	// Each default opener opens against its own scheme URL.
+	for _, tc := range []struct {
+		opener tool.OpenerFunc
+		scheme string
+	}{
+		{CheckOpener, CheckScheme},
+		{ListOpener, ListScheme},
+	} {
+		u, err := url.Parse(tc.scheme + "://")
+		require.NoError(t, err)
+		tl, err := tc.opener(context.Background(), u, nil)
+		require.NoError(t, err)
+		require.NoError(t, tl.Close())
+	}
+
+	// The default list tool reports the built-in catalog.
+	u, err := url.Parse(ListScheme + "://")
 	require.NoError(t, err)
-	tl, err := Opener(context.Background(), u, nil)
+	tl, err := ListOpener(context.Background(), u, nil)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, tl.Close()) }()
-	result, err := tl.Invoke(context.Background(), tool.Call{Action: "list"})
+	result, err := tl.Invoke(context.Background(), tool.Call{})
 	require.NoError(t, err)
 	require.Contains(t, result.Text, "github")
 }
 
-func Test_Descriptor(t *testing.T) {
-	require.NotEmpty(t, Descriptor.Summary)
+func Test_Descriptors(t *testing.T) {
+	require.NoError(t, CheckDescriptor.Validate())
+	require.NoError(t, ListDescriptor.Validate())
 
-	byName := make(map[string]tool.Action, len(Descriptor.Actions))
-	for _, a := range Descriptor.Actions {
-		byName[a.Name] = a
-	}
-
-	check, ok := byName["check"]
-	require.True(t, ok)
-	require.True(t, check.TakesTarget)
-	require.NotEmpty(t, check.TargetDesc)
-	require.Empty(t, check.Parameters)
-
-	list, ok := byName["list"]
-	require.True(t, ok)
-	require.False(t, list.TakesTarget)
-	require.Empty(t, list.Parameters)
-
-	// Every described action must be one Invoke accepts, so the
-	// descriptor cannot drift from the implementation. "list" needs no
-	// live checker; "check" is exercised elsewhere, so here we only
-	// assert its action is not rejected as unknown.
-	checker, err := NewChecker([]Provider{fakeProvider{name: "github", snap: Snapshot{Health: HealthOperational}}})
-	require.NoError(t, err)
-	tl, err := Open(context.Background(), checker)
-	require.NoError(t, err)
-	for name := range byName {
-		_, err := tl.Invoke(context.Background(), tool.Call{Action: name, Target: "github"})
-		require.NotErrorIs(t, err, tool.ErrUnknownAction)
-	}
+	// The check tool declares a required "service" argument; list takes none.
+	require.Len(t, CheckDescriptor.Parameters, 1)
+	require.Equal(t, serviceParam, CheckDescriptor.Parameters[0].Name)
+	require.True(t, CheckDescriptor.Parameters[0].Required)
+	require.Empty(t, ListDescriptor.Parameters)
 }
 
 func Test_healthLabel_and_displayName(t *testing.T) {

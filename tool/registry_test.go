@@ -22,7 +22,7 @@ func fakeOpener(tl tool.Tool, err error) tool.OpenerFunc {
 // stubDesc is a minimal valid descriptor for wiring test backends, which
 // must self-describe.
 func stubDesc() *tool.Descriptor {
-	return &tool.Descriptor{Summary: "stub", Actions: []tool.Action{{Name: "do"}}}
+	return &tool.Descriptor{Description: "stub"}
 }
 
 func Test_NewRegistry_invalid_arguments(t *testing.T) {

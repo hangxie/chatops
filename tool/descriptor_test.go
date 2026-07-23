@@ -11,15 +11,9 @@ import (
 // sampleDescriptor is a small, valid descriptor reused across the tests.
 func sampleDescriptor() tool.Descriptor {
 	return tool.Descriptor{
-		Summary: "check external service status",
-		Actions: []tool.Action{
-			{
-				Name:        "check",
-				Description: "check one service",
-				TakesTarget: true,
-				TargetDesc:  "the service name",
-			},
-			{Name: "list", Description: "list services"},
+		Description: "check external service status",
+		Parameters: []tool.Param{
+			{Name: "service", Type: "string", Required: true, Description: "the service name"},
 		},
 	}
 }
@@ -28,13 +22,10 @@ func Test_NewRegistry_rejects_malformed_descriptor(t *testing.T) {
 	opener := fakeOpener(&fakeTool{}, nil)
 	testCases := map[string]*tool.Descriptor{
 		"nil-descriptor":   nil,
-		"no-actions":       {Summary: "x"},
-		"action-no-name":   {Summary: "x", Actions: []tool.Action{{Name: ""}}},
-		"one-good-one-bad": {Summary: "x", Actions: []tool.Action{{Name: "ok"}, {Name: ""}}},
-		"duplicate-action": {Summary: "x", Actions: []tool.Action{{Name: "dup"}, {Name: "dup"}}},
-		"param-no-name":    {Summary: "x", Actions: []tool.Action{{Name: "a", Parameters: []tool.Param{{Name: ""}}}}},
-		"duplicate-param":  {Summary: "x", Actions: []tool.Action{{Name: "a", Parameters: []tool.Param{{Name: "p"}, {Name: "p"}}}}},
-		"unsupported-type": {Summary: "x", Actions: []tool.Action{{Name: "a", Parameters: []tool.Param{{Name: "p", Type: "object"}}}}},
+		"no-description":   {Parameters: []tool.Param{{Name: "p"}}},
+		"param-no-name":    {Description: "x", Parameters: []tool.Param{{Name: ""}}},
+		"duplicate-param":  {Description: "x", Parameters: []tool.Param{{Name: "p"}, {Name: "p"}}},
+		"unsupported-type": {Description: "x", Parameters: []tool.Param{{Name: "p", Type: "object"}}},
 	}
 
 	for name, desc := range testCases {
@@ -52,19 +43,17 @@ func Test_Descriptor_Validate(t *testing.T) {
 		wantErr string
 	}{
 		"valid":            {desc: sampleDescriptor()},
-		"no-actions":       {desc: tool.Descriptor{Summary: "x"}, wantErr: "no actions"},
-		"action-no-name":   {desc: tool.Descriptor{Actions: []tool.Action{{Name: ""}}}, wantErr: "action with no name"},
-		"duplicate-action": {desc: tool.Descriptor{Actions: []tool.Action{{Name: "a"}, {Name: "a"}}}, wantErr: `duplicate action "a"`},
-		"param-no-name":    {desc: tool.Descriptor{Actions: []tool.Action{{Name: "a", Parameters: []tool.Param{{Name: ""}}}}}, wantErr: "parameter with no name"},
-		"duplicate-param":  {desc: tool.Descriptor{Actions: []tool.Action{{Name: "a", Parameters: []tool.Param{{Name: "p"}, {Name: "p"}}}}}, wantErr: `duplicate parameter "p"`},
-		"unsupported-type": {desc: tool.Descriptor{Actions: []tool.Action{{Name: "a", Parameters: []tool.Param{{Name: "p", Type: "object"}}}}}, wantErr: `unsupported type "object"`},
-		"all-scalar-types": {desc: tool.Descriptor{Actions: []tool.Action{{Name: "a", Parameters: []tool.Param{
+		"no-description":   {desc: tool.Descriptor{Parameters: []tool.Param{{Name: "p"}}}, wantErr: "no description"},
+		"param-no-name":    {desc: tool.Descriptor{Description: "x", Parameters: []tool.Param{{Name: ""}}}, wantErr: "parameter with no name"},
+		"duplicate-param":  {desc: tool.Descriptor{Description: "x", Parameters: []tool.Param{{Name: "p"}, {Name: "p"}}}, wantErr: `duplicate parameter "p"`},
+		"unsupported-type": {desc: tool.Descriptor{Description: "x", Parameters: []tool.Param{{Name: "p", Type: "object"}}}, wantErr: `unsupported type "object"`},
+		"all-scalar-types": {desc: tool.Descriptor{Description: "x", Parameters: []tool.Param{
 			{Name: "s", Type: "string"},
 			{Name: "n", Type: "number"},
 			{Name: "i", Type: "integer"},
 			{Name: "b", Type: "boolean"},
 			{Name: "d"}, // empty type defaults to string, allowed
-		}}}}},
+		}}},
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
@@ -79,22 +68,17 @@ func Test_Descriptor_Validate(t *testing.T) {
 }
 
 func Test_Descriptor_Clone(t *testing.T) {
-	orig := tool.Descriptor{Summary: "s", Actions: []tool.Action{{
-		Name:       "scale",
-		Parameters: []tool.Param{{Name: "replicas", Type: "integer"}},
-	}}}
+	orig := tool.Descriptor{Description: "scale a deployment", Parameters: []tool.Param{{Name: "replicas", Type: "integer"}}}
 	clone := orig.Clone()
 	require.Equal(t, orig, clone)
 
-	// Mutating the clone's nested Actions and Parameters must not affect the
-	// original: they share no backing storage.
-	clone.Actions[0].Name = "changed"
-	clone.Actions[0].Parameters[0].Name = "changed"
-	require.Equal(t, "scale", orig.Actions[0].Name)
-	require.Equal(t, "replicas", orig.Actions[0].Parameters[0].Name)
+	// Mutating the clone's Parameters must not affect the original: they share
+	// no backing storage.
+	clone.Parameters[0].Name = "changed"
+	require.Equal(t, "replicas", orig.Parameters[0].Name)
 
-	// A descriptor with no actions clones to an equal value.
-	require.Equal(t, tool.Descriptor{Summary: "x"}, tool.Descriptor{Summary: "x"}.Clone())
+	// A descriptor with no parameters clones to an equal value.
+	require.Equal(t, tool.Descriptor{Description: "x"}, tool.Descriptor{Description: "x"}.Clone())
 }
 
 func Test_Registry_Descriptor(t *testing.T) {
@@ -118,45 +102,34 @@ func Test_Registry_Descriptor(t *testing.T) {
 }
 
 func Test_Registry_Descriptor_is_deep_copied(t *testing.T) {
-	// A descriptor with parameters exercises deep copying of both the
-	// Actions and the nested Parameters slices.
+	// A descriptor with parameters exercises deep copying of the Parameters
+	// slice.
 	desc := tool.Descriptor{
-		Summary: "deploy",
-		Actions: []tool.Action{{
-			Name:        "scale",
-			TakesTarget: true,
-			Parameters:  []tool.Param{{Name: "replicas", Type: "integer", Required: true}},
-		}},
+		Description: "scale a deployment",
+		Parameters:  []tool.Param{{Name: "replicas", Type: "integer", Required: true}},
 	}
 	reg := tool.NewRegistry(
 		tool.Backend{Scheme: "k8s", Opener: fakeOpener(&fakeTool{}, nil), Descriptor: &desc},
 	)
 
 	// Mutating the caller's descriptor after construction must not leak in.
-	desc.Actions[0].Name = "mutated"
-	desc.Actions[0].Parameters[0].Name = "mutated"
+	desc.Parameters[0].Name = "mutated"
 
 	got, ok := reg.Descriptor("k8s")
 	require.True(t, ok)
-	require.Equal(t, "scale", got.Actions[0].Name)
-	require.Equal(t, "replicas", got.Actions[0].Parameters[0].Name)
+	require.Equal(t, "replicas", got.Parameters[0].Name)
 
 	// Mutating a returned descriptor must not affect later reads.
-	got.Actions[0].Name = "changed"
-	got.Actions[0].Parameters[0].Name = "changed"
+	got.Parameters[0].Name = "changed"
 	again, ok := reg.Descriptor("k8s")
 	require.True(t, ok)
-	require.Equal(t, "scale", again.Actions[0].Name)
-	require.Equal(t, "replicas", again.Actions[0].Parameters[0].Name)
+	require.Equal(t, "replicas", again.Parameters[0].Name)
 }
 
 func Test_Registry_Select_deep_copies_descriptors(t *testing.T) {
 	desc := tool.Descriptor{
-		Summary: "deploy",
-		Actions: []tool.Action{{
-			Name:       "scale",
-			Parameters: []tool.Param{{Name: "replicas", Type: "integer"}},
-		}},
+		Description: "scale a deployment",
+		Parameters:  []tool.Param{{Name: "replicas", Type: "integer"}},
 	}
 	reg := tool.NewRegistry(
 		tool.Backend{Scheme: "k8s", Opener: fakeOpener(&fakeTool{}, nil), Descriptor: &desc},
@@ -169,16 +142,16 @@ func Test_Registry_Select_deep_copies_descriptors(t *testing.T) {
 	// parent registry.
 	got, ok := selected.Descriptor("k8s")
 	require.True(t, ok)
-	got.Actions[0].Parameters[0].Name = "changed"
+	got.Parameters[0].Name = "changed"
 
 	parent, ok := reg.Descriptor("k8s")
 	require.True(t, ok)
-	require.Equal(t, "replicas", parent.Actions[0].Parameters[0].Name)
+	require.Equal(t, "replicas", parent.Parameters[0].Name)
 }
 
 func Test_Registry_Select_carries_descriptors(t *testing.T) {
 	statusDesc := sampleDescriptor()
-	pingDesc := tool.Descriptor{Summary: "ping", Actions: []tool.Action{{Name: "ping"}}}
+	pingDesc := tool.Descriptor{Description: "ping"}
 	reg := tool.NewRegistry(
 		tool.Backend{Scheme: "status", Opener: fakeOpener(&fakeTool{}, nil), Descriptor: &statusDesc},
 		tool.Backend{Scheme: "ping", Opener: fakeOpener(&fakeTool{}, nil), Descriptor: &pingDesc},
