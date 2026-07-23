@@ -378,9 +378,7 @@ Steps name tools by URL only, so a plan is **not self-contained**: the caller ex
 
 A planner is identified by a single URL — the scheme selects the backend, host/port/path locate the endpoint it talks to (empty for providers with a well-known API endpoint), and query parameters carry further configuration such as the model (e.g. `openai-chat-completions://api.openai.com/v1?model=gpt-5`, `anthropic://?model=claude-fable-5`). Credential *values* are **never** part of the URL. Because the server runs one planner, an authenticated backend resolves the single `cred.PlannerAPIKey`; caller-selected credential prefixes are not supported.
 
-`Open` also receives the caller's enabled tool set (the `*tool.Registry` built from `--tool`), so an LLM-backed backend can offer those tools to the model as callable functions and emit plan steps naming them by scheme. A backend that plans a fixed set of steps (such as `ping`) ignores it.
-
-**Breaking change (tool set threaded through `Open`).** Adding the OpenAI backend required the enabled tool set to reach planners, so `planner.OpenerFunc` and `planner.Registry.Open` each gained a trailing `tools *tool.Registry` argument. To migrate: callers pass the enabled registry (or `nil`, treated as empty) as the new final argument to `Open`; backend `OpenerFunc` implementations add the trailing `tools *tool.Registry` parameter and ignore it unless they offer tools to a model. There is no compatibility shim — the parameter is mandatory — because the planner interface is still pre-1.0 and has no external backends.
+`Open` also receives the caller's enabled tool set (the `*tool.Registry` built from `--tool`), so an LLM-backed backend can offer those tools to the model as callable functions and emit plan steps naming them by scheme. A backend that plans a fixed set of steps (such as `ping`) ignores it. Backend `OpenerFunc` implementations take the trailing `tools *tool.Registry` parameter (never nil, possibly empty) and ignore it unless they offer tools to a model.
 
 Available backends:
 
