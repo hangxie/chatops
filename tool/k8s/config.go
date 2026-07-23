@@ -23,10 +23,6 @@ type clusterConfig struct {
 	// context selects a kubeconfig context; empty uses the current context
 	// (or in-cluster config when running inside a pod).
 	context string
-
-	// namespace is the default namespace for calls that omit one; empty
-	// defaults to the selected context's namespace, then "default".
-	namespace string
 }
 
 // Client constructors, as package variables so tests can exercise their
@@ -66,11 +62,11 @@ func newCluster(cc clusterConfig) (*cluster, error) {
 	deferred := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(discoveryClient))
 	mapper := restmapper.NewShortcutExpander(deferred, discoveryClient, func(string) {})
 
-	namespace := cc.namespace
-	if namespace == "" {
-		if ns, _, nsErr := loader.Namespace(); nsErr == nil {
-			namespace = ns
-		}
+	// The default namespace for calls that omit one comes from the selected
+	// kubeconfig context; namespaceFor falls back to "default" when unset.
+	var namespace string
+	if ns, _, nsErr := loader.Namespace(); nsErr == nil {
+		namespace = ns
 	}
 
 	return &cluster{

@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
 	"sort"
@@ -35,6 +36,11 @@ var schemeRE = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*$`)
 type Registry struct {
 	openers     map[string]OpenerFunc
 	descriptors map[string]Descriptor
+	// configured holds operator-supplied tool URLs keyed by scheme, set by
+	// Select. When a scheme is configured, Open uses the stored URL in place
+	// of the caller's, so operator configuration (a k8s ?context=, say)
+	// reaches the opener even though the planner emits a bare scheme URL.
+	configured map[string]*url.URL
 }
 
 // NewRegistry builds a Registry serving the given backends. Schemes
@@ -96,24 +102,85 @@ func (r *Registry) Descriptor(scheme string) (Descriptor, bool) {
 }
 
 // Select returns a registry containing only the named tools, carrying
-// over each tool's descriptor. Repeated and mixed-case names identify the
-// same tool. An unknown name returns an error listing the available
-// choices.
-func (r *Registry) Select(names ...string) (*Registry, error) {
-	openers := make(map[string]OpenerFunc, len(names))
-	descriptors := make(map[string]Descriptor, len(names))
-	for _, name := range names {
-		scheme := strings.ToLower(name)
+// over each tool's descriptor. Each selector is either a bare tool name
+// ("k8s-get") or a full tool URL carrying operator configuration
+// ("k8s-get://?context=prod"); the scheme selects the tool, and a
+// configured URL is remembered so Open serves it in place of the caller's
+// bare scheme URL. Repeated and mixed-case selectors identify the same
+// tool, last configuration winning. An unparseable selector, or one whose
+// scheme names no tool, returns an error listing the available choices.
+func (r *Registry) Select(selectors ...string) (*Registry, error) {
+	openers := make(map[string]OpenerFunc, len(selectors))
+	descriptors := make(map[string]Descriptor, len(selectors))
+	configured := make(map[string]*url.URL, len(selectors))
+	for _, sel := range selectors {
+		scheme, configuredURL, err := parseSelector(sel)
+		if err != nil {
+			return nil, err
+		}
 		opener, ok := r.openers[scheme]
 		if !ok {
-			return nil, fmt.Errorf("tool: unknown tool %q; available tools: %s", name, strings.Join(r.Schemes(), ", "))
+			return nil, fmt.Errorf("tool: unknown tool %q; available tools: %s", scheme, strings.Join(r.Schemes(), ", "))
 		}
 		openers[scheme] = opener
 		if d, ok := r.descriptors[scheme]; ok {
 			descriptors[scheme] = d.Clone()
 		}
+		if configuredURL != nil {
+			configured[scheme] = configuredURL
+		} else {
+			delete(configured, scheme)
+		}
 	}
-	return &Registry{openers: openers, descriptors: descriptors}, nil
+	return &Registry{openers: openers, descriptors: descriptors, configured: configured}, nil
+}
+
+// Configure returns a copy of r with operator configuration attached for the
+// tools named by the given URLs, leaving the exposed set unchanged. Unlike
+// Select it neither adds nor removes tools: it only records how the already
+// exposed ones are opened, so configuring a tool need not re-list the rest.
+// Each argument must be a tool URL (a bare name has nothing to configure)
+// whose scheme names a tool in r; later URLs override earlier ones for the
+// same scheme. An unparseable argument, a bare name, or a scheme naming no
+// exposed tool returns an error listing the available choices.
+func (r *Registry) Configure(toolURLs ...string) (*Registry, error) {
+	configured := make(map[string]*url.URL, len(r.configured)+len(toolURLs))
+	maps.Copy(configured, r.configured)
+	for _, raw := range toolURLs {
+		scheme, configuredURL, err := parseSelector(raw)
+		if err != nil {
+			return nil, err
+		}
+		if configuredURL == nil {
+			return nil, fmt.Errorf("tool: %q is not a tool URL; configuration needs a scheme, like %q", raw, raw+"://")
+		}
+		if _, ok := r.openers[scheme]; !ok {
+			return nil, fmt.Errorf("tool: cannot configure unexposed tool %q; available tools: %s", scheme, strings.Join(r.Schemes(), ", "))
+		}
+		configured[scheme] = configuredURL
+	}
+	openers := make(map[string]OpenerFunc, len(r.openers))
+	maps.Copy(openers, r.openers)
+	descriptors := make(map[string]Descriptor, len(r.descriptors))
+	for scheme, d := range r.descriptors {
+		descriptors[scheme] = d.Clone()
+	}
+	return &Registry{openers: openers, descriptors: descriptors, configured: configured}, nil
+}
+
+// parseSelector splits a Select selector into a lowercase scheme and, for
+// the URL form, the parsed URL carrying operator configuration. A bare name
+// yields a nil configured URL. url.Parse lowercases the scheme, so a bare
+// name is lowercased to match.
+func parseSelector(sel string) (scheme string, configuredURL *url.URL, err error) {
+	u, err := url.Parse(sel)
+	if err != nil {
+		return "", nil, fmt.Errorf("tool: parse tool selector %q: %w", sel, err)
+	}
+	if u.Scheme == "" {
+		return strings.ToLower(sel), nil, nil
+	}
+	return u.Scheme, u, nil
 }
 
 // Open opens the tool instance identified by rawURL, such as
@@ -130,6 +197,14 @@ func (r *Registry) Open(ctx context.Context, rawURL string, creds cred.Store) (T
 	opener, ok := r.openers[u.Scheme]
 	if !ok {
 		return nil, fmt.Errorf("tool: unknown tool scheme %q", u.Scheme)
+	}
+	// An operator-configured URL for this scheme replaces the caller's,
+	// carrying selection details (a k8s ?context=, say) the planner omits. A
+	// copy keeps each Open isolated, so an opener that mutates its URL cannot
+	// disturb a concurrent one.
+	if cfg, ok := r.configured[u.Scheme]; ok {
+		clone := *cfg
+		u = &clone
 	}
 	return opener(ctx, u, creds)
 }

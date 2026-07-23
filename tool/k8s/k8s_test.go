@@ -16,12 +16,12 @@ func Test_parseURL(t *testing.T) {
 		want   clusterConfig
 		errMsg string
 	}{
-		"bare":        {raw: "k8s-get://", want: clusterConfig{}},
-		"context":     {raw: "k8s-get://?context=prod", want: clusterConfig{context: "prod"}},
-		"namespace":   {raw: "k8s-get://?namespace=web", want: clusterConfig{namespace: "web"}},
-		"kubeconfig":  {raw: "k8s-get://?kubeconfig=/etc/kube.yaml", want: clusterConfig{kubeconfig: "/etc/kube.yaml"}},
-		"host":        {raw: "k8s-get://api.example:6443", errMsg: "takes no host"},
-		"unknown-key": {raw: "k8s-get://?cluster=prod", errMsg: `unknown URL parameter "cluster"`},
+		"bare":         {raw: "k8s-get://", want: clusterConfig{}},
+		"context":      {raw: "k8s-get://?context=prod", want: clusterConfig{context: "prod"}},
+		"kubeconfig":   {raw: "k8s-get://?kubeconfig=/etc/kube.yaml", want: clusterConfig{kubeconfig: "/etc/kube.yaml"}},
+		"host":         {raw: "k8s-get://api.example:6443", errMsg: "takes no host"},
+		"unknown-key":  {raw: "k8s-get://?cluster=prod", errMsg: `unknown URL parameter "cluster"`},
+		"no-namespace": {raw: "k8s-get://?namespace=web", errMsg: `unknown URL parameter "namespace"`},
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {

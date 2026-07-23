@@ -80,6 +80,7 @@ func Test_Cmd_parse(t *testing.T) {
 				"--max-concurrency", "3",
 				"--tool", "ping",
 				"--tool", "status-check",
+				"--tool-url", "k8s-get://?context=prod",
 				"--log-level", "debug",
 				"--log-format", "text",
 			},
@@ -90,6 +91,7 @@ func Test_Cmd_parse(t *testing.T) {
 				ConnectionID:   "operations",
 				MaxConcurrency: 3,
 				Tools:          []string{"ping", "status-check"},
+				ToolURLs:       []string{"k8s-get://?context=prod"},
 				LogLevel:       "debug",
 				LogFormat:      "text",
 			},
@@ -134,6 +136,11 @@ func Test_Cmd_parse(t *testing.T) {
 func Test_run_rejects_invalid_tool_before_opening_backends(t *testing.T) {
 	command := Cmd{ChatURL: "unknown://", PlannerURL: "unknown://", Tools: []string{"bogus"}}
 	require.EqualError(t, command.run(context.Background()), `server: configure tools: tool: unknown tool "bogus"; available tools: k8s-get, k8s-list, ping, status-check, status-list`)
+}
+
+func Test_run_rejects_tool_url_for_unexposed_tool(t *testing.T) {
+	command := Cmd{ChatURL: "unknown://", PlannerURL: "unknown://", Tools: []string{"ping"}, ToolURLs: []string{"k8s-get://?context=prod"}}
+	require.EqualError(t, command.run(context.Background()), `server: configure tools: tool: cannot configure unexposed tool "k8s-get"; available tools: ping`)
 }
 
 func Test_run_ping_round_trip_and_graceful_cancellation(t *testing.T) {

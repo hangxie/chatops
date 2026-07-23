@@ -22,7 +22,8 @@ type Cmd struct {
 	CredentialsURL string   `name:"credentials" help:"Optional credential store URL for chat backends, planners, and tools."`
 	ConnectionID   string   `name:"connection-id" default:"default" help:"Stable ID used to scope planner conversation state."`
 	MaxConcurrency int      `name:"max-concurrency" default:"8" help:"Maximum number of conversations processed concurrently."`
-	Tools          []string `name:"tool" help:"Selectable tool to expose; repeat to allow multiple tools (default: all)."`
+	Tools          []string `name:"tool" help:"Selectable tool to expose, as a bare name (k8s-get) or a configuring URL (k8s-get://?context=prod); repeat to allow multiple tools (default: all)."`
+	ToolURLs       []string `name:"tool-url" help:"Configuring tool URL (k8s-get://?context=prod) applied without restricting the exposed set; repeat to configure multiple tools."`
 	LogLevel       string   `name:"log-level" enum:"debug,info,warn,error" default:"info" help:"Log verbosity: debug, info, warn, or error."`
 	LogFormat      string   `name:"log-format" enum:"json,text" default:"json" help:"Log output format: json or text."`
 }
@@ -42,6 +43,12 @@ func (c *Cmd) run(ctx context.Context) (err error) {
 	tools := registry.Tool()
 	if len(c.Tools) != 0 {
 		tools, err = tools.Select(c.Tools...)
+		if err != nil {
+			return fmt.Errorf("server: configure tools: %w", err)
+		}
+	}
+	if len(c.ToolURLs) != 0 {
+		tools, err = tools.Configure(c.ToolURLs...)
 		if err != nil {
 			return fmt.Errorf("server: configure tools: %w", err)
 		}

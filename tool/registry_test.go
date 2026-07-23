@@ -83,13 +83,23 @@ func Test_Registry_Select(t *testing.T) {
 		want     []string
 		errMsg   string
 	}{
-		"filtered":   {selected: []string{"status"}, want: []string{"status"}},
-		"repeated":   {selected: []string{"status", "ping"}, want: []string{"ping", "status"}},
-		"duplicate":  {selected: []string{"ping", "ping"}, want: []string{"ping"}},
-		"mixed-case": {selected: []string{"PING"}, want: []string{"ping"}},
+		"filtered":     {selected: []string{"status"}, want: []string{"status"}},
+		"repeated":     {selected: []string{"status", "ping"}, want: []string{"ping", "status"}},
+		"duplicate":    {selected: []string{"ping", "ping"}, want: []string{"ping"}},
+		"mixed-case":   {selected: []string{"PING"}, want: []string{"ping"}},
+		"url-form":     {selected: []string{"status://?region=us-west"}, want: []string{"status"}},
+		"url-and-name": {selected: []string{"status://?x=1", "ping"}, want: []string{"ping", "status"}},
 		"invalid": {
 			selected: []string{"ping", "bogus"},
 			errMsg:   `tool: unknown tool "bogus"; available tools: ping, status`,
+		},
+		"invalid-url-scheme": {
+			selected: []string{"status://ok", "nope://x"},
+			errMsg:   `tool: unknown tool "nope"; available tools: ping, status`,
+		},
+		"unparseable": {
+			selected: []string{"://bad"},
+			errMsg:   "tool: parse tool selector",
 		},
 	}
 
@@ -98,13 +108,131 @@ func Test_Registry_Select(t *testing.T) {
 			selected, err := reg.Select(tc.selected...)
 			if tc.errMsg != "" {
 				require.Nil(t, selected)
-				require.EqualError(t, err, tc.errMsg)
+				require.ErrorContains(t, err, tc.errMsg)
 				return
 			}
 			require.NoError(t, err)
 			require.Equal(t, tc.want, selected.Schemes())
 		})
 	}
+}
+
+func Test_Registry_Select_configures_tool_url(t *testing.T) {
+	var gotURL *url.URL
+	reg := tool.NewRegistry(tool.Backend{
+		Scheme: "capture",
+		Opener: func(_ context.Context, u *url.URL, _ cred.Store) (tool.Tool, error) {
+			gotURL = u
+			return &fakeTool{}, nil
+		},
+		Descriptor: stubDesc(),
+	})
+
+	t.Run("url form supplies operator config to the opener", func(t *testing.T) {
+		gotURL = nil
+		selected, err := reg.Select("capture://?context=chatops&namespace=web")
+		require.NoError(t, err)
+
+		// The planner emits a bare scheme URL; the operator-configured URL
+		// replaces it for that scheme.
+		_, err = selected.Open(context.Background(), "capture://", nil)
+		require.NoError(t, err)
+		require.Equal(t, "chatops", gotURL.Query().Get("context"))
+		require.Equal(t, "web", gotURL.Query().Get("namespace"))
+	})
+
+	t.Run("bare name leaves the caller URL untouched", func(t *testing.T) {
+		gotURL = nil
+		selected, err := reg.Select("capture")
+		require.NoError(t, err)
+
+		_, err = selected.Open(context.Background(), "capture://host/path?region=us-west", nil)
+		require.NoError(t, err)
+		require.Equal(t, "host", gotURL.Host)
+		require.Equal(t, "us-west", gotURL.Query().Get("region"))
+	})
+}
+
+func Test_Registry_Configure(t *testing.T) {
+	var gotURL *url.URL
+	reg := tool.NewRegistry(
+		tool.Backend{
+			Scheme: "capture",
+			Opener: func(_ context.Context, u *url.URL, _ cred.Store) (tool.Tool, error) {
+				gotURL = u
+				return &fakeTool{}, nil
+			},
+			Descriptor: stubDesc(),
+		},
+		tool.Backend{Scheme: "other", Opener: fakeOpener(&fakeTool{}, nil), Descriptor: stubDesc()},
+	)
+
+	t.Run("configures a tool without restricting the exposed set", func(t *testing.T) {
+		gotURL = nil
+		configured, err := reg.Configure("capture://?context=prod")
+		require.NoError(t, err)
+
+		// Both tools remain exposed; only capture gained configuration.
+		require.Equal(t, []string{"capture", "other"}, configured.Schemes())
+		_, err = configured.Open(context.Background(), "capture://", nil)
+		require.NoError(t, err)
+		require.Equal(t, "prod", gotURL.Query().Get("context"))
+		_, err = configured.Open(context.Background(), "other://", nil)
+		require.NoError(t, err)
+	})
+
+	t.Run("later URL overrides an earlier one for the same tool", func(t *testing.T) {
+		gotURL = nil
+		configured, err := reg.Configure("capture://?context=a", "capture://?context=b")
+		require.NoError(t, err)
+		_, err = configured.Open(context.Background(), "capture://", nil)
+		require.NoError(t, err)
+		require.Equal(t, "b", gotURL.Query().Get("context"))
+	})
+
+	t.Run("does not mutate the source registry", func(t *testing.T) {
+		gotURL = nil
+		_, err := reg.Configure("capture://?context=prod")
+		require.NoError(t, err)
+		_, err = reg.Open(context.Background(), "capture://", nil)
+		require.NoError(t, err)
+		require.Empty(t, gotURL.Query().Get("context"))
+	})
+
+	testCases := map[string]struct {
+		args   []string
+		errMsg string
+	}{
+		"bare name":        {args: []string{"capture"}, errMsg: `tool: "capture" is not a tool URL`},
+		"unexposed scheme": {args: []string{"nope://?x=1"}, errMsg: `tool: cannot configure unexposed tool "nope"; available tools: capture, other`},
+		"unparseable":      {args: []string{"://bad"}, errMsg: "tool: parse tool selector"},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			configured, err := reg.Configure(tc.args...)
+			require.Nil(t, configured)
+			require.ErrorContains(t, err, tc.errMsg)
+		})
+	}
+}
+
+func Test_Registry_Select_then_Configure(t *testing.T) {
+	reg := tool.NewRegistry(
+		tool.Backend{Scheme: "ping", Opener: fakeOpener(&fakeTool{}, nil), Descriptor: stubDesc()},
+		tool.Backend{Scheme: "status", Opener: fakeOpener(&fakeTool{}, nil), Descriptor: stubDesc()},
+	)
+
+	selected, err := reg.Select("status")
+	require.NoError(t, err)
+
+	// Configuring a tool the allowlist excludes is rejected.
+	_, err = selected.Configure("ping://?x=1")
+	require.ErrorContains(t, err, `cannot configure unexposed tool "ping"`)
+
+	// Configuring an exposed tool preserves the allowlist.
+	configured, err := selected.Configure("status://?x=1")
+	require.NoError(t, err)
+	require.Equal(t, []string{"status"}, configured.Schemes())
 }
 
 func Test_Registry_normalizes_scheme_to_lowercase(t *testing.T) {

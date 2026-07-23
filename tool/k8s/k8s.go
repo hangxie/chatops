@@ -18,7 +18,6 @@
 //
 //	k8s-get://                             current context (or in-cluster)
 //	k8s-get://?context=prod                a named kubeconfig context
-//	k8s-get://?context=prod&namespace=web  a default namespace for calls
 //	k8s-get://?kubeconfig=/path/to/config  an explicit kubeconfig file
 //
 // # Secret safety
@@ -56,7 +55,6 @@ const (
 const (
 	queryContext    = "context"
 	queryKubeconfig = "kubeconfig"
-	queryNamespace  = "namespace"
 )
 
 // ListDescriptor and GetDescriptor are the tools' self-descriptions for
@@ -66,7 +64,7 @@ var (
 		Description: "List Kubernetes resources of one type in a namespace or across all namespaces (pods, deployments, CRDs, ...).",
 		Parameters: []tool.Param{
 			{Name: argKind, Type: "string", Required: true, Description: "Resource type: plural, singular, short name, or kind (e.g. pods, po, deployment, StatefulSet, CRD names)."},
-			{Name: argNamespace, Type: "string", Description: "Namespace to list; defaults to the configured namespace. Ignored for cluster-scoped types."},
+			{Name: argNamespace, Type: "string", Description: "Namespace to list; defaults to the context's default namespace. Ignored for cluster-scoped types."},
 			{Name: argAllNamespaces, Type: "boolean", Description: "List across all namespaces instead of one."},
 		},
 	}
@@ -75,7 +73,7 @@ var (
 		Parameters: []tool.Param{
 			{Name: argKind, Type: "string", Required: true, Description: "Resource type: plural, singular, short name, or kind (e.g. pod, statefulset, CRD names)."},
 			{Name: argName, Type: "string", Required: true, Description: "Resource name; pass several as a comma-separated list to fetch them together."},
-			{Name: argNamespace, Type: "string", Description: "Namespace of the resource; defaults to the configured namespace. Ignored for cluster-scoped types."},
+			{Name: argNamespace, Type: "string", Description: "Namespace of the resource; defaults to the context's default namespace. Ignored for cluster-scoped types."},
 			{Name: argOutput, Type: "string", Description: "Output format: brief (default, a summary with recent events), json, or yaml."},
 		},
 	}
@@ -119,7 +117,7 @@ func parseURL(u *url.URL) (clusterConfig, error) {
 	query := u.Query()
 	for key := range query {
 		switch key {
-		case queryContext, queryKubeconfig, queryNamespace:
+		case queryContext, queryKubeconfig:
 		default:
 			return clusterConfig{}, fmt.Errorf("k8s: unknown URL parameter %q", key)
 		}
@@ -127,6 +125,5 @@ func parseURL(u *url.URL) (clusterConfig, error) {
 	return clusterConfig{
 		kubeconfig: query.Get(queryKubeconfig),
 		context:    query.Get(queryContext),
-		namespace:  query.Get(queryNamespace),
 	}, nil
 }
