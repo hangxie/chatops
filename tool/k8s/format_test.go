@@ -9,7 +9,16 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"github.com/hangxie/chatops/tool"
 )
+
+func Test_validateOutput_unknownIsUserFacing(t *testing.T) {
+	require.NoError(t, validateOutput("json"))
+	err := validateOutput("xml")
+	_, ok := tool.UserMessage(err)
+	require.True(t, ok)
+}
 
 func Test_formatObjects_marshalError(t *testing.T) {
 	// A non-finite float cannot be encoded as JSON, and yaml goes through JSON.

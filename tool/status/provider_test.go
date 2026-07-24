@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hangxie/chatops/tool"
 )
 
 type fakeProvider struct {
@@ -245,4 +247,18 @@ func Test_mustChecker(t *testing.T) {
 	checker := &Checker{}
 	require.Same(t, checker, mustChecker(checker, nil))
 	require.Panics(t, func() { mustChecker(nil, errors.New("invalid catalog")) })
+}
+
+func Test_Checker_resolveUserFacingError(t *testing.T) {
+	checker, err := NewChecker([]Provider{
+		fakeProvider{name: "github", aliases: []string{"gh"}},
+		fakeProvider{name: "openai"},
+	})
+	require.NoError(t, err)
+
+	_, _, err = checker.resolve("missing")
+	msg, ok := tool.UserMessage(err)
+	require.True(t, ok)
+	require.Contains(t, msg, "github, openai")
+	require.ErrorIs(t, err, ErrUnknownProvider)
 }

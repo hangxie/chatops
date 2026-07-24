@@ -79,18 +79,21 @@ func Test_getTool_Invoke_errors(t *testing.T) {
 		},
 	}}
 	testCases := map[string]struct {
-		args   map[string]string
-		errMsg string
+		args       map[string]string
+		errMsg     string
+		userFacing bool
 	}{
-		"missing kind": {args: map[string]string{argName: "api"}, errMsg: "requires a kind"},
-		"missing name": {args: map[string]string{argKind: "pod"}, errMsg: "requires a name"},
-		"bad output":   {args: map[string]string{argKind: "pod", argName: "api", argOutput: "toml"}, errMsg: "unknown output"},
+		"missing kind": {args: map[string]string{argName: "api"}, errMsg: "requires a kind", userFacing: true},
+		"missing name": {args: map[string]string{argKind: "pod"}, errMsg: "requires a name", userFacing: true},
+		"bad output":   {args: map[string]string{argKind: "pod", argName: "api", argOutput: "toml"}, errMsg: "unknown output", userFacing: true},
 		"client error": {args: map[string]string{argKind: "pod", argName: "api"}, errMsg: "boom"},
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			_, err := tl.Invoke(context.Background(), tool.Call{Arguments: tc.args})
 			require.ErrorContains(t, err, tc.errMsg)
+			_, ok := tool.UserMessage(err)
+			require.Equal(t, tc.userFacing, ok)
 		})
 	}
 }

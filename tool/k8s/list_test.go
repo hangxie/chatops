@@ -74,13 +74,14 @@ func Test_listTool_Invoke_output(t *testing.T) {
 
 func Test_listTool_Invoke_errors(t *testing.T) {
 	testCases := map[string]struct {
-		args   map[string]string
-		listFn func(context.Context, string, string, bool) (*unstructured.UnstructuredList, *meta.RESTMapping, error)
-		errMsg string
+		args       map[string]string
+		listFn     func(context.Context, string, string, bool) (*unstructured.UnstructuredList, *meta.RESTMapping, error)
+		errMsg     string
+		userFacing bool
 	}{
-		"missing kind": {args: map[string]string{}, errMsg: "requires a kind"},
-		"bad bool":     {args: map[string]string{argKind: "pods", argAllNamespaces: "maybe"}, errMsg: "invalid boolean"},
-		"bad output":   {args: map[string]string{argKind: "pods", argOutput: "xml"}, errMsg: "unknown output"},
+		"missing kind": {args: map[string]string{}, errMsg: "requires a kind", userFacing: true},
+		"bad bool":     {args: map[string]string{argKind: "pods", argAllNamespaces: "maybe"}, errMsg: "invalid boolean", userFacing: true},
+		"bad output":   {args: map[string]string{argKind: "pods", argOutput: "xml"}, errMsg: "unknown output", userFacing: true},
 		"client error": {
 			args: map[string]string{argKind: "pods"},
 			listFn: func(context.Context, string, string, bool) (*unstructured.UnstructuredList, *meta.RESTMapping, error) {
@@ -94,6 +95,8 @@ func Test_listTool_Invoke_errors(t *testing.T) {
 			tl := &listTool{client: &fakeClient{listFn: tc.listFn}}
 			_, err := tl.Invoke(context.Background(), tool.Call{Arguments: tc.args})
 			require.ErrorContains(t, err, tc.errMsg)
+			_, ok := tool.UserMessage(err)
+			require.Equal(t, tc.userFacing, ok)
 		})
 	}
 }

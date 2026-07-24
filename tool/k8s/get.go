@@ -2,7 +2,6 @@ package k8s
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -25,11 +24,11 @@ func (t *getTool) Invoke(ctx context.Context, call tool.Call) (tool.Result, erro
 	}
 	kind := strings.TrimSpace(call.Arguments[argKind])
 	if kind == "" {
-		return tool.Result{}, errors.New("k8s: get requires a kind")
+		return tool.Result{}, tool.NewUserError("k8s: get requires a kind")
 	}
 	names := splitNames(call.Arguments[argName])
 	if len(names) == 0 {
-		return tool.Result{}, errors.New("k8s: get requires a name")
+		return tool.Result{}, tool.NewUserError("k8s: get requires a name")
 	}
 	output := strings.ToLower(strings.TrimSpace(call.Arguments[argOutput]))
 	if err := validateOutput(output); err != nil {

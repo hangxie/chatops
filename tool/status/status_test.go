@@ -190,3 +190,46 @@ func Test_healthLabel_and_displayName(t *testing.T) {
 	}
 	require.Equal(t, "custom", displayName("custom"))
 }
+
+func Test_checkTool_userFacingErrors(t *testing.T) {
+	checker, err := NewChecker([]Provider{
+		fakeProvider{name: "github", snap: Snapshot{Health: HealthOperational}},
+		fakeProvider{name: "openai", snap: Snapshot{Health: HealthOperational}},
+	})
+	require.NoError(t, err)
+	tl := openCheck(t, checker)
+
+	t.Run("missing service is user-facing", func(t *testing.T) {
+		_, err := tl.Invoke(context.Background(), tool.Call{})
+		msg, ok := tool.UserMessage(err)
+		require.True(t, ok)
+		require.Contains(t, msg, "requires a service")
+	})
+
+	t.Run("unknown service names the supported services", func(t *testing.T) {
+		_, err := tl.Invoke(context.Background(), tool.Call{Arguments: map[string]string{serviceParam: "missing"}})
+		msg, ok := tool.UserMessage(err)
+		require.True(t, ok)
+		require.Contains(t, msg, `"missing"`)
+		require.Contains(t, msg, "github, openai")
+		require.NotContains(t, msg, ErrUnknownProvider.Error())
+	})
+
+	t.Run("cancellation stays internal", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := tl.Invoke(ctx, tool.Call{Arguments: map[string]string{serviceParam: "github"}})
+		_, ok := tool.UserMessage(err)
+		require.False(t, ok)
+	})
+}
+
+func Test_listTool_cancellationStaysInternal(t *testing.T) {
+	checker, err := NewChecker([]Provider{fakeProvider{name: "github"}})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = openList(t, checker).Invoke(ctx, tool.Call{})
+	_, ok := tool.UserMessage(err)
+	require.False(t, ok)
+}

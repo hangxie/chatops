@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hangxie/chatops/tool"
 )
 
 // ErrUnknownProvider identifies a target that is not in the provider catalog.
@@ -156,13 +158,17 @@ func (c *Checker) Check(ctx context.Context, target string) ([]Snapshot, error) 
 	return snapshots, nil
 }
 
+// resolve maps a target (canonical name or alias) to its provider. An
+// unmatched target is the requester's mistake, so it yields a chat-safe
+// tool.UserError naming the services on offer, letting the model retry with a
+// valid one; ErrUnknownProvider stays in the chain for errors.Is.
 func (c *Checker) resolve(target string) (string, Provider, error) {
 	if canonical, ok := c.aliases[target]; ok {
 		target = canonical
 	}
 	provider, ok := c.providers[target]
 	if !ok {
-		return "", nil, fmt.Errorf("status: %q: %w", target, ErrUnknownProvider)
+		return "", nil, tool.WrapUserError(ErrUnknownProvider, "status: unknown service %q; supported: %s", target, strings.Join(c.names, ", "))
 	}
 	return target, provider, nil
 }

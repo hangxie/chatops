@@ -10,6 +10,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
+
+	"github.com/hangxie/chatops/tool"
 )
 
 // output formats a get tool understands.
@@ -30,7 +32,7 @@ func validateOutput(output string) error {
 	case outputBrief, outputJSON, outputYAML, "":
 		return nil
 	default:
-		return fmt.Errorf("k8s: unknown output %q; want brief, json, or yaml", output)
+		return tool.NewUserError("k8s: unknown output %q; want brief, json, or yaml", output)
 	}
 }
 
@@ -50,7 +52,7 @@ func formatObjects(objs []*unstructured.Unstructured, events [][]eventInfo, outp
 		}
 		return strings.Join(parts, "\n\n"), nil
 	default:
-		return "", fmt.Errorf("k8s: unknown output %q; want brief, json, or yaml", output)
+		return "", tool.NewUserError("k8s: unknown output %q; want brief, json, or yaml", output)
 	}
 }
 

@@ -2,17 +2,19 @@ package k8s
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+
+	"github.com/hangxie/chatops/tool"
 )
 
 // resourceClient is the cluster access the tools depend on; cluster is the
@@ -63,7 +65,7 @@ var eventsGVR = schema.GroupVersionResource{Version: "v1", Resource: "events"}
 func (c *cluster) mappingFor(resourceOrKind string) (*meta.RESTMapping, error) {
 	arg := strings.TrimSpace(resourceOrKind)
 	if arg == "" {
-		return nil, errors.New("k8s: resource kind is required")
+		return nil, tool.NewUserError("k8s: resource kind is required")
 	}
 
 	mapping, err := c.resolveMapping(arg)
@@ -73,7 +75,7 @@ func (c *cluster) mappingFor(resourceOrKind string) (*meta.RESTMapping, error) {
 	}
 	if err != nil {
 		if meta.IsNoMatchError(err) {
-			return nil, fmt.Errorf("k8s: server has no resource type %q", arg)
+			return nil, tool.NewUserError("k8s: server has no resource type %q", arg)
 		}
 		return nil, fmt.Errorf("k8s: resolve resource type %q: %w", arg, err)
 	}
@@ -143,7 +145,7 @@ func (c *cluster) list(ctx context.Context, kind, namespace string, allNamespace
 	ns := c.namespaceFor(mapping, namespace)
 	list, err := c.resourceInterface(mapping, ns, allNamespaces).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("k8s: list %s: %w", mapping.Resource.Resource, err)
+		return nil, nil, safeAPIError(err, "list", mapping.Resource.Resource, "")
 	}
 	return list, mapping, nil
 }
@@ -156,9 +158,26 @@ func (c *cluster) get(ctx context.Context, kind, namespace, name string) (*unstr
 	ns := c.namespaceFor(mapping, namespace)
 	obj, err := c.resourceInterface(mapping, ns, false).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("k8s: get %s/%s: %w", mapping.Resource.Resource, name, err)
+		return nil, nil, safeAPIError(err, "get", mapping.Resource.Resource, name)
 	}
 	return obj, mapping, nil
+}
+
+// safeAPIError maps the common actionable Kubernetes API failures — a missing
+// object or a permission denial — to a chat-safe tool.UserError the model can
+// recover from, and wraps anything else as an internal error whose detail stays
+// out of chat. name is empty for a list.
+func safeAPIError(err error, verb, resource, name string) error {
+	switch {
+	case apierrors.IsNotFound(err) && name != "":
+		return tool.NewUserError("k8s: %s %q not found", resource, name)
+	case apierrors.IsForbidden(err):
+		return tool.NewUserError("k8s: not authorized to %s %s", verb, resource)
+	case name != "":
+		return fmt.Errorf("k8s: %s %s/%s: %w", verb, resource, name, err)
+	default:
+		return fmt.Errorf("k8s: %s %s: %w", verb, resource, err)
+	}
 }
 
 // events lists the events referencing obj, matched by involved-object UID and
