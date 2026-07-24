@@ -40,6 +40,21 @@ type Config struct {
 	// Zero uses DefaultMaxConcurrency.
 	MaxConcurrency int
 
+	// MaxToolRounds bounds the number of tool-execution rounds in one turn's
+	// agentic loop before the engine forces a final summarizing plan. Zero
+	// uses DefaultMaxToolRounds.
+	MaxToolRounds int
+
+	// MaxResultBytes bounds the canonical content of a single fed-back tool
+	// result; larger content is truncated with a marker. Zero uses
+	// DefaultMaxResultBytes.
+	MaxResultBytes int
+
+	// MaxTurnBytes bounds the cumulative fed-back content across one turn
+	// before the engine forces a final summarizing plan. Zero uses
+	// DefaultMaxTurnBytes.
+	MaxTurnBytes int
+
 	// Logger receives structured records describing message handling — how
 	// each message is planned and how each plan step is executed against the
 	// tools. A nil Logger discards all records.
@@ -53,6 +68,17 @@ const (
 
 	// MaximumMaxConcurrency bounds the number of Engine worker goroutines.
 	MaximumMaxConcurrency = 256
+
+	// DefaultMaxToolRounds is the default number of tool-execution rounds a
+	// turn may run before the engine forces a final summarizing plan.
+	DefaultMaxToolRounds = 6
+
+	// DefaultMaxResultBytes is the default per-result cap on fed-back content.
+	DefaultMaxResultBytes = 16 * 1024
+
+	// DefaultMaxTurnBytes is the default per-turn cap on cumulative fed-back
+	// content.
+	DefaultMaxTurnBytes = 128 * 1024
 )
 
 // Engine is a single-chat-connection message processing service.
@@ -64,6 +90,9 @@ type Engine struct {
 	credentials    cred.Store
 	reply          tool.Tool
 	maxConcurrency int
+	maxToolRounds  int
+	maxResultBytes int
+	maxTurnBytes   int
 	logger         *slog.Logger
 
 	mu       sync.Mutex
@@ -93,9 +122,30 @@ func New(config Config) (*Engine, error) {
 	if config.MaxConcurrency > MaximumMaxConcurrency {
 		return nil, fmt.Errorf("engine: maximum concurrency exceeds %d", MaximumMaxConcurrency)
 	}
+	if config.MaxToolRounds < 0 {
+		return nil, errors.New("engine: negative maximum tool rounds")
+	}
+	if config.MaxResultBytes < 0 {
+		return nil, errors.New("engine: negative maximum result bytes")
+	}
+	if config.MaxTurnBytes < 0 {
+		return nil, errors.New("engine: negative maximum turn bytes")
+	}
 	maxConcurrency := config.MaxConcurrency
 	if maxConcurrency == 0 {
 		maxConcurrency = DefaultMaxConcurrency
+	}
+	maxToolRounds := config.MaxToolRounds
+	if maxToolRounds == 0 {
+		maxToolRounds = DefaultMaxToolRounds
+	}
+	maxResultBytes := config.MaxResultBytes
+	if maxResultBytes == 0 {
+		maxResultBytes = DefaultMaxResultBytes
+	}
+	maxTurnBytes := config.MaxTurnBytes
+	if maxTurnBytes == 0 {
+		maxTurnBytes = DefaultMaxTurnBytes
 	}
 	// Open can only reject a nil connection, which was checked above.
 	replyTool, _ := reply.Open(context.Background(), config.Chat)
@@ -111,6 +161,9 @@ func New(config Config) (*Engine, error) {
 		credentials:    config.Credentials,
 		reply:          replyTool,
 		maxConcurrency: maxConcurrency,
+		maxToolRounds:  maxToolRounds,
+		maxResultBytes: maxResultBytes,
+		maxTurnBytes:   maxTurnBytes,
 		logger:         logger,
 	}, nil
 }
