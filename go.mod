@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/alecthomas/kong v1.16.0
-	github.com/slack-go/slack v0.21.0
+	github.com/slack-go/slack v0.27.0
 	github.com/stretchr/testify v1.11.1
 	k8s.io/apimachinery v0.36.3
 	k8s.io/client-go v0.36.3
