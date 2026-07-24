@@ -56,6 +56,10 @@ func Test_boundContent(t *testing.T) {
 		require.True(t, utf8.ValidString(got), "result must be valid UTF-8")
 	})
 
+	t.Run("boundary at or past the end returns the whole string", func(t *testing.T) {
+		require.Equal(t, 3, runeBoundary("abc", 5))
+	})
+
 	t.Run("limit too small for a marker hard-cuts on a rune boundary", func(t *testing.T) {
 		s := strings.Repeat("€", 50) // 150 bytes
 		got := boundContent(s, 10)

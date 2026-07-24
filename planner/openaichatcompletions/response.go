@@ -12,47 +12,74 @@ import (
 	"github.com/hangxie/chatops/tool/reply"
 )
 
-// stepsFromMessage maps one assistant message to plan steps: prose and reply
-// calls become reply steps into conv, other tool calls become "<scheme>://"
-// steps. Model output is untrusted, so each call is resolved via funcs and
-// validated before a step is produced. It errors on bad JSON, an unavailable
-// function, empty reply text, or invalid arguments.
-func stepsFromMessage(msg respMessage, funcs map[string]toolFunc) (planner.Plan, error) {
+// stepsFromMessage maps one assistant message to plan steps and returns the
+// message's tool calls with their ids normalized. Prose and reply calls become
+// reply steps; operational tool calls become feedback "<scheme>://" steps whose
+// result the engine feeds back. Model output is untrusted, so each call is
+// resolved via funcs and validated before a step is produced. Every tool call
+// is given a non-empty, message-unique id (generated when the provider omitted
+// one), patched into both the returned calls and the step, so a later
+// tool-result message references an id that appears in the stored assistant
+// message. It errors on bad JSON, an unavailable function, empty reply text, or
+// invalid arguments.
+func stepsFromMessage(msg respMessage, funcs map[string]toolFunc) (planner.Plan, []toolCall, error) {
 	var steps []planner.Step
 	if text := strings.TrimSpace(msg.Content); text != "" {
-		steps = append(steps, replyStep(text, nil))
+		steps = append(steps, replyStep(text, "", nil))
 	}
-	for _, call := range msg.ToolCalls {
+	calls := make([]toolCall, 0, len(msg.ToolCalls))
+	seen := make(map[string]bool, len(msg.ToolCalls))
+	for i, call := range msg.ToolCalls {
+		call.ID = uniqueID(call.ID, i, seen)
+		calls = append(calls, call)
+
 		// A typed function may declare non-string scalars, so arguments
 		// decode as raw JSON and are stringified later (see paramsToStrings).
 		var args map[string]json.RawMessage
 		if raw := call.Function.Arguments; raw != "" {
 			if err := json.Unmarshal([]byte(raw), &args); err != nil {
-				return planner.Plan{}, fmt.Errorf("openai: decode arguments for %q: %w", call.Function.Name, err)
+				return planner.Plan{}, nil, fmt.Errorf("openai: decode arguments for %q: %w", call.Function.Name, err)
 			}
 		}
 		name := call.Function.Name
 		if name == replyFunc {
 			text := stringArg(args["text"])
 			if strings.TrimSpace(text) == "" {
-				return planner.Plan{}, fmt.Errorf("openai: reply call has empty text")
+				return planner.Plan{}, nil, fmt.Errorf("openai: reply call has empty text")
 			}
-			steps = append(steps, replyStep(text, nil))
+			steps = append(steps, replyStep(text, call.ID, nil))
 			continue
 		}
 		tf, ok := funcs[name]
 		if !ok {
-			return planner.Plan{}, fmt.Errorf("openai: completion called unavailable function %q", name)
+			return planner.Plan{}, nil, fmt.Errorf("openai: completion called unavailable function %q", name)
 		}
 		if err := validateArgs(name, tf.params, args); err != nil {
-			return planner.Plan{}, err
+			return planner.Plan{}, nil, err
 		}
 		steps = append(steps, planner.Step{
-			Tool: tf.scheme + "://",
-			Call: tool.Call{Arguments: paramsToStrings(tf.params, args)},
+			Tool:     tf.scheme + "://",
+			Call:     tool.Call{Arguments: paramsToStrings(tf.params, args)},
+			Feedback: true,
+			ID:       call.ID,
 		})
 	}
-	return planner.Plan{Steps: steps}, nil
+	return planner.Plan{Steps: steps}, calls, nil
+}
+
+// uniqueID returns a non-empty id unique within one assistant message: it
+// generates one from index when the provider omitted the id, disambiguates a
+// duplicate, and records the result in seen.
+func uniqueID(id string, index int, seen map[string]bool) string {
+	if id == "" {
+		id = fmt.Sprintf("call_%d", index)
+	}
+	base := id
+	for n := 1; seen[id]; n++ {
+		id = fmt.Sprintf("%s_%d", base, n)
+	}
+	seen[id] = true
+	return id
 }
 
 // validateArgs rejects a tool call whose arguments violate the tool's flat
@@ -192,11 +219,13 @@ func paramsToStrings(params []tool.Param, raw map[string]json.RawMessage) map[st
 }
 
 // replyStep is a step posting text back to the requester through the reply
-// tool, mirroring the shape the ping planner emits. The target conversation
-// is injected by the executor, so the step carries only the text and any
-// interactive choices.
-func replyStep(text string, choices []tool.Choice) planner.Step {
-	return planner.Step{Tool: reply.URL, Call: tool.Call{
+// tool, mirroring the shape the ping planner emits. The target conversation is
+// injected by the executor, so the step carries only the text and any
+// interactive choices. id is the provider tool-call id when the reply came from
+// a reply function call (so the transcript can synthesize its result) and empty
+// for an assistant-prose reply.
+func replyStep(text, id string, choices []tool.Choice) planner.Step {
+	return planner.Step{Tool: reply.URL, ID: id, Call: tool.Call{
 		Arguments: map[string]string{"text": text},
 		Choices:   choices,
 	}}

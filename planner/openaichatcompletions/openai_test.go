@@ -206,11 +206,11 @@ func Test_Plan_maps_completion_to_steps(t *testing.T) {
 	plan, err := p.Plan(context.Background(), planner.Request{Text: "is github up?", ConversationID: "C1"})
 	require.NoError(t, err)
 
-	// The reply step carries only the text; the executor injects the target
-	// conversation.
+	// The prose reply carries only text; the operational call is a feedback
+	// step with a normalized id, so its result is fed back next round.
 	require.Equal(t, []planner.Step{
 		{Tool: reply.URL, Call: tool.Call{Arguments: map[string]string{"text": "checking now"}}},
-		{Tool: "status-check://", Call: tool.Call{Arguments: map[string]string{"service": "github"}}},
+		{Tool: "status-check://", Feedback: true, ID: "call_0", Call: tool.Call{Arguments: map[string]string{"service": "github"}}},
 	}, plan.Steps)
 
 	// The request carried the model, the enabled tool functions, and the key.
