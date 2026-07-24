@@ -190,7 +190,7 @@ chatops server --chat telnet://localhost:6023 \
     --tool ping --tool status-check --tool status-list
 ```
 
-The exchange is single-shot: tool results are not fed back to the model, and the planner keeps no per-conversation history yet.
+The planner runs an agentic loop: after a tool runs, its result is fed back to the model, which can call more tools, filter or summarize what it found, and then reply — so a request like "show the degraded apps in argocd" is answered rather than dumped raw. The loop is bounded (a maximum number of tool rounds and a cap on fed-back size, after which the model is asked to summarize with what it has), and the in-flight conversation state is kept only for the duration of one request. A fixed planner such as `ping` is unaffected: its steps post directly, exactly as before.
 
 ### Service status tool
 
