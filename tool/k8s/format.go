@@ -140,10 +140,11 @@ func writeEvents(b *strings.Builder, events []eventInfo) {
 	}
 }
 
-// formatList renders a list as an aligned table. Columns are NAME and AGE, with
-// NAMESPACE prepended across namespaces and STATUS appended when any item
-// carries a status phase, so the view works for any resource type including
-// CRDs.
+// formatList renders a list as an aligned table. NAME and AGE always show, with
+// NAMESPACE prepended across namespaces; between them sit the per-kind value
+// columns (kubectl-style READY/STATUS/RESTARTS for pods, READY/UP-TO-DATE/
+// AVAILABLE for deployments, a status column otherwise), dropping any column
+// that is empty for every item so the view still fits arbitrary CRDs.
 func formatList(list *unstructured.UnstructuredList, mapping *meta.RESTMapping, allNamespaces bool) string {
 	kind := mapping.Resource.Resource
 	if len(list.Items) == 0 {
@@ -152,16 +153,17 @@ func formatList(list *unstructured.UnstructuredList, mapping *meta.RESTMapping, 
 
 	namespaced := mapping.Scope.Name() == meta.RESTScopeNameNamespace
 	showNamespace := namespaced && allNamespaces
-	showStatus := listHasStatus(list)
+	cols := dropEmptyColumns(valueColumns(mapping), list)
 
 	header := []string{}
 	if showNamespace {
 		header = append(header, "NAMESPACE")
 	}
-	header = append(header, "NAME", "AGE")
-	if showStatus {
-		header = append(header, "STATUS")
+	header = append(header, "NAME")
+	for _, col := range cols {
+		header = append(header, col.name)
 	}
+	header = append(header, "AGE")
 
 	rows := [][]string{header}
 	for i := range list.Items {
@@ -170,23 +172,14 @@ func formatList(list *unstructured.UnstructuredList, mapping *meta.RESTMapping, 
 		if showNamespace {
 			row = append(row, item.GetNamespace())
 		}
-		row = append(row, item.GetName(), itemAge(item))
-		if showStatus {
-			phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
-			row = append(row, phase)
+		row = append(row, item.GetName())
+		for _, col := range cols {
+			row = append(row, col.value(item))
 		}
+		row = append(row, itemAge(item))
 		rows = append(rows, row)
 	}
 	return renderTable(rows)
-}
-
-func listHasStatus(list *unstructured.UnstructuredList) bool {
-	for i := range list.Items {
-		if phase, found, _ := unstructured.NestedString(list.Items[i].Object, "status", "phase"); found && phase != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func itemAge(obj *unstructured.Unstructured) string {

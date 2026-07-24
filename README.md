@@ -251,12 +251,21 @@ KUBECONFIG=/etc/chatops/kubeconfig
 
 #### Listing and getting
 
-`k8s-list://` reads these arguments: `kind` (required), `namespace` (optional; defaults to the context's default namespace and is ignored for cluster-scoped types), and `all-namespaces` (optional boolean, listing across every namespace). The result is an aligned table of name and age, prefixed with the namespace across namespaces and suffixed with a status column when the type reports one:
+`k8s-list://` reads these arguments: `kind` (required), `namespace` (optional; defaults to the context's default namespace and is ignored for cluster-scoped types), `all-namespaces` (optional boolean, listing across every namespace), and `output` (optional: `table`, `json`, or `yaml`). The default `table` output is an aligned table of name and age, prefixed with the namespace across namespaces, with per-kind value columns in between: `READY STATUS RESTARTS` for pods, `READY UP-TO-DATE AVAILABLE` for deployments, and a single `STATUS` column otherwise. The status column reads a resource's `status.phase` and falls back to `status.health.status`, so CRDs such as Argo CD Applications report health without a bespoke column. A column that is empty for every listed item is dropped, so the view stays compact for arbitrary CRDs. Any column whose values are missing is omitted, so listing "apps in the argocd namespace with status" surfaces each Application's health directly:
 
 ```go
 planner.Step{
     Tool: "k8s-list://",
-    Call: tool.Call{Arguments: map[string]string{"kind": "pods", "namespace": "web"}},
+    Call: tool.Call{Arguments: map[string]string{"kind": "applications", "namespace": "argocd"}},
+}
+```
+
+`json` and `yaml` emit the full manifests of every listed item instead of the table, so a caller (or an LLM planner) can project or filter on any field — restart times, replica gaps, readiness — rather than only the built-in columns. Secret values are masked in these formats exactly as they are for `k8s-get://`:
+
+```go
+planner.Step{
+    Tool: "k8s-list://",
+    Call: tool.Call{Arguments: map[string]string{"kind": "deployments", "namespace": "web", "output": "json"}},
 }
 ```
 
