@@ -44,6 +44,16 @@ This document defines expectations for contributors to the chatops Go project.
 
 ---
 
+## Agent Response Style
+
+Applies to what a coding agent writes back in chat, not to code or committed docs.
+
+- Match reply length to the ask; skip preamble, recaps of work just shown, and offers of further help.
+- Do not paste back file contents, diffs, or command output the tools already displayed; report `make all` as pass/fail with failing output only.
+- Do not create summary or hand-off Markdown files unless asked; `TODO.md` is the only tracking file.
+
+---
+
 ## Contribution Workflow Norms
 
 - **Always commit after completing a task.** Once `make all` passes, create a commit immediately — do not wait to be asked.
