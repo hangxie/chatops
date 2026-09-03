@@ -113,7 +113,7 @@ func (t *checkTool) Invoke(ctx context.Context, call tool.Call) (tool.Result, er
 	}
 	service := strings.TrimSpace(call.Arguments[serviceParam])
 	if service == "" {
-		return tool.Result{}, errors.New("status: check requires a service")
+		return tool.Result{}, tool.NewUserError("status: check requires a service")
 	}
 	snapshots, err := t.checker.Check(ctx, service)
 	if err != nil {

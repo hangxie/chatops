@@ -4,30 +4,38 @@ This guide describes the internal packages and how to add credential stores, cha
 
 ## Engine (`engine`)
 
-The `engine` package joins the component interfaces into the server loop. It receives messages from one `chat.Conn`, passes each message and its connection metadata to a `planner.Planner`, executes the returned tool steps in order, and sends every non-empty tool result back to the originating conversation. A planner asks for clarification or confirmation by returning a `reply://` step, so multi-message interaction state stays in the planner instead of the engine.
+The `engine` package joins the component interfaces into the server loop. It receives messages from one `chat.Conn` and drives an **agentic loop** for each: it asks the `planner.Planner` for a plan, executes the steps, feeds the results of feedback steps back to the planner, and re-plans — until a round produces no feedback step. Reply steps and fire-and-post tool results are posted to the originating conversation as they occur. A planner asks for clarification or confirmation by returning a `reply://` step, so multi-message interaction state stays in the planner instead of the engine.
 
-End to end, one chat request flows through the components like this (using "show apps in the argocd namespace with status" as the example):
+End to end, one chat request flows through the components like this:
 
 ```mermaid
 sequenceDiagram
     actor User
     participant Engine
     participant Planner as Planner (LLM)
-    participant Tool as Tool (k8s-list)
+    participant Tool
 
-    User->>Engine: "show apps in argocd with status"
-    Engine->>Planner: Plan(Request{text, conversation, sender})
-    Note over Planner: interprets intent, selects a tool<br/>and its arguments (kind, namespace,<br/>output) — but does not run it
-    Planner-->>Engine: Plan{Steps: [k8s-list kind=applications namespace=argocd]}
-    loop each step, in order
-        Engine->>Tool: Open(url), then Invoke(Call{Arguments})
-        Note over Tool: faithful reader: query the cluster,<br/>render table/json, mask secrets
-        Tool-->>Engine: Result{Text}
-        Engine->>User: post Result.Text into the conversation
+    User->>Engine: chat message
+    Engine->>Planner: Plan(Request{text})
+
+    loop each round
+        Planner-->>Engine: Plan{Steps}: replies + tool calls (feedback calls carry a unique Step.ID)
+        Engine->>User: post any reply steps immediately
+        break round has no feedback step
+            Note over Engine,User: final answer or question — turn ends
+        end
+        Engine->>Tool: Open + Invoke(Call) per tool step
+        Note over Engine,Tool: UserError → feed back for retry, else generic notice and abort
+        Tool-->>Engine: Result
+        Engine->>Planner: Plan(Request{Results: [{Step.ID, Content}]})
     end
+
+    Note over Engine,User: after MaxToolRounds execution rounds (or a MaxTurnBytes breach),<br/>a final plan runs with Final set and no tools offered, so the model summarizes
 ```
 
-The exchange is currently **single-shot**: the planner interprets the request and chooses each tool and its arguments up front, but the tool's result is not fed back to the model (see the [openai-chat-completions planner](#openai-chat-completions-planner)). That already answers anything the tool renders directly — the STATUS column above, a namespace scope, an `output=json` dump of raw data to the requester. Interpreting the *results* — "only the degraded apps", "pods that restarted recently" — is the planner's job by design (see [a faithful reader/actor](#tools-tool), below): it lands when the planner grows an agentic loop that feeds a step's `Result` back so the model can filter and summarize before replying. The `output=json` mode exists so that loop has structured data to reason over rather than re-parsing a table.
+Each round the engine handles a plan's steps by kind: a **reply** step posts to chat immediately; a **feedback** tool step (`Step.Feedback` true) has its result collected — rendered to a canonical, byte-bounded `StepResult.Content` — and fed back to the planner rather than posted; a **fire-and-post** tool step (the zero value) has its `Result.Text` posted directly, the single-shot behavior that keeps fixed planners such as `ping` unchanged. A round with no feedback step ends the turn. This is what lets the model interpret tool output — filter, compute over, summarize — for any tool, keeping the tool a faithful reader (see [Tools](#tools-tool)) and the interpretation in the planner; `output=json` on a tool such as `k8s-list` gives that loop structured data to reason over.
+
+The loop is bounded. `Config.MaxToolRounds` caps tool-execution rounds, and `Config.MaxResultBytes`/`Config.MaxTurnBytes` cap fed-back content; on the last permitted round, or a per-turn byte breach, the engine makes one final planning call with `Request.Final` set so the planner summarizes with no further tools offered. A feedback step's `tool.UserError` is fed back so the model can correct itself (bounded by the round cap); any other tool error is fatal to the turn. When a turn ends — normally or on an abort — the engine calls `EndTurn` on a planner that implements `planner.TurnCloser`, so it can drop the in-flight transcript. Because the transcript is keyed by `(ConnectionID, ConversationID)` with no turn id, the loop relies on the scheduler admitting one message per conversation at a time.
 
 ```go
 e, err := engine.New(engine.Config{
@@ -45,7 +53,7 @@ if err := e.Run(ctx); err != nil {
 }
 ```
 
-`Run` preserves message order within each conversation while processing independent conversations concurrently through a fixed-size worker pool. The pool and its bounded backlog prevent messages from creating unbounded worker goroutines; `Config.MaxConcurrency` controls the worker count and defaults to `engine.DefaultMaxConcurrency`. The engine is deliberately fail-fast: a planner, tool step, or result-delivery failure stops the server and returns the error to its caller instead of continuing with potentially incomplete work. A panic from a planner or tool is recovered at the message boundary and returned as a processing error so cleanup can finish. Context cancellation and a connection deliberately closed through `chat.Conn.Close` are graceful outcomes. A remote disconnect such as telnet EOF is a connection failure and is returned, allowing the caller or service supervisor to decide whether to reconnect or restart.
+`Run` preserves message order within each conversation while processing independent conversations concurrently through a fixed-size worker pool. The pool and its bounded backlog prevent messages from creating unbounded worker goroutines; `Config.MaxConcurrency` controls the worker count and defaults to `engine.DefaultMaxConcurrency`. The engine fails fast only on fatal outcomes: connection loss and shutdown stop `Run` and return the error to the caller. A single message's failure — a bad plan, a failing tool, even a panicking one — must not stop a long-running bot, so it is recovered at the message boundary, logged in full, and turned into a chat notice to the requester while the engine keeps serving. Context cancellation and a connection deliberately closed through `chat.Conn.Close` are graceful outcomes. A remote disconnect such as telnet EOF is a connection failure and is returned, allowing the caller or service supervisor to decide whether to reconnect or restart.
 
 The engine owns and closes the chat connection and planner after `New` succeeds, while the caller retains ownership of the credential store. It intentionally opens and closes each operational tool around one plan step, favoring isolated ownership and simple cleanup over engine-level instance reuse. A backend with expensive setup should implement safe pooling behind its opener rather than relying on the engine to retain stateful tool instances. Reply steps are different: the engine binds their destination to the originating conversation and accepts only the canonical `reply.URL`, preventing planner output from redirecting a reply or silently attaching unsupported URL configuration.
 
@@ -322,7 +330,7 @@ A dummy tool that always answers `pong`, useful as a liveness check and as the r
 
 The service-status tools check public third-party status APIs and normalize their different schemas. They have no credentials or caller-configurable endpoint, so their only URLs are the bare `status-check://` and `status-list://`; keeping upstream URLs in the compiled provider catalog prevents planner output from turning the tools into an arbitrary HTTP client.
 
-`status-check://` requires one canonical provider or alias in `Call.Arguments["service"]`. The canonical providers are `github`, `anthropic`, `cloudflare`, `openai`, `gemini`, `slack`, and `docker-hub`; the special service `all` checks every canonical provider. `status-list://` takes no arguments and returns the canonical provider names. See the user guide for the complete alias table. Each tool exports a `tool.Descriptor` (the check tool declaring its required `service` argument), so an LLM planner is offered `status-check` and `status-list` as separate typed functions rather than guessing a verb.
+`status-check://` requires one canonical provider or alias in `Call.Arguments["service"]`. The canonical providers are `github`, `anthropic`, `cloudflare`, `openai`, `gemini`, `slack`, and `docker-hub`; the special service `all` checks every canonical provider. `status-list://` takes no arguments and returns the canonical provider names. See the user guide for the complete alias table. Each tool exports a `tool.Descriptor` (the check tool declaring its required `service` argument), so an LLM planner is offered `status-check` and `status-list` as separate typed functions rather than guessing a verb. A missing or unrecognized `service` yields a `tool.UserError` naming the supported services, so the agentic loop feeds it back and the model retries with a valid one instead of aborting the turn.
 
 Providers use adapters for their public status platform: GitHub, Anthropic, Cloudflare, and OpenAI use the common Statuspage summary schema; Slack uses the Slack Status API; Gemini combines active incidents for the stable Vertex Gemini and Workspace Gemini product IDs from Google's public JSON feeds; and Docker Hub uses the Status.io public API. Health is normalized to `operational`, `maintenance`, `degraded`, `partial_outage`, `major_outage`, or `unknown`.
 
@@ -360,8 +368,8 @@ Each tool performs a single intent. A tool that would otherwise offer several ve
 
 1. Create a sub-package under `tool/` named after the tool (e.g. `tool/kubernetes`).
 2. Define a `Tool` type implementing the `tool.Tool` interface:
-   - `Invoke` reads the arguments it needs from `Call.Arguments` and maps them onto the tool's API, returning an error when a required argument is missing or invalid.
-   - Compose `Result.Text` as the complete human-readable answer; put supplementary machine-readable output in `Result.Details`.
+   - `Invoke` reads the arguments it needs from `Call.Arguments` and maps them onto the tool's API, returning an error when a required argument is missing or invalid. For an actionable failure whose message is safe to show a human — an unknown resource type, a not-found object, a permission denial — return a `tool.UserError` (`tool.NewUserError`/`tool.WrapUserError`): the engine surfaces its message to chat and, in the agentic loop, feeds it back so the model can correct itself, whereas a plain `error` is treated as internal and yields only a generic notice.
+   - Compose `Result.Text` as the complete human-readable answer; put supplementary machine-readable output in `Result.Details`. In the agentic loop the engine renders `Result` to a canonical string (Text, then sorted `Details`) when feeding it back to the planner.
    - Keep interpretation out of the tool (see "a faithful reader/actor" above): expose exact server-side filters as arguments, offer a structured `output` mode for anything open-ended, and leave fuzzy or computed selection to the planner rather than building a filter language.
    - `Close` releases connections or other resources.
 3. Provide an `Open` function taking `context.Context` plus tool-specific parameters and returning `(*Tool, error)`. Resolve credentials from the `cred.Store` using predefined `cred.Key` identifiers; never accept credential values as parameters or URL elements.
@@ -402,9 +410,12 @@ The `planner` package provides a generic way to turn free-form chat messages int
 
 ```go
 type Planner interface {
-    // Plan decides what to do about one inbound message and returns
-    // the steps to execute. Asking the requester a clarifying question
-    // is expressed as a step invoking the reply tool, not as an error.
+    // Plan decides what to do about one round of a turn and returns the
+    // steps to execute. On a human turn req carries the message text; on a
+    // continuation it carries the previous round's tool Results; on the
+    // final round req.Final asks for a terminal, tool-free summary. Asking
+    // the requester a clarifying question is expressed as a step invoking
+    // the reply tool, not as an error.
     Plan(ctx context.Context, req Request) (Plan, error)
 
     // Close releases any resources held by the planner.
@@ -412,7 +423,11 @@ type Planner interface {
 }
 ```
 
+A stateful planner may also implement the optional `TurnCloser` interface (`EndTurn(connectionID, conversationID string)`): the engine calls it when a turn ends — normally or on an abort — so the planner can drop the in-flight transcript it kept for that turn. It takes no context because it must run even on an already-canceled abort path. A fixed planner that keeps no per-turn state need not implement it.
+
 A request carries the message **text**, the **conversation ID** and **sender** (both as computed by the chat backend, see `chat.Message`), and a caller-assigned **connection ID**; planners use the connection and conversation IDs together to keep per-conversation context across requests. The connection ID exists because conversation IDs are only unique within one `chat.Conn` (every telnet connection reports the same one, for example): a caller serving several connections from one planner must give each connection a distinct opaque ID, while a caller with a single connection may leave it empty. The returned plan is a sequence of **steps**, each naming a tool by the URL it is opened from (see the `tool` package) plus the `tool.Call` to invoke on it. Replying to the requester is itself a step — one invoking the `reply://` tool — so a clarifying question and an operational action have the same shape, mirroring how LLM tool-use APIs treat text output and tool calls as peers in one turn.
+
+Across the agentic loop a request also carries **results** — the outcomes of the previous round's feedback steps, each correlated by `Step.ID` and rendered to a bounded `StepResult.Content` — and a **final** flag the engine sets on the forced summarizing round. A step declares its disposition with **feedback**: a feedback step's result is fed back to the planner for the next round and the step carries a unique **id**, while a fire-and-post step (the zero value, as a fixed planner such as `ping` emits) has its `Result.Text` posted to chat. A reply step that came from a provider tool call also carries an id, so an LLM backend can keep a valid provider transcript across rounds.
 
 Steps name tools by URL only, so a plan is **not self-contained**: the caller executes it in the context of the request that produced it. In particular, `reply://` resolves to the reply tool bound to the chat connection that request arrived on — a caller serving several connections keeps one reply tool per connection rather than sharing one — which is what keeps replies on the right connection even when conversation IDs collide across connections.
 
@@ -486,9 +501,10 @@ A planner backed by any service that speaks the OpenAI Chat Completions API, so 
 
 - The host is required, so a hostless or mistyped URL (e.g. the typo `openai-chat-completions:///host/v1` with three slashes, which parses to an empty host) is rejected rather than silently defaulting to some provider.
 - Each enabled tool's scheme is offered to the model as a function name, so the schemes must satisfy the OpenAI function-name rules (letters, digits, `_`, `-`, up to 64 characters). A tool whose scheme uses `+` or `.` is rejected when the planner is opened, rather than making every completion request fail.
-- On each message the planner makes one Chat Completions request, offering the enabled operational tools (from the tool set passed to `Open`) plus a built-in `reply` function. Each tool is offered as one function named for its scheme, with a flat input schema built from the tool's descriptor — its typed arguments and their required fields — mirroring the Model Context Protocol.
-- The model's response maps to plan steps: assistant prose and each `reply` call become `reply://` steps, and each operational tool call becomes a step invoking that tool by its `<scheme>://` URL.
-- The exchange is single-shot — tool results are not fed back to the model — and the planner keeps no per-conversation history yet.
+- Each round the planner makes one Chat Completions request, offering the enabled operational tools (from the tool set passed to `Open`) plus a built-in `reply` function. Each tool is offered as one function named for its scheme, with a flat input schema built from the tool's descriptor — its typed arguments and their required fields — mirroring the Model Context Protocol.
+- The model's response maps to plan steps: assistant prose and each `reply` call become `reply://` steps, and each operational tool call becomes a **feedback** `<scheme>://` step carrying the provider tool-call id (one is generated when the provider omits it, and patched into the stored assistant message so the transcript stays valid).
+- The planner is **multi-round**. It keeps the provider message history for an in-flight turn in a store keyed by `(connection, conversation)`, bounded by a ten-minute TTL and a 1024-turn capacity. On a continuation it replays that transcript with one tool-result message per prior call — synthesized `delivered` for a reply call, the fed-back `StepResult.Content` for an operational one — so the model reasons over results. On the engine's final round (`req.Final`) it offers no tools and asks the model to summarize. `EndTurn` drops the transcript, so an aborted turn leaks no state.
+- The system prompt tells the model that tool results are returned to it and are untrusted data — to be analyzed, not obeyed — the first line of defense against prompt injection carried in cluster objects or upstream responses.
 
 A typical exchange:
 

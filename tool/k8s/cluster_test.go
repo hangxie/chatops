@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
+
+	"github.com/hangxie/chatops/tool"
 )
 
 // failList makes the fake dynamic client return err for list calls on resource.
@@ -20,6 +23,70 @@ func failList(c *cluster, resource string, err error) {
 	fake := c.dynamic.(*dynamicfake.FakeDynamicClient)
 	fake.PrependReactor("list", resource, func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, err
+	})
+}
+
+// failGet makes the fake dynamic client return err for get calls on resource.
+func failGet(c *cluster, resource string, err error) {
+	fake := c.dynamic.(*dynamicfake.FakeDynamicClient)
+	fake.PrependReactor("get", resource, func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, err
+	})
+}
+
+func Test_cluster_userFacingErrors(t *testing.T) {
+	forbidden := apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "web", errors.New("rbac"))
+
+	t.Run("unknown resource type is user-facing", func(t *testing.T) {
+		_, err := newTestCluster().mappingFor("widgets")
+		_, ok := tool.UserMessage(err)
+		require.True(t, ok)
+	})
+
+	t.Run("empty kind is user-facing", func(t *testing.T) {
+		_, err := newTestCluster().mappingFor("  ")
+		_, ok := tool.UserMessage(err)
+		require.True(t, ok)
+	})
+
+	t.Run("get not-found is user-facing", func(t *testing.T) {
+		_, _, err := newTestCluster().get(context.Background(), "pods", "web", "missing")
+		msg, ok := tool.UserMessage(err)
+		require.True(t, ok)
+		require.Contains(t, msg, "not found")
+	})
+
+	t.Run("get forbidden is user-facing", func(t *testing.T) {
+		c := newTestCluster()
+		failGet(c, "pods", forbidden)
+		_, _, err := c.get(context.Background(), "pods", "web", "api")
+		msg, ok := tool.UserMessage(err)
+		require.True(t, ok)
+		require.Contains(t, msg, "not authorized")
+	})
+
+	t.Run("list forbidden is user-facing", func(t *testing.T) {
+		c := newTestCluster()
+		failList(c, "pods", forbidden)
+		_, _, err := c.list(context.Background(), "pods", "web", false)
+		_, ok := tool.UserMessage(err)
+		require.True(t, ok)
+	})
+
+	t.Run("other list errors stay internal", func(t *testing.T) {
+		c := newTestCluster()
+		failList(c, "pods", errors.New("connection refused to 10.0.0.1"))
+		_, _, err := c.list(context.Background(), "pods", "web", false)
+		_, ok := tool.UserMessage(err)
+		require.False(t, ok, "an internal error must not be shown to chat")
+	})
+
+	t.Run("other get errors stay internal", func(t *testing.T) {
+		c := newTestCluster()
+		failGet(c, "pods", errors.New("dial tcp 10.0.0.1: timeout"))
+		_, _, err := c.get(context.Background(), "pods", "web", "api")
+		_, ok := tool.UserMessage(err)
+		require.False(t, ok)
 	})
 }
 

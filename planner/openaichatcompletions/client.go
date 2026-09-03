@@ -21,10 +21,15 @@ type chatRequest struct {
 	Tools    []toolDef    `json:"tools,omitempty"`
 }
 
-// reqMessage is one message supplied to the model (system or user).
+// reqMessage is one message supplied to the model. A system or user message
+// carries only Role and Content; an assistant message that called functions
+// carries ToolCalls; a tool-result message carries ToolCallID and the result
+// as Content.
 type reqMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
 // toolDef is one function offered to the model.

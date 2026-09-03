@@ -2,7 +2,6 @@ package k8s
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -25,7 +24,7 @@ func (t *listTool) Invoke(ctx context.Context, call tool.Call) (tool.Result, err
 	}
 	kind := strings.TrimSpace(call.Arguments[argKind])
 	if kind == "" {
-		return tool.Result{}, errors.New("k8s: list requires a kind")
+		return tool.Result{}, tool.NewUserError("k8s: list requires a kind")
 	}
 	namespace := strings.TrimSpace(call.Arguments[argNamespace])
 	allNamespaces, err := parseBool(call.Arguments[argAllNamespaces])
@@ -59,7 +58,7 @@ func normalizeListOutput(raw string) (string, error) {
 	case outputYAML:
 		return outputYAML, nil
 	default:
-		return "", fmt.Errorf("k8s: unknown output %q; want table, json, or yaml", raw)
+		return "", tool.NewUserError("k8s: unknown output %q; want table, json, or yaml", raw)
 	}
 }
 
@@ -94,6 +93,6 @@ func parseBool(raw string) (bool, error) {
 	case "true", "1", "yes":
 		return true, nil
 	default:
-		return false, fmt.Errorf("k8s: invalid boolean %q", raw)
+		return false, tool.NewUserError("k8s: invalid boolean %q", raw)
 	}
 }
