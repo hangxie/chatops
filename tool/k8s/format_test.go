@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 func Test_formatObjects_marshalError(t *testing.T) {
@@ -125,6 +127,49 @@ func Test_formatList(t *testing.T) {
 		list := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*newPod("web", "api"), *newPod("db", "cache")}}
 		text := formatList(list, mapping, true)
 		require.Contains(t, text, "NAMESPACE")
+	})
+
+	t.Run("pod ready and restarts columns", func(t *testing.T) {
+		pod := podWith(map[string]any{"ready": true}, map[string]any{"ready": false, "restartCount": int64(4)})
+		list := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*pod}}
+		text := formatList(list, mapping, false)
+		require.Contains(t, text, "READY")
+		require.Contains(t, text, "RESTARTS")
+		require.Contains(t, text, "1/2")
+		require.Contains(t, text, "4")
+	})
+
+	t.Run("deployment ready and replica columns", func(t *testing.T) {
+		deploy := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata":   map[string]any{"name": "web", "namespace": "app"},
+			"spec":       map[string]any{"replicas": int64(3)},
+			"status":     map[string]any{"readyReplicas": int64(1), "updatedReplicas": int64(2), "availableReplicas": int64(1)},
+		}}
+		list := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*deploy}}
+		text := formatList(list, deploymentMapping(), false)
+		require.Contains(t, text, "UP-TO-DATE")
+		require.Contains(t, text, "AVAILABLE")
+		require.Contains(t, text, "1/3")
+	})
+
+	t.Run("crd health surfaces in status column", func(t *testing.T) {
+		app := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "argoproj.io/v1alpha1",
+			"kind":       "Application",
+			"metadata":   map[string]any{"name": "web", "namespace": "argocd"},
+			"status":     map[string]any{"health": map[string]any{"status": "Degraded"}},
+		}}
+		appMapping := &meta.RESTMapping{
+			Resource:         schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "applications"},
+			GroupVersionKind: schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"},
+			Scope:            meta.RESTScopeNamespace,
+		}
+		list := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*app}}
+		text := formatList(list, appMapping, false)
+		require.Contains(t, text, "STATUS")
+		require.Contains(t, text, "Degraded")
 	})
 
 	t.Run("no status column and rendered age", func(t *testing.T) {

@@ -38,6 +38,40 @@ func Test_listTool_Invoke(t *testing.T) {
 	require.Contains(t, res.Text, "worker")
 }
 
+func Test_listTool_Invoke_output(t *testing.T) {
+	secret := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata":   map[string]any{"name": "creds", "namespace": "app"},
+		"data":       map[string]any{"password": "aHVudGVyMg=="},
+	}}
+	list := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*secret}}
+	tl := &listTool{client: &fakeClient{
+		listFn: func(context.Context, string, string, bool) (*unstructured.UnstructuredList, *meta.RESTMapping, error) {
+			return list, podMapping(t), nil
+		},
+	}}
+
+	testCases := map[string]struct {
+		output   string
+		contains []string
+	}{
+		"json": {output: "json", contains: []string{`"kind": "Secret"`, redactedValue}},
+		"yaml": {output: "yaml", contains: []string{"kind: Secret", redactedValue}},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			res, err := tl.Invoke(context.Background(), tool.Call{Arguments: map[string]string{argKind: "secrets", argOutput: tc.output}})
+			require.NoError(t, err)
+			for _, want := range tc.contains {
+				require.Contains(t, res.Text, want)
+			}
+			// The original secret value never reaches the output.
+			require.NotContains(t, res.Text, "aHVudGVyMg==")
+		})
+	}
+}
+
 func Test_listTool_Invoke_errors(t *testing.T) {
 	testCases := map[string]struct {
 		args   map[string]string
@@ -46,6 +80,7 @@ func Test_listTool_Invoke_errors(t *testing.T) {
 	}{
 		"missing kind": {args: map[string]string{}, errMsg: "requires a kind"},
 		"bad bool":     {args: map[string]string{argKind: "pods", argAllNamespaces: "maybe"}, errMsg: "invalid boolean"},
+		"bad output":   {args: map[string]string{argKind: "pods", argOutput: "xml"}, errMsg: "unknown output"},
 		"client error": {
 			args: map[string]string{argKind: "pods"},
 			listFn: func(context.Context, string, string, bool) (*unstructured.UnstructuredList, *meta.RESTMapping, error) {
@@ -69,6 +104,32 @@ func Test_listTool_Invoke_cancelledContext(t *testing.T) {
 	cancel()
 	_, err := tl.Invoke(ctx, tool.Call{Arguments: map[string]string{argKind: "pods"}})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func Test_normalizeListOutput(t *testing.T) {
+	testCases := map[string]struct {
+		in   string
+		want string
+		err  bool
+	}{
+		"empty": {in: "", want: ""},
+		"table": {in: "table", want: ""},
+		"brief": {in: "brief", want: ""},
+		"json":  {in: "JSON", want: outputJSON},
+		"yaml":  {in: " yaml ", want: outputYAML},
+		"bad":   {in: "xml", err: true},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			got, err := normalizeListOutput(tc.in)
+			if tc.err {
+				require.ErrorContains(t, err, "unknown output")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func Test_parseBool(t *testing.T) {

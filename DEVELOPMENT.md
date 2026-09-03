@@ -6,6 +6,29 @@ This guide describes the internal packages and how to add credential stores, cha
 
 The `engine` package joins the component interfaces into the server loop. It receives messages from one `chat.Conn`, passes each message and its connection metadata to a `planner.Planner`, executes the returned tool steps in order, and sends every non-empty tool result back to the originating conversation. A planner asks for clarification or confirmation by returning a `reply://` step, so multi-message interaction state stays in the planner instead of the engine.
 
+End to end, one chat request flows through the components like this (using "show apps in the argocd namespace with status" as the example):
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Engine
+    participant Planner as Planner (LLM)
+    participant Tool as Tool (k8s-list)
+
+    User->>Engine: "show apps in argocd with status"
+    Engine->>Planner: Plan(Request{text, conversation, sender})
+    Note over Planner: interprets intent, selects a tool<br/>and its arguments (kind, namespace,<br/>output) — but does not run it
+    Planner-->>Engine: Plan{Steps: [k8s-list kind=applications namespace=argocd]}
+    loop each step, in order
+        Engine->>Tool: Open(url), then Invoke(Call{Arguments})
+        Note over Tool: faithful reader: query the cluster,<br/>render table/json, mask secrets
+        Tool-->>Engine: Result{Text}
+        Engine->>User: post Result.Text into the conversation
+    end
+```
+
+The exchange is currently **single-shot**: the planner interprets the request and chooses each tool and its arguments up front, but the tool's result is not fed back to the model (see the [openai-chat-completions planner](#openai-chat-completions-planner)). That already answers anything the tool renders directly — the STATUS column above, a namespace scope, an `output=json` dump of raw data to the requester. Interpreting the *results* — "only the degraded apps", "pods that restarted recently" — is the planner's job by design (see [a faithful reader/actor](#tools-tool), below): it lands when the planner grows an agentic loop that feeds a step's `Result` back so the model can filter and summarize before replying. The `output=json` mode exists so that loop has structured data to reason over rather than re-parsing a table.
+
 ```go
 e, err := engine.New(engine.Config{
     ConnectionID: "operations",
@@ -247,6 +270,8 @@ Each tool performs a single intent, so a call names no verb — the tool *is* th
 
 A tool instance is identified by a single URL — the scheme selects the implementation, host/port/path locate the endpoint it operates on, and query parameters carry further non-secret instance configuration. Credential *values* are **never** part of the URL; tools resolve predefined `cred.Key` identifiers from the `cred.Store` passed to `Open`. Adding a credential-bearing tool therefore extends the application credential schema rather than accepting caller-selected key prefixes.
 
+**A tool is a faithful reader/actor, not an interpreter.** Keep open-ended, fuzzy, or computed selection out of the tool and let the planner (an LLM) do that work. Chat requests routinely ask for judgments a fixed argument cannot express — "pods that restarted recently", "under-replicated deployments", "the noisy services" — where "recently", "under-replicated", and "noisy" are the model's job, not the tool's. So resist growing a query/filter/projection mini-language inside a tool; you would reimplement the model's strength and still not cover the next phrasing. Instead give the tool a **structured output mode** (e.g. `output=json`/`yaml`, as the k8s tools do) that hands the planner enough raw data to filter, project, and summarize itself. Reserve first-class arguments and computed output columns for the *common, well-defined* cases (readiness, restart counts, replica gaps), and treat structured output as the escape hatch for everything else. The one exception is filtering the underlying system already does exactly and cheaply — a Kubernetes label or field selector, a paging token — which stays a tool argument because it is precise server-side selection, not interpretation. This keeps tools small and composable and puts natural-language judgment where the model already excels.
+
 Available tools:
 
 | Scheme  | Sub-package   | Tool URL                        |
@@ -254,6 +279,8 @@ Available tools:
 | `ping`  | `tool/ping`   | `ping://`                       |
 | `status-check` | `tool/status` | `status-check://`        |
 | `status-list` | `tool/status` | `status-list://`          |
+| `k8s-list` | `tool/k8s`  | `k8s-list://`                 |
+| `k8s-get`  | `tool/k8s`  | `k8s-get://`                  |
 | `reply` | `tool/reply`  | `reply://` (no registry opener) |
 
 ### Usage
@@ -303,6 +330,18 @@ The checker preserves catalog order and limits aggregate checks to four concurre
 
 When adding a provider, prefer an existing adapter and add aliases only when they are unambiguous. Public catalogs such as [awesome-status-pages](https://github.com/ivbeg/awesome-status-pages) can help identify candidates, but they are discovery aids rather than runtime dependencies: verify the provider's official page, machine-readable endpoint, response format, and continued availability before adding it to the compiled catalog. Add a new adapter only when no existing status platform schema fits, and cover its health mapping, incidents, malformed responses, and cancellation behavior with table-driven tests.
 
+### k8s tools
+
+Two single-intent tools in the `tool/k8s` sub-package read Kubernetes resources for chat: `k8s-list` lists a resource type in a namespace or across all namespaces, and `k8s-get` fetches specific resources by name. Both resolve the resource type through the API server's discovery data and read objects with the dynamic client, so a single implementation serves built-in resources and CustomResourceDefinitions alike; the `kind` argument accepts a plural, singular, short name, or kind.
+
+These tools are the exception to the credential model: cluster access comes from a kubeconfig (the standard `KUBECONFIG`/`~/.kube/config` rules) or the in-cluster service account, not from the `cred.Store`, so both openers ignore the store they are passed. The URL carries no host and no credentials — only which cluster to select, via `?context=` or `?kubeconfig=` — and a stray host is rejected to catch a kubeconfig path or context placed there by mistake. Configuring `KUBECONFIG` once therefore serves every k8s tool.
+
+`k8s-list` reads `kind` (required), `namespace` (optional), `all-namespaces` (optional boolean), and `output` (optional: `table`, `json`, or `yaml`). The default `table` renders an aligned table whose value columns are chosen per kind — `READY STATUS RESTARTS` for pods, `READY UP-TO-DATE AVAILABLE` for deployments, and a single `STATUS` column otherwise — with a column dropped when it is empty for every listed item, so the table stays compact for arbitrary CRDs. The status column reads `status.phase` and falls back to `status.health.status`, so CRDs such as Argo CD Applications report health without a bespoke column. Per-kind columns and the status fallback live in `tool/k8s/columns.go`; a new workload's columns are added by extending `valueColumns`. `json` and `yaml` emit the full manifests of every listed item, the escape hatch for a planner that needs to filter or project on fields the table does not surface.
+
+`k8s-get` reads `kind` (required), `name` (required, comma-separated for several at once), `namespace` (optional), and `output` (optional: `brief`, `json`, or `yaml`). The default `brief` is a describe-style summary — identity, age, labels, a status hint, and recent events — so no separate describe verb is needed.
+
+Secret values are masked before rendering in every output format, on both tools: the `brief` summary omits a Secret's data, `json`/`yaml`/`table` keep the shape but replace each value, and the `kubectl.kubernetes.io/last-applied-configuration` annotation (which can round-trip the original values) is stripped from Secrets. See `tool/k8s/redact.go`.
+
 ### reply tool
 
 A tool that posts text back into a chat conversation, so a planner (see below) can express "say this to the requester" as an ordinary tool step alongside operational tool calls. Unlike other tools it is bound to a live `chat.Conn` — the connection the message being answered arrived on — rather than to an endpoint of its own, so it has **no `Opener`** and cannot be opened through a `tool.Registry`. Callers open it directly and make it available to plan execution under the conventional bare URL exported as `reply.URL` (`reply://`):
@@ -323,6 +362,7 @@ Each tool performs a single intent. A tool that would otherwise offer several ve
 2. Define a `Tool` type implementing the `tool.Tool` interface:
    - `Invoke` reads the arguments it needs from `Call.Arguments` and maps them onto the tool's API, returning an error when a required argument is missing or invalid.
    - Compose `Result.Text` as the complete human-readable answer; put supplementary machine-readable output in `Result.Details`.
+   - Keep interpretation out of the tool (see "a faithful reader/actor" above): expose exact server-side filters as arguments, offer a structured `output` mode for anything open-ended, and leave fuzzy or computed selection to the planner rather than building a filter language.
    - `Close` releases connections or other resources.
 3. Provide an `Open` function taking `context.Context` plus tool-specific parameters and returning `(*Tool, error)`. Resolve credentials from the `cred.Store` using predefined `cred.Key` identifiers; never accept credential values as parameters or URL elements.
 4. Export the scheme and an opener so callers can wire the tool into a `tool.Registry` (tools never self-register via `init()`):

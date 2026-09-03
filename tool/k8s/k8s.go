@@ -66,6 +66,7 @@ var (
 			{Name: argKind, Type: "string", Required: true, Description: "Resource type: plural, singular, short name, or kind (e.g. pods, po, deployment, StatefulSet, CRD names)."},
 			{Name: argNamespace, Type: "string", Description: "Namespace to list; defaults to the context's default namespace. Ignored for cluster-scoped types."},
 			{Name: argAllNamespaces, Type: "boolean", Description: "List across all namespaces instead of one."},
+			{Name: argOutput, Type: "string", Description: "Output format: table (default, an aligned summary with per-kind columns such as READY, STATUS, RESTARTS), json, or yaml for the full manifests. Secret values are masked."},
 		},
 	}
 	GetDescriptor = tool.Descriptor{
