@@ -170,6 +170,9 @@ The URL configures the endpoint and model:
 | `model` (required) | Model identifier to request, for example `gpt-5`, `gemini-3.1-flash-lite`, or `llama3`. |
 | `insecure=true` | Use plain HTTP instead of HTTPS, for a local server. |
 | `keyless=true` | Explicitly omit authentication for a local or otherwise unauthenticated endpoint. |
+| `nothink=true` | Ask a reasoning model to skip its thinking phase, by sending `reasoning_effort: "none"` and `chat_template_kwargs: {"enable_thinking": false}`. |
+
+The planner's system prompt always ends with `/no_think`, the prompt-level switch models such as Qwen3 honor; a model that does not recognize it reads it as ordinary prose. The stronger request-level switches are opt-in through `nothink=true` because they are extra request fields: endpoints that validate the request body strictly reject an unsupported `reasoning_effort` or an unknown `chat_template_kwargs`. Turn it on for an endpoint that honors one of them (Ollama, vLLM, SGLang, llama.cpp, and OpenAI or Gemini reasoning models), and leave it off otherwise.
 
 By default the planner requires `planner.api-key` from the credential store and sends it as a bearer token. A missing or empty key prevents startup. Set `keyless=true` explicitly when the endpoint requires no authentication.
 
@@ -186,7 +189,7 @@ chatops server --chat telnet://localhost:6023 \
 
 # Local Ollama (no key required)
 chatops server --chat telnet://localhost:6023 \
-    --planner 'openai-chat-completions://localhost:11434/v1?insecure=true&keyless=true&model=llama3' \
+    --planner 'openai-chat-completions://localhost:11434/v1?insecure=true&keyless=true&nothink=true&model=llama3' \
     --tool ping --tool status-check --tool status-list
 ```
 

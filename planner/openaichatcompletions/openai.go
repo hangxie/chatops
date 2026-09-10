@@ -8,11 +8,13 @@
 //
 //	openai-chat-completions://api.openai.com/v1?model=gpt-5
 //	openai-chat-completions://generativelanguage.googleapis.com/v1beta/openai?model=gemini-3.1-flash-lite
-//	openai-chat-completions://localhost:11434/v1?insecure=true&keyless=true&model=llama3
+//	openai-chat-completions://localhost:11434/v1?insecure=true&keyless=true&model=llama3&nothink=true
 //
 // The host is required and locates the endpoint; its path defaults to
 // "/v1", and the connection uses HTTPS unless insecure=true selects
-// plain HTTP. The model query parameter is required.
+// plain HTTP. The model query parameter is required. nothink=true adds
+// the request-level switches that turn a reasoning model's thinking
+// phase off, for endpoints that accept them.
 // Unless keyless=true is explicit, the API key is resolved from the
 // predefined planner credential and sent as a bearer token.
 // Each message produces one request offering the enabled tools plus reply.
@@ -48,10 +50,13 @@ const (
 )
 
 // systemPrompt tells the model to act via the offered functions only.
+// The trailing /no_think is the soft switch reasoning models such as
+// Qwen3 honor to skip their thinking phase; models that do not
+// recognize it read it as ordinary prose and ignore it.
 const systemPrompt = "You are a ChatOps planner. Decide how to handle the user's message. " +
 	"To answer the user, ask a clarifying question, or acknowledge, call the reply function. " +
 	"To carry out an operation, call the matching tool function. You may call several functions " +
-	"in one turn. Use only the provided functions and do not invent tools."
+	"in one turn. Use only the provided functions and do not invent tools. /no_think"
 
 // Opener parses the endpoint and model and resolves the planner API key.
 func Opener(ctx context.Context, u *url.URL, creds cred.Store, tools *tool.Registry) (planner.Planner, error) {
@@ -62,7 +67,7 @@ func Opener(ctx context.Context, u *url.URL, creds cred.Store, tools *tool.Regis
 	wrapURL := func(err error) error {
 		return fmt.Errorf("openai: URL %q: %w", u.String(), err)
 	}
-	if err := urlquery.Validate(query, "model", "insecure", "keyless"); err != nil {
+	if err := urlquery.Validate(query, "model", "insecure", "keyless", "nothink"); err != nil {
 		return nil, wrapURL(err)
 	}
 	model := strings.TrimSpace(query.Get("model"))
@@ -75,6 +80,10 @@ func Opener(ctx context.Context, u *url.URL, creds cred.Store, tools *tool.Regis
 		return nil, wrapURL(err)
 	}
 	keyless, err := urlquery.Bool(query, "keyless")
+	if err != nil {
+		return nil, wrapURL(err)
+	}
+	noThink, err := urlquery.Bool(query, "nothink")
 	if err != nil {
 		return nil, wrapURL(err)
 	}
@@ -99,7 +108,7 @@ func Opener(ctx context.Context, u *url.URL, creds cred.Store, tools *tool.Regis
 			}
 		}
 	}
-	return Open(ctx, Config{BaseURL: baseURL, Model: model, APIKey: apiKey, ToolSchemes: schemes, ToolDescriptors: descriptors})
+	return Open(ctx, Config{BaseURL: baseURL, Model: model, APIKey: apiKey, NoThink: noThink, ToolSchemes: schemes, ToolDescriptors: descriptors})
 }
 
 // baseURLFromURL builds the completion endpoint from u. The host is
@@ -165,6 +174,12 @@ type Config struct {
 	Model string
 	// APIKey is the bearer token; empty omits the Authorization header.
 	APIKey string
+	// NoThink sends the request-level switches that disable a reasoning
+	// model's thinking phase. Off by default: the switches are extra
+	// request fields, which an endpoint that validates them strictly
+	// rejects. The system prompt's /no_think always goes out regardless,
+	// being ordinary prose.
+	NoThink bool
 	// ToolSchemes are the enabled operational tools offered to the model.
 	ToolSchemes []string
 	// ToolDescriptors holds the self-description, keyed by scheme, for the
@@ -180,6 +195,7 @@ type Planner struct {
 	baseURL string
 	model   string
 	apiKey  string
+	noThink bool
 	// defs is the function catalog offered to the model, built once at
 	// Open from an immutable snapshot of the descriptors.
 	defs []toolDef
@@ -233,6 +249,7 @@ func Open(ctx context.Context, cfg Config) (*Planner, error) {
 		baseURL: baseURL,
 		model:   cfg.Model,
 		apiKey:  cfg.APIKey,
+		noThink: cfg.NoThink,
 		defs:    defs,
 		funcs:   funcs,
 	}, nil
@@ -252,6 +269,9 @@ func (p *Planner) Plan(ctx context.Context, req planner.Request) (planner.Plan, 
 			{Role: "user", Content: req.Text},
 		},
 		Tools: p.defs,
+	}
+	if p.noThink {
+		request = noThinkRequest(request)
 	}
 	response, err := chatComplete(ctx, p.client, p.baseURL, p.apiKey, request)
 	if err != nil {
