@@ -17,6 +17,21 @@ import (
 // completionJSON is a minimal well-formed Chat Completions response.
 const completionJSON = `{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`
 
+// Test_noThinkRequest_encodes_switches pins the wire shape of the
+// thinking switches, and that a plain request carries neither.
+func Test_noThinkRequest_encodes_switches(t *testing.T) {
+	req := chatRequest{Model: "m", Messages: []reqMessage{{Role: "user", Content: "hi"}}}
+
+	plain, err := json.Marshal(req)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, string(plain))
+
+	switched, err := json.Marshal(noThinkRequest(req))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"model":"m","messages":[{"role":"user","content":"hi"}],`+
+		`"reasoning_effort":"none","chat_template_kwargs":{"enable_thinking":false}}`, string(switched))
+}
+
 func Test_chatComplete_sends_request_and_decodes(t *testing.T) {
 	var gotPath, gotAuth, gotContentType string
 	var gotBody chatRequest

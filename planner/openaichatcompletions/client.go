@@ -19,6 +19,23 @@ type chatRequest struct {
 	Model    string       `json:"model"`
 	Messages []reqMessage `json:"messages"`
 	Tools    []toolDef    `json:"tools,omitempty"`
+	// ReasoningEffort asks a reasoning model how much to think;
+	// "none" disables thinking on OpenAI, Gemini, and Ollama.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	// ChatTemplateKwargs passes arguments to the server-side chat
+	// template; vLLM, SGLang, and llama.cpp take enable_thinking there.
+	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
+}
+
+// noThinkRequest sets every request-level switch that turns a reasoning
+// model's thinking phase off. The switches are endpoint-specific and no
+// endpoint honors all of them, so they are sent together; an endpoint
+// that rejects unknown fields would fail, which is why sending them is
+// opt-in rather than the default.
+func noThinkRequest(req chatRequest) chatRequest {
+	req.ReasoningEffort = "none"
+	req.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
+	return req
 }
 
 // reqMessage is one message supplied to the model (system or user).

@@ -35,6 +35,7 @@ func Test_Opener_parses_endpoint_and_model(t *testing.T) {
 		url         string
 		wantBaseURL string
 		wantModel   string
+		wantNoThink bool
 	}{
 		"host-default-path": {
 			url: "openai-chat-completions://api.openai.com?model=gpt-5&keyless=true", wantBaseURL: "https://api.openai.com/v1", wantModel: "gpt-5",
@@ -46,6 +47,9 @@ func Test_Opener_parses_endpoint_and_model(t *testing.T) {
 		},
 		"insecure-local": {
 			url: "openai-chat-completions://localhost:11434/v1?insecure=true&model=llama3&keyless=true", wantBaseURL: "http://localhost:11434/v1", wantModel: "llama3",
+		},
+		"nothink": {
+			url: "openai-chat-completions://host/v1?model=m&keyless=true&nothink=true", wantBaseURL: "https://host/v1", wantModel: "m", wantNoThink: true,
 		},
 		"trailing-slash-trimmed": {
 			url: "openai-chat-completions://host/v1/?model=m&keyless=true", wantBaseURL: "https://host/v1", wantModel: "m",
@@ -62,6 +66,7 @@ func Test_Opener_parses_endpoint_and_model(t *testing.T) {
 			p := opened.(*Planner)
 			require.Equal(t, tc.wantBaseURL, p.baseURL)
 			require.Equal(t, tc.wantModel, p.model)
+			require.Equal(t, tc.wantNoThink, p.noThink)
 			require.Empty(t, p.apiKey)
 			require.NoError(t, p.Close())
 		})
@@ -84,6 +89,7 @@ func Test_Opener_rejects_invalid_url(t *testing.T) {
 		"cred-prefix":   {url: "openai-chat-completions://host?model=m&cred-prefix=openai", errMsg: `unknown query parameter "cred-prefix"`},
 		"bad-keyless":   {url: "openai-chat-completions://host?model=m&keyless=yes", errMsg: "keyless must be true or false"},
 		"bad-insecure":  {url: "openai-chat-completions://host?model=m&insecure=yes", errMsg: "insecure must be true or false"},
+		"bad-nothink":   {url: "openai-chat-completions://host?model=m&nothink=yes", errMsg: "nothink must be true or false"},
 		"duplicate-model": {
 			url: "openai-chat-completions://host?model=a&model=b", errMsg: `query parameter "model" must appear once`,
 		},
@@ -223,7 +229,54 @@ func Test_Plan_maps_completion_to_steps(t *testing.T) {
 	require.Equal(t, []string{"reply", "status-check"}, names)
 	require.Len(t, gotBody.Messages, 2)
 	require.Equal(t, "system", gotBody.Messages[0].Role)
+	// The system prompt carries the /no_think switch for reasoning models.
+	require.Contains(t, gotBody.Messages[0].Content, "/no_think")
 	require.Equal(t, "is github up?", gotBody.Messages[1].Content)
+}
+
+// Test_Plan_sends_thinking_switches checks that the request-level
+// switches go out only under nothink=true, since an endpoint that
+// validates request fields strictly rejects them.
+func Test_Plan_sends_thinking_switches(t *testing.T) {
+	testCases := map[string]struct {
+		nothink bool
+	}{
+		"default": {},
+		"nothink": {nothink: true},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			var gotBody map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+				_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`)
+			}))
+			defer server.Close()
+
+			rawURL := "openai-chat-completions://" + strings.TrimPrefix(server.URL, "http://") +
+				"/v1?insecure=true&keyless=true&model=test-model"
+			if tc.nothink {
+				rawURL += "&nothink=true"
+			}
+			opened, err := openerViaRegistry(t, rawURL, nil, nil)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, opened.Close()) }()
+
+			_, err = opened.Plan(context.Background(), planner.Request{Text: "hi"})
+			require.NoError(t, err)
+
+			// The prompt-level switch rides along either way.
+			require.Contains(t, gotBody["messages"].([]any)[0].(map[string]any)["content"], "/no_think")
+			if !tc.nothink {
+				require.NotContains(t, gotBody, "reasoning_effort")
+				require.NotContains(t, gotBody, "chat_template_kwargs")
+				return
+			}
+			require.Equal(t, "none", gotBody["reasoning_effort"])
+			require.Equal(t, map[string]any{"enable_thinking": false}, gotBody["chat_template_kwargs"])
+		})
+	}
 }
 
 func Test_Plan_reports_no_choices(t *testing.T) {
