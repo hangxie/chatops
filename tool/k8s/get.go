@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -34,7 +35,7 @@ func getResources(ctx context.Context, client resourceClient, args GetArgs) (*mc
 	for _, name := range names {
 		obj, _, err := client.get(ctx, kind, namespace, name)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, notFound(err, kind, name, namespace)
 		}
 		redact(obj)
 		objs = append(objs, obj)
@@ -61,4 +62,21 @@ func splitNames(raw string) []string {
 		}
 	}
 	return names
+}
+
+// notFound turns "no such object" into a message built from what the
+// requester asked for.
+//
+// The error client-go raises carries the API server's own phrasing and, on
+// the way out, its address; the requester mistyped a name and needs to be
+// told that, not sent to check whether the cluster is up.
+func notFound(err error, kind, name, namespace string) error {
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+	where := "the default namespace"
+	if namespace != "" {
+		where = fmt.Sprintf("namespace %q", namespace)
+	}
+	return invalidCall("k8s: no %s named %q in %s", kind, name, where)
 }

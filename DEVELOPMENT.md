@@ -281,7 +281,14 @@ Points worth knowing:
 - **Names are qualified and sanitized.** A server's `Alias` prefixes its tools (`github-search_repos`); an empty alias leaves them under their own names, which is what the built-in groups use because their names are already distinct. Names are coerced into the character set LLM tool-use APIs accept and capped at 64 characters, with a hash suffix if one has to be shortened. A name claimed twice is offered once, and the shadowed tool is reported.
 - **Timeouts are hard bounds, and separate ones.** `Client.Connect` and a pending `tools/list` do not honour context cancellation on a transport whose peer has gone quiet, so the host bounds both itself (`ConnectTimeout`, `ListTimeout`). Without them one unresponsive server would hang startup, or wedge a refresh that has no caller to cancel it. The two budgets are independent: a slow handshake must not eat the time allowed for the listing that follows it, so bringing a server up can take up to the sum.
 - **A failed refresh keeps the tools already known.** Nothing retries a listing — the only thing that starts one is the server reporting another change — so clearing the cache on a single timeout would drop that server from the catalog for as long as it stayed quiet. The initial listing is the exception: there is no previous list to keep, so the session is refused outright.
-- **Startup is strict, running is lenient.** A server that cannot be connected or listed fails `New`, which suits built-in groups but is the opposite of the running rule; and servers connect serially. Both are noted in `TODO.md` to settle before external servers arrive.
+- **Startup is strict, running is lenient.** A server that cannot be connected or listed fails `New`, which suits built-in groups but is the opposite of the running rule. See [Deferred decisions](#deferred-decisions).
+
+### Deferred decisions
+
+Two host policies suit the built-in groups and will not suit servers a network away. Both are settled deliberately rather than by default, and both should be revisited together with the design for connecting external servers, since that is what makes them matter:
+
+- **Startup is strict.** `mcphost.New` fails if any server cannot be connected or listed. For a built-in group that is a bug or a misconfiguration worth stopping for. For one external server among several it contradicts the rule applied everywhere else — that a server which goes quiet costs only its own tools — so the lenient rule belongs with reconnection and backoff rather than on its own.
+- **Servers connect serially.** The worst case is `ConnectTimeout + ListTimeout` per server, which is immaterial in process and is not once a handshake crosses a network. Connecting concurrently must keep the order of the spec list, because that order is what decides which server keeps a name two of them claim.
 
 ### Host tools
 

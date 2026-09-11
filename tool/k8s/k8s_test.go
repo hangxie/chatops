@@ -11,8 +11,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/hangxie/chatops/internal/testutils"
 	"github.com/hangxie/chatops/mcpserve"
@@ -142,6 +144,50 @@ func Test_cluster_failures_are_curated(t *testing.T) {
 	// The detail is not lost, it is logged.
 	require.Contains(t, logs.String(), "10.1.2.3")
 	require.Contains(t, logs.String(), "tool=k8s-list")
+}
+
+// Test_refusal_is_reported_as_a_refusal: being told the cluster might be
+// unreachable, when the real answer is that this bot may not read the
+// resource, sends someone to look in the wrong place.
+func Test_refusal_is_reported_as_a_refusal(t *testing.T) {
+	var logs bytes.Buffer
+	refused := apierrors.NewForbidden(
+		schema.GroupResource{Resource: "secrets"}, "db",
+		errors.New(`User "system:serviceaccount:ops:chatops" cannot get resource "secrets"`),
+	)
+	client := &fakeClient{
+		listFn: func(context.Context, string, string, bool) (*unstructured.UnstructuredList, *meta.RESTMapping, error) {
+			return nil, nil, refused
+		},
+	}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
+	require.NoError(t, RegisterClient(srv, client, slog.New(slog.NewTextHandler(&logs, nil))))
+	session := testutils.MCPSession(t, srv)
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      ListToolName,
+		Arguments: map[string]any{"kind": "secrets"},
+	})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+
+	text := testutils.ResultText(t, result)
+	require.Contains(t, text, "not permitted")
+	require.NotContains(t, text, "could not be reached")
+	// The identity that was refused stays in the log.
+	require.NotContains(t, text, "serviceaccount")
+	require.Contains(t, logs.String(), "serviceaccount")
+	require.Contains(t, logs.String(), "kubernetes call refused")
+}
+
+func Test_curate_passes_cancellation_through(t *testing.T) {
+	var logs bytes.Buffer
+	// Shutting down with a call in flight is ordinary; it should not be
+	// logged as a failure on every restart.
+	err := curate(slog.New(slog.NewTextHandler(&logs, nil)), ListToolName, context.Canceled)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, logs.String())
 }
 
 func Test_invalidCall_preserves_the_wrapped_error(t *testing.T) {

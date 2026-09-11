@@ -3,13 +3,19 @@ package k8s
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"math"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"github.com/hangxie/chatops/internal/testutils"
+	"github.com/hangxie/chatops/mcpserve"
 )
 
 // fakeClient is a resourceClient driven by function fields, shared by the get
@@ -138,6 +144,66 @@ func Test_getTool_Invoke_formatError(t *testing.T) {
 	}
 	_, _, err := getResources(context.Background(), client, GetArgs{Kind: "pod", Name: "api", Output: "json"})
 	require.ErrorContains(t, err, "encode json")
+}
+
+func Test_notFound(t *testing.T) {
+	missing := apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "web-0")
+
+	testCases := map[string]struct {
+		err       error
+		kind      string
+		name      string
+		namespace string
+		want      string
+		user      bool
+	}{
+		"named namespace": {
+			err: missing, kind: "pod", name: "web-0", namespace: "web",
+			want: `k8s: no pod named "web-0" in namespace "web"`, user: true,
+		},
+		"default namespace": {
+			err: missing, kind: "pod", name: "web-0",
+			want: `k8s: no pod named "web-0" in the default namespace`, user: true,
+		},
+		"other errors pass through": {
+			err: errors.New("dial tcp 10.1.2.3:6443: refused"), kind: "pod", name: "web-0",
+			want: "dial tcp 10.1.2.3:6443: refused",
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			got := notFound(tc.err, tc.kind, tc.name, tc.namespace)
+			require.EqualError(t, got, tc.want)
+			// A mistyped name is the requester's to see; anything else is not.
+			require.Equal(t, tc.user, mcpserve.IsUserError(got))
+		})
+	}
+}
+
+// Test_get_tool_reports_a_missing_resource_plainly: a name that does not
+// exist must not be reported as the cluster being unreachable, which would
+// send someone to check cluster health over a typo.
+func Test_get_tool_reports_a_missing_resource_plainly(t *testing.T) {
+	client := &fakeClient{
+		getFn: func(context.Context, string, string, string) (*unstructured.Unstructured, *meta.RESTMapping, error) {
+			return nil, nil, apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "web-0")
+		},
+	}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
+	require.NoError(t, RegisterClient(srv, client, slog.New(slog.DiscardHandler)))
+	session := testutils.MCPSession(t, srv)
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      GetToolName,
+		Arguments: map[string]any{"kind": "pod", "name": "web-0", "namespace": "web"},
+	})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+
+	text := testutils.ResultText(t, result)
+	require.Contains(t, text, `no pod named "web-0" in namespace "web"`)
+	require.NotContains(t, text, "could not be reached")
 }
 
 func Test_splitNames(t *testing.T) {

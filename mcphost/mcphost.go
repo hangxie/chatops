@@ -167,13 +167,14 @@ type Host struct {
 // right for the built-in groups — the operator asked for them and a failure
 // is a bug or a misconfiguration worth stopping for — but it is the opposite
 // of how a failure is treated once running, where a server that goes quiet
-// costs only its own tools. Serving external servers will want the lenient
-// rule at startup too, alongside reconnection; see TODO.md.
+// costs only its own tools. Serving servers across a network will want the
+// lenient rule at startup too, decided alongside reconnection.
 //
-// Servers are connected one at a time, so the worst case is ConnectTimeout
-// plus ListTimeout per server. That is immaterial for in-process groups,
-// which connect instantly, and is the other thing to revisit when servers
-// live across a network.
+// Servers are also connected one at a time, so the worst case is
+// ConnectTimeout plus ListTimeout per server. That is immaterial for
+// in-process groups, which connect instantly, and is the other thing to
+// revisit when a server is a network away. Both are recorded under "Deferred
+// decisions" in DEVELOPMENT.md.
 func New(ctx context.Context, cfg Config) (*Host, error) {
 	logger := cfg.Logger
 	if logger == nil {
@@ -235,17 +236,20 @@ func (h *Host) warnUnmatchedPatterns() {
 	if len(h.allow) == 0 {
 		return
 	}
-	names := h.Names()
+	candidates := h.candidates()
 	for _, pattern := range h.allow {
 		matched := false
-		for _, name := range names {
+		for _, name := range candidates {
 			if ok, err := filepath.Match(pattern, name); err == nil && ok {
 				matched = true
 				break
 			}
 		}
 		if !matched {
-			h.logger.Warn("tool pattern matched nothing", "pattern", pattern, "tools", names)
+			// The names offered are the unfiltered ones: after a typo the
+			// filtered list is usually just the host tools, which says
+			// nothing about what was meant.
+			h.logger.Warn("tool pattern matched nothing", "pattern", pattern, "available", candidates)
 		}
 	}
 }

@@ -29,28 +29,24 @@ package k8s
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"log/slog"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/hangxie/chatops/mcpserve"
 )
 
-// invalidCallError marks a failure caused by the call itself — a missing or
-// unusable argument — whose message is safe to show the requester and is the
-// whole point of reporting it to them.
-type invalidCallError struct{ err error }
-
-func (e invalidCallError) Error() string { return e.err.Error() }
-
-func (e invalidCallError) Unwrap() error { return e.err }
-
-// invalidCall marks an error as safe to relay to the requester.
+// invalidCall marks an error as caused by the call itself — a missing
+// argument, an unknown resource type, a name that does not exist — and so
+// safe to show the requester, which is the whole point of reporting it.
 func invalidCall(format string, args ...any) error {
-	return invalidCallError{err: fmt.Errorf(format, args...)}
+	return mcpserve.UserError(format, args...)
 }
+
+// notice is what the requester is told when a failure cannot be shown. It
+// says the call did not get through without saying what it was talking to.
+const notice = "k8s: the cluster could not be reached or the request was refused; see the server log"
 
 // GroupName is the built-in group this package registers into.
 const GroupName = "k8s"
@@ -126,25 +122,21 @@ func RegisterClient(s *mcp.Server, client resourceClient, logger *slog.Logger) e
 	return nil
 }
 
-// curate keeps cluster-side failures out of the requester's view.
+// curate keeps cluster-side failures out of the requester's view, while
+// letting through the ones they can act on.
 //
-// A handler's error becomes the text of a tool result, and a tool result is
-// relayed into chat. Errors this group raises about the call itself are safe
-// to show and pass through; everything reaching it from client-go or from
-// loading a kubeconfig is not — those carry kubeconfig paths, API server
-// addresses, and the identity an authorization check rejected. Those are
-// logged and replaced with a short message that says what failed without
-// saying where.
+// A refusal is recognised here rather than left to the generic branch: being
+// told the cluster might be unreachable, when the real answer is that this
+// bot may not read Secrets, sends someone to look in the wrong place. The
+// identity that was refused stays in the log.
 func curate(logger *slog.Logger, tool string, err error) error {
-	if err == nil {
-		return nil
+	if apierrors.IsForbidden(err) {
+		if logger != nil {
+			logger.Warn("kubernetes call refused", "group", GroupName, "tool", tool, "error", err.Error())
+		}
+		return invalidCall("k8s: not permitted to read that resource")
 	}
-	var invalid invalidCallError
-	if errors.As(err, &invalid) {
-		return err
-	}
-	logger.Error("kubernetes call failed", "group", GroupName, "tool", tool, "error", err.Error())
-	return errors.New("k8s: the cluster could not be reached or the request was rejected; see the server log")
+	return mcpserve.Curate(logger, GroupName, tool, notice, err)
 }
 
 // textResult wraps rendered output as a tool result.

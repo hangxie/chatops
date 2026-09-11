@@ -38,12 +38,12 @@ func Test_Server_contains_panicking_tool(t *testing.T) {
 	require.ErrorContains(t, err, `tool "boom" panicked`)
 
 	// The detail is logged, not returned, so it cannot reach chat — and the
-	// record names the tool, since every call guarded here is a tools/call
-	// and the method alone would not say which one misbehaved.
-	require.Contains(t, logs.String(), "tool panicked")
+	// record names the tool, since the method alone would not say which one
+	// misbehaved.
+	require.Contains(t, logs.String(), "handler panicked")
 	require.Contains(t, logs.String(), "kaboom")
 	require.Contains(t, logs.String(), "group=boom")
-	require.Contains(t, logs.String(), "tool=boom")
+	require.Contains(t, logs.String(), `handler="tool \"boom\""`)
 
 	// The server is still serving afterwards.
 	require.Equal(t, []string{"boom"}, testutils.ToolNames(t, session))
@@ -65,8 +65,9 @@ func Test_RecoverMiddleware_passes_through_success(t *testing.T) {
 }
 
 func Test_RecoverMiddleware_names_a_non_tool_call(t *testing.T) {
-	// The middleware guards every method, not only tools/call, so a request
-	// that names no tool must still be reported rather than dereferenced.
+	// Receiving middleware wraps every method, not only tools/call, so a
+	// request that names no tool is reported by its method rather than as an
+	// anonymous tool.
 	var logs bytes.Buffer
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
 	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
@@ -83,8 +84,8 @@ func Test_RecoverMiddleware_names_a_non_tool_call(t *testing.T) {
 	session := testutils.MCPSession(t, srv)
 
 	_, err := session.ListTools(context.Background(), nil)
-	require.ErrorContains(t, err, "panicked")
-	require.Contains(t, logs.String(), "tool=unknown")
+	require.ErrorContains(t, err, "tools/list panicked")
+	require.Contains(t, logs.String(), "handler=tools/list")
 	require.Contains(t, logs.String(), "method=tools/list")
 }
 

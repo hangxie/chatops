@@ -103,6 +103,23 @@ func sourceLabel(e entry) string {
 	return e.session.name
 }
 
+// candidates lists every name the catalog would hold if nothing were
+// filtered, which is what an operator whose pattern matched nothing needs to
+// see — the filtered list, after a typo, is usually just the host tools.
+func (h *Host) candidates() []string {
+	names := make([]string, 0, len(h.hostTools))
+	for name := range h.hostTools {
+		names = append(names, name)
+	}
+	for _, s := range h.snapshotSessions() {
+		for _, tool := range s.snapshot() {
+			names = append(names, qualify(s.alias, tool.Name))
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 // allowed reports whether a qualified name passes the configured allowlist.
 func (h *Host) allowed(name string) bool {
 	if len(h.allow) == 0 {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +31,7 @@ func Test_downgradeSchema_keeps_usable_keywords(t *testing.T) {
 		},
 		"bare-object": {
 			in:   map[string]any{"type": "object"},
-			want: map[string]any{"type": "object"},
+			want: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		"properties-and-required": {
 			in: map[string]any{
@@ -185,7 +186,9 @@ func Test_downgradeSchema_skips_malformed_subschemas(t *testing.T) {
 		"properties-not-an-object": {
 			in: map[string]any{"type": "object", "properties": "nope"},
 			check: func(t *testing.T, got map[string]any) {
-				require.NotContains(t, got, "properties")
+				// Dropped and replaced by an empty one, as for an object
+				// that declares no properties at all.
+				require.Equal(t, map[string]any{}, got["properties"])
 			},
 		},
 	}
@@ -433,14 +436,42 @@ func Test_downgradeSchema_drops_required_entirely_when_nothing_remains(t *testin
 	require.NotContains(t, downgraded(t, schema), "required")
 }
 
-func Test_downgradeSchema_keeps_an_empty_properties_object(t *testing.T) {
-	// A tool declaring an empty object schema and one declaring none should
-	// be offered the same shape; some endpoints are particular about it.
-	declared := downgraded(t, map[string]any{"type": "object", "properties": map[string]any{}})
-	absent := downgraded(t, nil)
+func Test_downgradeSchema_always_gives_an_object_properties(t *testing.T) {
+	// The shape schema inference actually emits for a tool that reads
+	// nothing: no properties key at all, and an additionalProperties that
+	// gets dropped. Without settling it, ping and status-list would be
+	// offered a bare {"type":"object"}.
+	inferred, err := jsonschema.For[struct{}](nil)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(inferred)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "properties\":{")
 
-	require.Equal(t, absent, declared)
-	require.Equal(t, map[string]any{}, declared["properties"])
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &wire))
+
+	testCases := map[string]any{
+		"inferred-from-an-empty-struct": wire,
+		"declared-empty":                map[string]any{"type": "object", "properties": map[string]any{}},
+		"absent-entirely":               nil,
+		"bare-object":                   map[string]any{"type": "object"},
+	}
+
+	want := map[string]any{"type": "object", "properties": map[string]any{}}
+	for name, schema := range testCases {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, want, downgraded(t, schema))
+		})
+	}
+}
+
+func Test_downgradeSchema_gives_nested_objects_properties(t *testing.T) {
+	schema := map[string]any{"type": "object", "properties": map[string]any{
+		"filter": map[string]any{"type": "object"},
+	}}
+
+	props := downgraded(t, schema)["properties"].(map[string]any)
+	require.Equal(t, map[string]any{"type": "object", "properties": map[string]any{}}, props["filter"])
 }
 
 func Test_downgradeSchema_reports_a_bad_collapsed_branch(t *testing.T) {

@@ -141,6 +141,9 @@ func Test_Allow_warns_about_a_pattern_that_matches_nothing(t *testing.T) {
 	require.Empty(t, host.Names())
 	require.Contains(t, logs.String(), "tool pattern matched nothing")
 	require.Contains(t, logs.String(), "k8s-lst")
+	// The names offered are the unfiltered ones, so they show what was meant
+	// rather than the empty result of the typo.
+	require.Contains(t, logs.String(), "k8s-list")
 }
 
 func Test_Allow_does_not_warn_when_every_pattern_matches(t *testing.T) {

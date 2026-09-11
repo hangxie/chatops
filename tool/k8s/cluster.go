@@ -2,7 +2,6 @@ package k8s
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -63,7 +62,7 @@ var eventsGVR = schema.GroupVersionResource{Version: "v1", Resource: "events"}
 func (c *cluster) mappingFor(resourceOrKind string) (*meta.RESTMapping, error) {
 	arg := strings.TrimSpace(resourceOrKind)
 	if arg == "" {
-		return nil, errors.New("k8s: resource kind is required")
+		return nil, invalidCall("k8s: resource kind is required")
 	}
 
 	mapping, err := c.resolveMapping(arg)
@@ -73,7 +72,8 @@ func (c *cluster) mappingFor(resourceOrKind string) (*meta.RESTMapping, error) {
 	}
 	if err != nil {
 		if meta.IsNoMatchError(err) {
-			return nil, fmt.Errorf("k8s: server has no resource type %q", arg)
+			// The requester chose this type, so a typo in it is theirs to see.
+			return nil, invalidCall("k8s: server has no resource type %q", arg)
 		}
 		return nil, fmt.Errorf("k8s: resolve resource type %q: %w", arg, err)
 	}

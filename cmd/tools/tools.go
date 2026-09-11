@@ -50,6 +50,10 @@ func (c Cmd) Run(ctx context.Context) (err error) {
 		// listed from its definition rather than opened.
 		HostTools: []mcphost.HostTool{{Def: reply.Definition(), Handler: unavailable}},
 		Allow:     c.Tools,
+		// This is the command an operator reaches for to try a --tool
+		// pattern out, so the warning about one that matches nothing has to
+		// arrive here of all places.
+		Logger: logger,
 	})
 	if err != nil {
 		return fmt.Errorf("tools: %w", err)

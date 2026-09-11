@@ -63,6 +63,9 @@ func downgradeSchema(raw any) (json.RawMessage, error) {
 	if _, hasType := converted["type"]; !hasType {
 		converted["type"] = "object"
 	}
+	// The root's type may have just been defaulted, so its properties are
+	// settled after it rather than inside convertSchema.
+	ensureObjectProperties(converted)
 	return mustJSON(converted), nil
 }
 
@@ -93,9 +96,6 @@ func convertSchema(node, root map[string]any, depth int) (map[string]any, error)
 			if err != nil {
 				return nil, err
 			}
-			// Kept even when empty: a tool that declares an empty object
-			// schema and one that declares none should be offered the same
-			// shape, and some endpoints are particular about it.
 			if props != nil {
 				out[key] = props
 			}
@@ -131,8 +131,27 @@ func convertSchema(node, root map[string]any, depth int) (map[string]any, error)
 		}
 		out = merged
 	}
+	ensureObjectProperties(out)
 	pruneRequired(out)
 	return out, nil
+}
+
+// ensureObjectProperties gives an object schema a properties map when it has
+// none.
+//
+// A tool that reads nothing is the common case: schema inference emits
+// {"type":"object","additionalProperties":false} with no properties at all,
+// and dropping additionalProperties would otherwise leave a bare
+// {"type":"object"}. Some endpoints are particular about that, and a tool
+// that declares an empty object should be offered the same shape as one that
+// declares none.
+func ensureObjectProperties(schema map[string]any) {
+	if schema["type"] != "object" {
+		return
+	}
+	if _, declared := schema["properties"]; !declared {
+		schema["properties"] = map[string]any{}
+	}
 }
 
 // pruneRequired drops required names with no matching property.

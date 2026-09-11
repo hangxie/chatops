@@ -38,25 +38,28 @@ func RecoverMiddleware(group string, logger *slog.Logger) mcp.Middleware {
 				if recovered == nil {
 					return
 				}
-				name := calledTool(req)
-				logger.Error("tool panicked",
-					"group", group, "method", method, "tool", name,
+				what := panicked(method, req)
+				logger.Error("handler panicked",
+					"group", group, "method", method, "handler", what,
 					"panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
 				result = nil
-				err = fmt.Errorf("%s: tool %q panicked", group, name)
+				err = fmt.Errorf("%s: %s panicked", group, what)
 			}()
 			return next(ctx, method, req)
 		}
 	}
 }
 
-// calledTool names the tool a request invokes. Every call the middleware
-// guards is a tools/call, so the method alone would say nothing useful about
-// which tool misbehaved.
-func calledTool(req mcp.Request) string {
+// panicked names what misbehaved.
+//
+// Receiving middleware wraps every method, not only tools/call — initialize,
+// tools/list and notifications go through it too — so the method is the
+// answer unless the request names a tool, in which case the method alone
+// would not say which one.
+func panicked(method string, req mcp.Request) string {
 	call, ok := req.(*mcp.CallToolRequest)
-	if !ok || call.Params == nil {
-		return "unknown"
+	if !ok || call.Params == nil || call.Params.Name == "" {
+		return method
 	}
-	return call.Params.Name
+	return fmt.Sprintf("tool %q", call.Params.Name)
 }

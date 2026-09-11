@@ -70,6 +70,7 @@ func Register(s *mcp.Server, opts mcpserve.Options) error {
 	if err := mcpserve.CheckOptions(GroupName, opts.Query); err != nil {
 		return err
 	}
+	sharedDefaultChecker.SetLogger(opts.Logger)
 	return RegisterChecker(s, sharedDefaultChecker)
 }
 
