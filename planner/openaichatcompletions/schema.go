@@ -25,6 +25,13 @@ const maxSchemaDepth = 12
 // keptKeywords are the schema keywords carried through the downgrade. Every
 // other keyword is dropped: either the endpoints reject it, or it only
 // constrains values the server will validate itself.
+//
+// Dropping is silent by design — an unknown keyword is exactly what should
+// not reach an endpoint that may reject the whole request over it — which
+// means a keyword MCP gains later disappears without anyone noticing. The
+// treatment of every construct this file knows about is therefore pinned in
+// Test_downgradeSchema_documents_what_is_stripped, and this set is pinned
+// with it, so growing either is a decision rather than an accident.
 var keptKeywords = map[string]bool{
 	"type":        true,
 	"description": true,

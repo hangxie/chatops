@@ -146,6 +146,49 @@ func Test_Allow_warns_about_a_pattern_that_matches_nothing(t *testing.T) {
 	require.Contains(t, logs.String(), "k8s-list")
 }
 
+func Test_Allow_notes_that_host_tools_are_exempt(t *testing.T) {
+	// An operator who wrote --tool ping and finds reply in the catalog has no
+	// way to tell whether that is a bug or the rule.
+	var logs bytes.Buffer
+	var called boolFlag
+	host := newHost(t, mcphost.Config{
+		Servers:   []mcphost.ServerSpec{mcphost.InProcess("alpha", "", stubServer("alpha", "ping"))},
+		HostTools: []mcphost.HostTool{hostTool("reply", &called.b)},
+		Allow:     []string{"ping"},
+		Logger:    slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+
+	require.Equal(t, []string{"ping", "reply"}, host.Names())
+	require.Contains(t, logs.String(), "host tools are offered regardless")
+	require.Contains(t, logs.String(), "reply")
+}
+
+func Test_Allow_says_nothing_when_the_allowlist_covers_everything(t *testing.T) {
+	var logs bytes.Buffer
+	var called boolFlag
+	newHost(t, mcphost.Config{
+		Servers:   []mcphost.ServerSpec{mcphost.InProcess("alpha", "", stubServer("alpha", "ping"))},
+		HostTools: []mcphost.HostTool{hostTool("reply", &called.b)},
+		Allow:     []string{"ping", "reply"},
+		Logger:    slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+
+	require.NotContains(t, logs.String(), "host tools are offered regardless")
+}
+
+func Test_Allow_says_nothing_without_an_allowlist(t *testing.T) {
+	var logs bytes.Buffer
+	var called boolFlag
+	newHost(t, mcphost.Config{
+		Servers:   []mcphost.ServerSpec{mcphost.InProcess("alpha", "", stubServer("alpha", "ping"))},
+		HostTools: []mcphost.HostTool{hostTool("reply", &called.b)},
+		Logger:    slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+
+	require.NotContains(t, logs.String(), "host tools are offered regardless")
+	require.NotContains(t, logs.String(), "matched nothing")
+}
+
 func Test_Allow_does_not_warn_when_every_pattern_matches(t *testing.T) {
 	var logs bytes.Buffer
 	newHost(t, mcphost.Config{

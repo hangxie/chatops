@@ -283,11 +283,27 @@ Points worth knowing:
 - **A failed refresh keeps the tools already known.** Nothing retries a listing — the only thing that starts one is the server reporting another change — so clearing the cache on a single timeout would drop that server from the catalog for as long as it stayed quiet. The initial listing is the exception: there is no previous list to keep, so the session is refused outright.
 - **Startup is strict, running is lenient.** A server that cannot be connected or listed fails `New`, which suits built-in groups but is the opposite of the running rule. See [Deferred decisions](#deferred-decisions).
 
+### What the SDK does that the code works around
+
+Five behaviours of `modelcontextprotocol/go-sdk` shape this package and are not obvious from its documentation. Each was found by measurement, and each is the reason a piece of code looks the way it does — so changing that code without knowing them will reintroduce the bug it fixes.
+
+1. **Handler panics are not recovered.** Each request runs on its own goroutine, and an unrecovered panic takes the process down — which for an in-process group is the bot. `mcpserve.RecoverMiddleware` contains them. It is registered *after* the group, because the SDK wraps each middleware around what is already there: last added is outermost, so a guard added first sits inside anything the group installed.
+
+2. **`Client.Connect` does not honour its context.** It blocks writing the initialize request until the peer reads it, and cancelling does not interrupt that write — measured at three leaked goroutines per attempt against a peer that never appears. Closing the connection does interrupt it, which is why `mcphost` connects through a transport that retains the connection so it can be closed on timeout.
+
+3. **`Client.Connect`'s context bounds only the handshake.** A session outlives the context that created it, which is what makes a connect timeout safe to impose at all. It also means the handshake budget must not be reused for the listing that follows: deriving from a context that already carries a deadline keeps the earlier one, so `ListTimeout` would be silently capped by whatever the handshake left.
+
+4. **A pending `tools/list` can outlive its context too.** A server that accepts the request and goes quiet would wedge a refresh that has no caller to cancel it, so the session bounds every listing itself.
+
+5. **`http.Client`'s own timeout looks like a cancellation.** Its error satisfies `errors.Is(err, context.DeadlineExceeded)` and arrives wrapped in a `*url.Error` carrying the address it was calling. Anything deciding "the caller went away" from the error would relay that address; `mcpserve.Curate` asks the caller's context instead.
+
+One more, on the other side of the boundary: the in-memory transport is `net.Pipe` driving the same newline-delimited JSON codec as stdio, so it is a full protocol round trip rather than a shortcut — which is what makes an in-process group and a split-out one behave identically.
+
 ### Deferred decisions
 
 Two host policies suit the built-in groups and will not suit servers a network away. Both are settled deliberately rather than by default, and both should be revisited together with the design for connecting external servers, since that is what makes them matter:
 
-- **Startup is strict.** `mcphost.New` fails if any server cannot be connected or listed. For a built-in group that is a bug or a misconfiguration worth stopping for. For one external server among several it contradicts the rule applied everywhere else — that a server which goes quiet costs only its own tools — so the lenient rule belongs with reconnection and backoff rather than on its own.
+- **Startup is strict.** `mcphost.New` fails if any server cannot be connected or listed. For a built-in group that is a bug or a misconfiguration worth stopping for. For one external server among several it contradicts the rule applied everywhere else — that a server which goes quiet costs only its own tools — so the lenient rule belongs with reconnection and backoff rather than on its own. Whether it should be the rule or an option is part of that decision: an operator who lists a server explicitly may well want startup to fail without it.
 - **Servers connect serially.** The worst case is `ConnectTimeout + ListTimeout` per server, which is immaterial in process and is not once a handshake crosses a network. Connecting concurrently must keep the order of the spec list, because that order is what decides which server keeps a name two of them claim.
 
 ### Host tools

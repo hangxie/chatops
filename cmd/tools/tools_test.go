@@ -14,6 +14,9 @@ func Test_Cmd_Run(t *testing.T) {
 	tests := map[string]struct {
 		cmd   Cmd
 		names []string
+		// note is what the command says about the selection, on stderr. A
+		// selection that excludes no host tool says nothing.
+		note string
 	}{
 		"plain":      {cmd: Cmd{}, names: []string{"reply", "k8s-get", "k8s-list", "ping", "status-check", "status-list"}},
 		"json":       {cmd: Cmd{JSON: true}, names: []string{"reply", "k8s-get", "k8s-list", "ping", "status-check", "status-list"}},
@@ -21,9 +24,18 @@ func Test_Cmd_Run(t *testing.T) {
 		"two-groups": {cmd: Cmd{Builtin: []string{"ping", "status"}}, names: []string{"reply", "ping", "status-check", "status-list"}},
 		// reply is a host tool and is never filtered, so it heads every
 		// listing: a planner is always offered a way to answer.
-		"tool-filter":   {cmd: Cmd{Tools: []string{"k8s-*"}}, names: []string{"reply", "k8s-get", "k8s-list"}},
-		"tool-filter-2": {cmd: Cmd{Tools: []string{"ping"}}, names: []string{"reply", "ping"}},
-		"with-option":   {cmd: Cmd{Builtin: []string{"k8s?context=prod"}}, names: []string{"reply", "k8s-get", "k8s-list"}},
+		"tool-filter": {
+			cmd: Cmd{Tools: []string{"k8s-*"}}, names: []string{"reply", "k8s-get", "k8s-list"},
+			note: "host tools are offered regardless",
+		},
+		"tool-filter-2": {
+			cmd: Cmd{Tools: []string{"ping"}}, names: []string{"reply", "ping"},
+			note: "host tools are offered regardless",
+		},
+		"tool-filter-covers-reply": {
+			cmd: Cmd{Tools: []string{"ping", "reply"}}, names: []string{"reply", "ping"},
+		},
+		"with-option": {cmd: Cmd{Builtin: []string{"k8s?context=prod"}}, names: []string{"reply", "k8s-get", "k8s-list"}},
 	}
 
 	for name, tc := range tests {
@@ -31,7 +43,11 @@ func Test_Cmd_Run(t *testing.T) {
 			stdout, stderr := testutils.CaptureStdoutStderr(func() {
 				require.NoError(t, tc.cmd.Run(context.Background()))
 			})
-			require.Empty(t, stderr)
+			if tc.note == "" {
+				require.Empty(t, stderr)
+			} else {
+				require.Contains(t, stderr, tc.note)
+			}
 
 			if tc.cmd.JSON {
 				var listings []listing

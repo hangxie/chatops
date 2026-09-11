@@ -3,6 +3,7 @@ package openaichatcompletions
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -540,6 +541,69 @@ func Test_downgradeSchema_sees_through_a_wrapped_root(t *testing.T) {
 				return
 			}
 			require.NotContains(t, got, "properties", "a free-form tool was narrowed to accepting no fields")
+		})
+	}
+}
+
+// Test_downgradeSchema_documents_what_is_stripped records the treatment of
+// every construct the downgrade knows about.
+//
+// Dropping an unrecognised keyword is the point — it is what keeps a schema
+// inside the subset the completion endpoints accept — but it also means a
+// keyword MCP gains later vanishes silently. This table is where that shows
+// up: a new construct has no entry, and adding one is a decision about
+// whether it survives.
+func Test_downgradeSchema_documents_what_is_stripped(t *testing.T) {
+	// The kept set itself is pinned, so widening it is deliberate.
+	kept := make([]string, 0, len(keptKeywords))
+	for keyword := range keptKeywords {
+		kept = append(kept, keyword)
+	}
+	sort.Strings(kept)
+	require.Equal(t, []string{"description", "enum", "items", "properties", "required", "type"}, kept)
+
+	field := func(schema map[string]any) map[string]any {
+		return map[string]any{"type": "object", "properties": map[string]any{"a": schema}}
+	}
+
+	testCases := map[string]struct {
+		what string
+		in   map[string]any
+		want map[string]any
+	}{
+		"type":        {what: "kept", in: map[string]any{"type": "string"}, want: map[string]any{"type": "string"}},
+		"description": {what: "kept", in: map[string]any{"type": "string", "description": "d"}, want: map[string]any{"type": "string", "description": "d"}},
+		"enum":        {what: "kept", in: map[string]any{"type": "string", "enum": []any{"a"}}, want: map[string]any{"type": "string", "enum": []any{"a"}}},
+		"items":       {what: "kept", in: map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, want: map[string]any{"type": "array", "items": map[string]any{"type": "string"}}},
+
+		"const":              {what: "folded into enum", in: map[string]any{"type": "string", "const": "x"}, want: map[string]any{"type": "string", "enum": []any{"x"}}},
+		"nullable type list": {what: "reduced to one type", in: map[string]any{"type": []any{"string", "null"}}, want: map[string]any{"type": "string"}},
+		"sole anyOf branch": {
+			what: "collapsed",
+			in:   map[string]any{"anyOf": []any{map[string]any{"type": "integer"}, map[string]any{"type": "null"}}},
+			want: map[string]any{"type": "integer"},
+		},
+
+		"additionalProperties": {what: "dropped", in: map[string]any{"type": "object", "additionalProperties": false}, want: map[string]any{"type": "object"}},
+		"$schema":              {what: "dropped", in: map[string]any{"type": "string", "$schema": "https://json-schema.org/draft/2020-12/schema"}, want: map[string]any{"type": "string"}},
+		"$id":                  {what: "dropped", in: map[string]any{"type": "string", "$id": "urn:x"}, want: map[string]any{"type": "string"}},
+		"not":                  {what: "dropped", in: map[string]any{"type": "string", "not": map[string]any{"const": "x"}}, want: map[string]any{"type": "string"}},
+		"patternProperties":    {what: "dropped", in: map[string]any{"type": "object", "patternProperties": map[string]any{"^a": map[string]any{}}}, want: map[string]any{"type": "object"}},
+		"format":               {what: "dropped", in: map[string]any{"type": "string", "format": "date-time"}, want: map[string]any{"type": "string"}},
+		"default":              {what: "dropped", in: map[string]any{"type": "string", "default": "x"}, want: map[string]any{"type": "string"}},
+		"minimum":              {what: "dropped", in: map[string]any{"type": "integer", "minimum": 1}, want: map[string]any{"type": "integer"}},
+		"pattern":              {what: "dropped", in: map[string]any{"type": "string", "pattern": "^a"}, want: map[string]any{"type": "string"}},
+		"ambiguous oneOf": {
+			what: "dropped entirely; two real branches cannot be expressed",
+			in:   map[string]any{"oneOf": []any{map[string]any{"type": "string"}, map[string]any{"type": "integer"}}},
+			want: map[string]any{},
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name+" is "+tc.what, func(t *testing.T) {
+			got := downgraded(t, field(tc.in))
+			require.Equal(t, tc.want, got["properties"].(map[string]any)["a"])
 		})
 	}
 }

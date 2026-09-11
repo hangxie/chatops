@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -222,8 +223,39 @@ func New(ctx context.Context, cfg Config) (*Host, error) {
 		h.mu.Unlock()
 	}
 	h.rebuild()
-	h.warnUnmatchedPatterns()
+	h.explainAllowlist()
 	return h, nil
+}
+
+// explainAllowlist reports what an operator's --tool selection did that they
+// may not expect: a pattern that matched nothing, and a host tool offered
+// even though the selection would have excluded it.
+func (h *Host) explainAllowlist() {
+	if len(h.allow) == 0 {
+		return
+	}
+	h.warnUnmatchedPatterns()
+	h.noteExemptHostTools()
+}
+
+// noteExemptHostTools records host tools kept despite the allowlist.
+//
+// Host tools are never filtered, so an operator who wrote "--tool ping" and
+// finds reply in the catalog has no way to tell whether that is a bug or the
+// rule. Saying so once at startup is cheaper than them finding out from the
+// catalog and wondering.
+func (h *Host) noteExemptHostTools() {
+	names := make([]string, 0, len(h.hostTools))
+	for name := range h.hostTools {
+		if !h.allowed(name) {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	sort.Strings(names)
+	h.logger.Info("host tools are offered regardless of the tool allowlist", "tools", names)
 }
 
 // warnUnmatchedPatterns reports allowlist patterns that matched no tool.
@@ -233,9 +265,6 @@ func New(ctx context.Context, cfg Config) (*Host, error) {
 // reply. That is exactly the typo validating early is meant to catch, so it
 // is called out rather than left for someone to notice in chat.
 func (h *Host) warnUnmatchedPatterns() {
-	if len(h.allow) == 0 {
-		return
-	}
 	candidates := h.candidates()
 	for _, pattern := range h.allow {
 		matched := false

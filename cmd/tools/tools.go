@@ -37,9 +37,11 @@ type listing struct {
 // planner would be offered — including the effect of --builtin and --tool,
 // which mean the same here as they do on the server.
 func (c Cmd) Run(ctx context.Context) (err error) {
-	// Listing never calls a tool, but a group may still report a problem
-	// while registering; stdout carries the listing, so that goes to stderr.
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	// Listing never calls a tool, but the host still has things to say about
+	// the selection — a pattern that matched nothing, a host tool kept
+	// despite it — and this is the command an operator tries a selection out
+	// in. Stdout carries the listing, so all of it goes to stderr.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	servers, err := builtin.Servers(c.Builtin, nil, logger)
 	if err != nil {
 		return fmt.Errorf("tools: %w", err)
