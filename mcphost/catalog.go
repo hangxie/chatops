@@ -38,7 +38,17 @@ type entry struct {
 // report its tools changed as soon as it is connected. The session list is
 // therefore snapshotted under the lock, and New rebuilds once more when every
 // server is in, so an early rebuild is at worst momentarily incomplete.
+//
+// Rebuilds are serialized end to end, not just while publishing. Two servers
+// reporting a change at once would otherwise each assemble a catalog from
+// separately taken snapshots, and the one that finished last could publish
+// the older view — leaving the catalog stale, with a bumped generation that
+// tells downstream caches it is current, until some later notification
+// happened to correct it.
 func (h *Host) rebuild() {
+	h.rebuildMu.Lock()
+	defer h.rebuildMu.Unlock()
+
 	catalog := make(map[string]entry)
 	var ordered []*mcp.Tool
 

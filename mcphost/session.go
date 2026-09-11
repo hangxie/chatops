@@ -80,35 +80,96 @@ func newSession(ctx context.Context, spec ServerSpec, listTimeout time.Duration,
 	return s, nil
 }
 
+// errAbandoned reports a handshake given up on before it completed.
+var errAbandoned = errors.New("handshake abandoned")
+
+// handshakeTransport wraps a transport so the connection it opens can be
+// closed from outside the handshake.
+//
+// Client.Connect blocks writing the initialize request until the peer reads
+// it, and cancelling its context does not interrupt that write. Closing the
+// connection does, which is the only way to stop waiting on a peer that
+// accepted the connection and then went quiet.
+type handshakeTransport struct {
+	inner mcp.Transport
+
+	mu        sync.Mutex
+	conn      mcp.Connection
+	abandoned bool
+}
+
+// Connect opens the wrapped transport and remembers the connection, so
+// abandon can close it. A transport that opens after the handshake has
+// already been abandoned is closed immediately rather than left running.
+func (t *handshakeTransport) Connect(ctx context.Context) (mcp.Connection, error) {
+	conn, err := t.inner.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.abandoned {
+		return nil, errors.Join(errAbandoned, conn.Close())
+	}
+	t.conn = conn
+	return conn, nil
+}
+
+// abandon closes the connection, unblocking a handshake that is waiting on a
+// peer that will not answer.
+func (t *handshakeTransport) abandon() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.abandoned = true
+	if t.conn == nil {
+		return nil
+	}
+	return t.conn.Close()
+}
+
 // connect performs the handshake under ctx.
 //
-// Client.Connect blocks in the handshake until the peer answers and does not
-// itself honor ctx, so a server that accepts the connection and then goes
-// quiet would block forever. The handshake therefore runs on its own
-// goroutine and ctx bounds the wait; a session that arrives after the wait is
-// closed rather than leaked.
+// The handshake runs on its own goroutine so ctx can bound the wait, and on
+// timeout the connection is closed so that goroutine finishes rather than
+// blocking on a peer forever. Without the close, both it and the goroutine
+// reaping it would leak for the life of the process — once per attempt, which
+// matters most to a caller that retries.
 func connect(ctx context.Context, client *mcp.Client, transport mcp.Transport) (*mcp.ClientSession, error) {
-	type connected struct {
-		session *mcp.ClientSession
-		err     error
-	}
+	handshake := &handshakeTransport{inner: transport}
 	// Buffered, so the handshake goroutine never blocks on a send nobody is
 	// waiting for any more.
-	done := make(chan connected, 1)
+	done := make(chan handshakeResult, 1)
 	go func() {
-		session, err := client.Connect(context.WithoutCancel(ctx), transport, nil)
-		done <- connected{session: session, err: err}
+		session, err := client.Connect(ctx, handshake, nil)
+		done <- handshakeResult{session: session, err: err}
 	}()
 	select {
 	case result := <-done:
 		return result.session, result.err
 	case <-ctx.Done():
-		go func() {
-			if result := <-done; result.session != nil {
-				_ = result.session.Close()
-			}
-		}()
-		return nil, fmt.Errorf("handshake did not complete: %w", ctx.Err())
+		abandonErr := handshake.abandon()
+		// Abandoning ends the handshake, so this goroutine completes rather
+		// than blocking forever.
+		go discardLateSession(done)
+		return nil, errors.Join(fmt.Errorf("handshake did not complete: %w", ctx.Err()), abandonErr)
+	}
+}
+
+// handshakeResult is the outcome of one handshake attempt.
+type handshakeResult struct {
+	session *mcp.ClientSession
+	err     error
+}
+
+// discardLateSession closes a session that arrived after the wait for it was
+// abandoned, so a handshake that won the race is not left connected.
+//
+// Closing the connection normally makes a late handshake fail, which leaves
+// nothing to discard; this covers the narrow case where the handshake
+// completed just as the wait gave up on it.
+func discardLateSession(done <-chan handshakeResult) {
+	if result := <-done; result.session != nil {
+		_ = result.session.Close()
 	}
 }
 

@@ -138,6 +138,10 @@ type Host struct {
 	listTimeout    time.Duration
 	sessions       []*session
 
+	// rebuildMu serializes catalog rebuilds, so a slower one cannot publish
+	// an older view after a faster one has published a newer.
+	rebuildMu sync.Mutex
+
 	// runCtx bounds in-process servers and outlives the call to New, which
 	// only bounds connecting.
 	runCtx  context.Context

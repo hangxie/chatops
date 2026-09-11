@@ -3,10 +3,17 @@ package mcphost_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
+	"slices"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stretchr/testify/require"
 
@@ -174,6 +181,64 @@ func Test_long_names_are_truncated_distinctly(t *testing.T) {
 	result, err := host.CallTool(context.Background(), names[0], nil)
 	require.NoError(t, err)
 	require.Contains(t, mcphost.Render(result), "alpha/")
+}
+
+// Test_concurrent_rebuilds_converge drives every server into announcing a
+// tool change at once and checks that the catalog ends up holding all of
+// them. Nothing arrives later to repair a stale view, so the final state is
+// the only state.
+//
+// It is not a reproducer for the interleaving that motivated serializing
+// rebuilds — publishing an older view after a newer one needs a session's
+// cache to change inside another rebuild's assembly, and assembling is
+// consistently faster than the refresh that would change it. It covers
+// convergence, not the exclusion that guarantees it.
+func Test_concurrent_rebuilds_converge(t *testing.T) {
+	const servers = 16
+	const bulk = 50
+	srvs := make([]*mcp.Server, servers)
+	specs := make([]mcphost.ServerSpec, servers)
+	for i := range srvs {
+		name := fmt.Sprintf("s%d", i)
+		// Large tool lists make assembling a catalog take long enough for
+		// two rebuilds to genuinely overlap.
+		tools := make([]string, 0, bulk+1)
+		tools = append(tools, name+"-base")
+		for j := range bulk {
+			tools = append(tools, fmt.Sprintf("%s-bulk%03d", name, j))
+		}
+		srvs[i] = stubServer(name, tools...)
+		specs[i] = mcphost.InProcess(name, "", srvs[i])
+	}
+	host := newHost(t, mcphost.Config{Servers: specs})
+	require.Len(t, host.Names(), servers*(bulk+1))
+
+	// Every server announces a new tool at the same moment.
+	var wg sync.WaitGroup
+	for i, srv := range srvs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			addEcho(srv, fmt.Sprintf("s%d", i), fmt.Sprintf("s%d-added", i))
+		}()
+	}
+	wg.Wait()
+
+	want := make([]string, 0, servers*(bulk+2))
+	for i := range srvs {
+		name := fmt.Sprintf("s%d", i)
+		want = append(want, name+"-added", name+"-base")
+		for j := range bulk {
+			want = append(want, fmt.Sprintf("%s-bulk%03d", name, j))
+		}
+	}
+	sort.Strings(want)
+
+	// Once the notifications have been handled the catalog must hold every
+	// server's current tools; nothing arrives later to repair a stale view.
+	require.Eventually(t, func() bool {
+		return slices.Equal(host.Names(), want)
+	}, 5*time.Second, 10*time.Millisecond, "catalog settled stale: %v", host.Names())
 }
 
 func Test_Generation_changes_with_catalog(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -309,6 +310,92 @@ func Test_session_close_wraps_error(t *testing.T) {
 	require.ErrorIs(t, err, closeErr)
 	require.ErrorContains(t, err, `close server "alpha"`)
 }
+
+// Test_connect_leaks_no_goroutines_on_timeout is the point of closing the
+// connection when the handshake gives up. Cancelling the context does not
+// interrupt the blocked write, so without the close both the handshake
+// goroutine and the one reaping it would stay blocked for the life of the
+// process — once per attempt, which compounds for a caller that retries.
+func Test_connect_leaks_no_goroutines_on_timeout(t *testing.T) {
+	settle := func() {
+		for range 20 {
+			runtime.GC()
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	settle()
+	before := runtime.NumGoroutine()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: ClientVersion}, nil)
+	for range 5 {
+		// A peer that never appears: the in-memory transport's writes block
+		// until someone reads them.
+		_, clientTransport := mcp.NewInMemoryTransports()
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		session, err := connect(ctx, client, clientTransport)
+		cancel()
+		require.Nil(t, session)
+		require.ErrorContains(t, err, "handshake did not complete")
+	}
+
+	settle()
+	require.LessOrEqual(t, runtime.NumGoroutine(), before+1,
+		"timed-out handshakes leaked goroutines (before=%d)", before)
+}
+
+func Test_discardLateSession(t *testing.T) {
+	// A handshake that completed just as the wait gave up leaves a live
+	// session nobody holds; it must be closed rather than left connected.
+	srv := echoServer("late", "one")
+	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: ClientVersion}, nil)
+	session, err := client.Connect(context.Background(), serve(t, srv), nil)
+	require.NoError(t, err)
+
+	done := make(chan handshakeResult, 1)
+	done <- handshakeResult{session: session}
+	discardLateSession(done)
+
+	_, err = session.ListTools(context.Background(), nil)
+	require.Error(t, err, "the discarded session is still usable")
+}
+
+func Test_discardLateSession_without_a_session(t *testing.T) {
+	// The usual case: abandoning made the handshake fail, so there is
+	// nothing to close.
+	done := make(chan handshakeResult, 1)
+	done <- handshakeResult{err: errAbandoned}
+	require.NotPanics(t, func() { discardLateSession(done) })
+}
+
+func Test_handshakeTransport_closes_a_late_connection(t *testing.T) {
+	opened := make(chan struct{})
+	release := make(chan struct{})
+	handshake := &handshakeTransport{inner: transportFunc(func(ctx context.Context) (mcp.Connection, error) {
+		close(opened)
+		<-release
+		_, clientTransport := mcp.NewInMemoryTransports()
+		return clientTransport.Connect(ctx)
+	})}
+
+	connected := make(chan error, 1)
+	go func() {
+		_, err := handshake.Connect(context.Background())
+		connected <- err
+	}()
+
+	// Abandon while the transport is still opening, so the connection only
+	// exists after the decision to give up: it must be closed, not kept.
+	<-opened
+	require.NoError(t, handshake.abandon())
+	close(release)
+
+	require.ErrorIs(t, <-connected, errAbandoned)
+}
+
+// transportFunc adapts a function to mcp.Transport.
+type transportFunc func(context.Context) (mcp.Connection, error)
+
+func (f transportFunc) Connect(ctx context.Context) (mcp.Connection, error) { return f(ctx) }
 
 func Test_connect_closes_a_session_that_arrives_after_the_deadline(t *testing.T) {
 	srv := echoServer("slow", "one")
