@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"net/url"
+	"path/filepath"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -20,11 +21,12 @@ func Test_Register_options(t *testing.T) {
 		opts   url.Values
 		errMsg string
 	}{
-		"none":        {opts: nil},
-		"kubeconfig":  {opts: url.Values{optionKubeconfig: {path}}},
-		"context":     {opts: url.Values{optionKubeconfig: {path}, optionContext: {"alpha"}}},
-		"unknown-key": {opts: url.Values{"cluster": {"prod"}}, errMsg: `unknown option cluster`},
-		"namespace":   {opts: url.Values{"namespace": {"web"}}, errMsg: `unknown option namespace`},
+		"none":                 {opts: nil},
+		"kubeconfig":           {opts: url.Values{optionKubeconfig: {path}}},
+		"context":              {opts: url.Values{optionKubeconfig: {path}, optionContext: {"alpha"}}},
+		"unresolvable-cluster": {opts: url.Values{optionContext: {"no-such-context"}}},
+		"unknown-key":          {opts: url.Values{"cluster": {"prod"}}, errMsg: `unknown option cluster`},
+		"namespace":            {opts: url.Values{"namespace": {"web"}}, errMsg: `unknown option namespace`},
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
@@ -39,10 +41,27 @@ func Test_Register_options(t *testing.T) {
 	}
 }
 
-func Test_Register_bad_kubeconfig(t *testing.T) {
+// Test_Register_defers_the_kubeconfig checks that a cluster which cannot be
+// resolved does not stop the group from being served. The group is served by
+// default, so a host with no kubeconfig — CI, or any machine that never talks
+// to Kubernetes — must still start; the problem surfaces on the call instead.
+func Test_Register_defers_the_kubeconfig(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-	err := Register(srv, nil, url.Values{optionKubeconfig: {t.TempDir() + "/missing.yaml"}, optionContext: {"nope"}})
-	require.ErrorContains(t, err, "k8s")
+	require.NoError(t, Register(srv, nil, url.Values{
+		optionKubeconfig: {filepath.Join(t.TempDir(), "missing.yaml")},
+		optionContext:    {"nope"},
+	}))
+	session := testutils.MCPSession(t, srv)
+
+	require.Equal(t, []string{GetToolName, ListToolName}, testutils.ToolNames(t, session))
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      ListToolName,
+		Arguments: map[string]any{"kind": "pods"},
+	})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	require.Contains(t, testutils.ResultText(t, result), "load kubeconfig")
 }
 
 func Test_RegisterClient_declares_tools(t *testing.T) {

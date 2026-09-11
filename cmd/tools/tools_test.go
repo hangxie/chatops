@@ -15,12 +15,15 @@ func Test_Cmd_Run(t *testing.T) {
 		cmd   Cmd
 		names []string
 	}{
-		"plain":         {cmd: Cmd{}, names: []string{"reply", "k8s-get", "k8s-list", "ping", "status-check", "status-list"}},
-		"json":          {cmd: Cmd{JSON: true}, names: []string{"reply", "k8s-get", "k8s-list", "ping", "status-check", "status-list"}},
-		"one-group":     {cmd: Cmd{Builtin: []string{"status"}}, names: []string{"reply", "status-check", "status-list"}},
-		"two-groups":    {cmd: Cmd{Builtin: []string{"ping", "status"}}, names: []string{"reply", "ping", "status-check", "status-list"}},
-		"tool-filter":   {cmd: Cmd{Tools: []string{"k8s-*"}}, names: []string{"k8s-get", "k8s-list"}},
-		"tool-filter-2": {cmd: Cmd{Tools: []string{"ping", "reply"}}, names: []string{"reply", "ping"}},
+		"plain":      {cmd: Cmd{}, names: []string{"reply", "k8s-get", "k8s-list", "ping", "status-check", "status-list"}},
+		"json":       {cmd: Cmd{JSON: true}, names: []string{"reply", "k8s-get", "k8s-list", "ping", "status-check", "status-list"}},
+		"one-group":  {cmd: Cmd{Builtin: []string{"status"}}, names: []string{"reply", "status-check", "status-list"}},
+		"two-groups": {cmd: Cmd{Builtin: []string{"ping", "status"}}, names: []string{"reply", "ping", "status-check", "status-list"}},
+		// reply is a host tool and is never filtered, so it heads every
+		// listing: a planner is always offered a way to answer.
+		"tool-filter":   {cmd: Cmd{Tools: []string{"k8s-*"}}, names: []string{"reply", "k8s-get", "k8s-list"}},
+		"tool-filter-2": {cmd: Cmd{Tools: []string{"ping"}}, names: []string{"reply", "ping"}},
+		"with-option":   {cmd: Cmd{Builtin: []string{"k8s?context=prod"}}, names: []string{"reply", "k8s-get", "k8s-list"}},
 	}
 
 	for name, tc := range tests {

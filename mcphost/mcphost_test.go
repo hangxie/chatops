@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"slices"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -228,6 +231,67 @@ type failingCloseConn struct {
 func (c failingCloseConn) Close() error {
 	_ = c.Connection.Close()
 	return c.err
+}
+
+// triggerTransport runs a callback while the host is connecting it, which is
+// the moment New has connected the earlier servers and has not yet finished
+// with this one.
+type triggerTransport struct {
+	inner   mcp.Transport
+	trigger func()
+}
+
+func (t triggerTransport) Connect(ctx context.Context) (mcp.Connection, error) {
+	conn, err := t.inner.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	t.trigger()
+	return conn, nil
+}
+
+// Test_New_tolerates_notifications_during_connect drives a rebuild from an
+// already-connected server while New is still connecting a later one, and
+// checks that the change announced in that window reaches the catalog.
+//
+// It is not a reproducer for the data race that motivated publishing the
+// session list under the lock: the overlap needed for the detector to fire is
+// narrower than this can reliably provoke. It covers the behaviour, not the
+// synchronization.
+func Test_New_tolerates_notifications_during_connect(t *testing.T) {
+	busy := make([]string, 0, 400)
+	for i := range 400 {
+		busy = append(busy, fmt.Sprintf("tool%03d", i))
+	}
+	first := stubServer("first", busy...)
+	firstSpec := mcphost.InProcess("first", "", first)
+
+	secondServerTransport, secondClientTransport := mcp.NewInMemoryTransports()
+	second := stubServer("second", "one")
+	secondSpec := mcphost.ServerSpec{
+		Name: "second",
+		Transport: triggerTransport{inner: secondClientTransport, trigger: func() {
+			// Make the first server announce a change, then give its handler
+			// a head start so the rebuild is in flight as New returns here
+			// and appends this session.
+			addEcho(first, "first", "late")
+			time.Sleep(2 * time.Millisecond)
+		}},
+		Serve: func(ctx context.Context) error { return second.Run(ctx, secondServerTransport) },
+	}
+
+	host, err := mcphost.New(context.Background(), mcphost.Config{Servers: []mcphost.ServerSpec{firstSpec, secondSpec}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, host.Close()) })
+
+	// Both servers are in the catalog however the rebuilds interleaved, and
+	// the change announced mid-connect is not lost. It converges rather than
+	// landing synchronously: a notification is handled on its own goroutine.
+	require.Contains(t, host.Names(), "tool000")
+	require.Contains(t, host.Names(), "one")
+	require.Eventually(t, func() bool {
+		return slices.Contains(host.Names(), "late")
+	}, 3*time.Second, 5*time.Millisecond)
 }
 
 func Test_New_empty(t *testing.T) {

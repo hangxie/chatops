@@ -258,6 +258,8 @@ A group is the unit of deployment, not just of organization. Each becomes its ow
 
 Options are non-secret instance configuration written as a query on the group selector (`k8s?context=prod`). Credential *values* are never options; groups resolve predefined `cred.Key` identifiers from the `cred.Store` passed to their `RegisterFunc`.
 
+A `RegisterFunc` validates its options — a misspelled one is an operator mistake worth catching at startup — but must not do I/O that can fail. Every group is served by default, so a `k8s` group that loaded its kubeconfig at registration would stop a bot that never meant to talk to Kubernetes from starting at all. Resolve such a dependency on first use instead (see `tool/k8s/lazy.go`), which turns it into an error on that group's tools alone.
+
 ### The host catalog
 
 `mcphost.Host` connects every configured server, caches each one's tool list, and presents the union as one catalog.
@@ -282,6 +284,8 @@ Points worth knowing:
 ### Host tools
 
 A host tool is served by this process rather than by an MCP server, because it acts on host state. `reply` is the only one: it is bound to the live `chat.Conn`, which no server could hold. It appears in the same catalog and is called the same way — exactly as an MCP host adds its own local tools to what it offers the model.
+
+Host tools are **not** subject to `Allow`. They are what the host itself can do rather than part of the operational surface an operator curates, and a planner has no way to express a reply without the reply tool: model prose becomes a reply step unconditionally, so filtering `reply` out would leave a bot that cannot answer at all.
 
 ### Adding a new tool
 

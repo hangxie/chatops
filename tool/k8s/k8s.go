@@ -72,21 +72,19 @@ type GetArgs struct {
 // by opts. creds is unused: cluster access comes from the kubeconfig or
 // in-cluster config, never from the credential store.
 //
-// Building the client performs no network I/O — discovery is deferred until
-// the first call that maps a resource type — so an unreachable API server
-// surfaces at the tool call, not at registration.
+// Options are validated here, because a misspelled one is an operator mistake
+// worth catching at startup. Reaching the cluster is not: the kubeconfig is
+// loaded on first use, so a host without one — or with a broken one — still
+// starts and simply reports the problem when a kubernetes tool is called. See
+// lazyCluster.
 func Register(s *mcp.Server, _ cred.Store, opts url.Values) error {
 	if err := mcpserve.CheckOptions(GroupName, opts, optionContext, optionKubeconfig); err != nil {
 		return err
 	}
-	client, err := newCluster(clusterConfig{
+	return RegisterClient(s, newLazyCluster(clusterConfig{
 		kubeconfig: opts.Get(optionKubeconfig),
 		context:    opts.Get(optionContext),
-	})
-	if err != nil {
-		return err
-	}
-	return RegisterClient(s, client)
+	}))
 }
 
 // RegisterClient adds the kubernetes tools to s backed by client, for

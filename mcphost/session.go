@@ -17,19 +17,45 @@ type session struct {
 	name   string
 	alias  string
 	logger *slog.Logger
-	client *mcp.ClientSession
 
 	// listTimeout bounds one tools/list. A server that accepts the request
 	// and never answers would otherwise block a refresh forever, and a
 	// refresh triggered by a server notification has no caller to cancel it.
 	listTimeout time.Duration
 
-	mu    sync.RWMutex
-	tools []*mcp.Tool
+	// refreshMu serializes refreshes, so a slow listing cannot finish after a
+	// later one and overwrite a newer tool list with an older one.
+	refreshMu sync.Mutex
+
+	mu     sync.RWMutex
+	client *mcp.ClientSession
+	tools  []*mcp.Tool
 	// listErr records why the last tool listing failed. A server whose tools
 	// cannot be listed contributes nothing to the catalog rather than taking
 	// the host down with it.
 	listErr error
+}
+
+// peer returns the connected session, or nil before it is installed.
+func (s *session) peer() *mcp.ClientSession {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.client
+}
+
+// install publishes the connected session, after which notifications may act
+// on it.
+func (s *session) install(peer *mcp.ClientSession) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.client = peer
+}
+
+// listFailure returns why the last listing failed, or nil.
+func (s *session) listFailure() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.listErr
 }
 
 // newSession connects to one server and fetches its initial tool list.
@@ -39,18 +65,17 @@ func newSession(ctx context.Context, spec ServerSpec, listTimeout time.Duration,
 	s := &session{name: spec.Name, alias: spec.Alias, logger: logger, listTimeout: listTimeout}
 	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: ClientVersion}, &mcp.ClientOptions{
 		ToolListChangedHandler: func(ctx context.Context, _ *mcp.ToolListChangedRequest) {
-			s.refresh(ctx)
-			onChange()
+			s.toolsChanged(ctx, onChange)
 		},
 	})
 	sess, err := connect(ctx, client, spec.Transport)
 	if err != nil {
 		return nil, err
 	}
-	s.client = sess
+	s.install(sess)
 	s.refresh(ctx)
-	if s.listErr != nil {
-		return nil, errors.Join(s.listErr, sess.Close())
+	if err := s.listFailure(); err != nil {
+		return nil, errors.Join(err, sess.Close())
 	}
 	return s, nil
 }
@@ -87,8 +112,27 @@ func connect(ctx context.Context, client *mcp.Client, transport mcp.Transport) (
 	}
 }
 
+// toolsChanged handles a server's report that its tools changed: it refreshes
+// the cache and tells the host to rebuild its catalog.
+//
+// The notification handler has to be installed before the session exists,
+// because the client must be built in order to connect it. A server that
+// announces a change in that window finds no session to act on, so the
+// notification is dropped rather than dereferencing a nil peer; newSession
+// lists the tools itself once the session is installed, so the change is
+// picked up anyway.
+func (s *session) toolsChanged(ctx context.Context, onChange func()) {
+	if s.peer() == nil {
+		return
+	}
+	s.refresh(ctx)
+	onChange()
+}
+
 // refresh re-fetches the server's tool list into the cache.
 func (s *session) refresh(ctx context.Context) {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, s.listTimeout)
 	defer cancel()
 	tools, err := s.listTools(ctx)
@@ -107,7 +151,7 @@ func (s *session) refresh(ctx context.Context) {
 // listTools pages through the server's full tool list.
 func (s *session) listTools(ctx context.Context) ([]*mcp.Tool, error) {
 	var tools []*mcp.Tool
-	for tool, err := range s.client.Tools(ctx, nil) {
+	for tool, err := range s.peer().Tools(ctx, nil) {
 		if err != nil {
 			return nil, fmt.Errorf("list tools: %w", err)
 		}
@@ -125,13 +169,13 @@ func (s *session) snapshot() []*mcp.Tool {
 
 // call invokes one tool by its server-side name.
 func (s *session) call(ctx context.Context, name string, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.client.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+	return s.peer().CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 }
 
 // close ends the session. The in-process server, if any, is stopped by the
 // host cancelling its context.
 func (s *session) close() error {
-	if err := s.client.Close(); err != nil {
+	if err := s.peer().Close(); err != nil {
 		return fmt.Errorf("mcphost: close server %q: %w", s.name, err)
 	}
 	return nil

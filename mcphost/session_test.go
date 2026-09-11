@@ -97,7 +97,7 @@ func Test_session_refresh_records_listing_failure(t *testing.T) {
 	s.refresh(context.Background())
 
 	require.Empty(t, s.snapshot())
-	require.Error(t, s.listErr)
+	require.Error(t, s.listFailure())
 	require.Contains(t, logs.String(), "listing server tools failed")
 	require.Contains(t, logs.String(), "server=alpha")
 
@@ -105,7 +105,7 @@ func Test_session_refresh_records_listing_failure(t *testing.T) {
 	failer.failing.Store(false)
 	s.refresh(context.Background())
 	require.Len(t, s.snapshot(), 1)
-	require.NoError(t, s.listErr)
+	require.NoError(t, s.listFailure())
 }
 
 func Test_session_refresh_bounds_a_silent_server(t *testing.T) {
@@ -143,7 +143,7 @@ func Test_session_refresh_bounds_a_silent_server(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("refresh did not return; a silent server wedged it")
 	}
-	require.Error(t, s.listErr)
+	require.Error(t, s.listFailure())
 }
 
 func Test_session_listTools_error_is_wrapped(t *testing.T) {
@@ -197,6 +197,72 @@ func Test_newSession_reports_a_transport_that_cannot_connect(t *testing.T) {
 		time.Second, slog.New(slog.DiscardHandler), func() {})
 	require.ErrorIs(t, err, connectErr)
 	require.Nil(t, s)
+}
+
+func Test_toolsChanged_before_install_is_dropped(t *testing.T) {
+	// A session whose peer is not installed yet has nothing to list, so the
+	// notification is dropped instead of dereferencing a nil client — and the
+	// host is not asked to rebuild on the strength of it.
+	rebuilt := false
+	s := &session{name: "alpha", logger: slog.New(slog.DiscardHandler), listTimeout: time.Second}
+
+	require.NotPanics(t, func() {
+		s.toolsChanged(context.Background(), func() { rebuilt = true })
+	})
+	require.False(t, rebuilt)
+	require.Empty(t, s.snapshot())
+}
+
+func Test_toolsChanged_after_install_refreshes(t *testing.T) {
+	srv := echoServer("alpha", "one")
+	s := newTestSession(t, srv, slog.New(slog.DiscardHandler))
+
+	rebuilt := false
+	mcp.AddTool(srv, &mcp.Tool{Name: "two", Description: "echo"},
+		func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+			return &mcp.CallToolResult{}, nil, nil
+		})
+	s.toolsChanged(context.Background(), func() { rebuilt = true })
+
+	require.True(t, rebuilt)
+	require.Len(t, s.snapshot(), 2)
+}
+
+// Test_notification_before_install_is_dropped connects a server that
+// announces tool-list changes from the moment it is connected, so the handler
+// runs while the session is still being set up. Setting up must survive it
+// and still end with a listed tool set.
+//
+// The nil-peer guard it motivates cannot be provoked on demand — the handler
+// has to run in the gap between the handshake completing and the session
+// being installed — so this covers the path, not the window.
+func Test_notification_before_install_is_dropped(t *testing.T) {
+	srv := echoServer("eager", "one")
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() {
+		serverSession, err := srv.Connect(ctx, serverTransport, nil)
+		if err != nil {
+			return
+		}
+		// Announce repeatedly, including during the client's own handshake.
+		for range 20 {
+			mcp.AddTool(srv, &mcp.Tool{Name: "two", Description: "echo"},
+				func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+					return &mcp.CallToolResult{}, nil, nil
+				})
+			srv.RemoveTools("two")
+		}
+		<-ctx.Done()
+		_ = serverSession.Close()
+	}()
+
+	s, err := newSession(context.Background(), ServerSpec{Name: "eager", Transport: clientTransport},
+		time.Second, slog.New(slog.DiscardHandler), func() {})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.close() })
+	require.NotEmpty(t, s.snapshot())
 }
 
 func Test_session_call_reaches_the_server(t *testing.T) {

@@ -192,10 +192,22 @@ func New(ctx context.Context, cfg Config) (*Host, error) {
 		if err != nil {
 			return nil, errors.Join(fmt.Errorf("mcphost: connect server %q: %w", spec.Name, err), h.Close())
 		}
+		// A connected server may report its tools changed at any moment, and
+		// that notification rebuilds the catalog from this slice, so it is
+		// published under the lock rather than appended to in the open.
+		h.mu.Lock()
 		h.sessions = append(h.sessions, s)
+		h.mu.Unlock()
 	}
 	h.rebuild()
 	return h, nil
+}
+
+// snapshotSessions returns the sessions connected so far.
+func (h *Host) snapshotSessions() []*session {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return append([]*session(nil), h.sessions...)
 }
 
 // connect starts a server's in-process goroutine, if it has one, and opens
@@ -272,10 +284,11 @@ func (h *Host) Close() error {
 		return nil
 	}
 	h.closed = true
+	sessions := append([]*session(nil), h.sessions...)
 	h.mu.Unlock()
 
 	var errs []error
-	for _, s := range h.sessions {
+	for _, s := range sessions {
 		if err := s.close(); err != nil {
 			errs = append(errs, err)
 		}

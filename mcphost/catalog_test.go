@@ -77,12 +77,16 @@ func Test_Allow_filters_catalog(t *testing.T) {
 		want  []string
 	}{
 		"empty-allows-all": {allow: nil, want: []string{"k8s-get", "k8s-list", "ping", "reply"}},
-		"exact":            {allow: []string{"ping"}, want: []string{"ping"}},
-		"wildcard":         {allow: []string{"k8s-*"}, want: []string{"k8s-get", "k8s-list"}},
-		"several":          {allow: []string{"ping", "reply"}, want: []string{"ping", "reply"}},
-		"single-char":      {allow: []string{"pin?"}, want: []string{"ping"}},
-		"matches-nothing":  {allow: []string{"nope"}, want: []string{}},
-		"filters-host-too": {allow: []string{"k8s-get"}, want: []string{"k8s-get"}},
+		"exact":            {allow: []string{"ping"}, want: []string{"ping", "reply"}},
+		"wildcard":         {allow: []string{"k8s-*"}, want: []string{"k8s-get", "k8s-list", "reply"}},
+		"several":          {allow: []string{"ping", "k8s-get"}, want: []string{"k8s-get", "ping", "reply"}},
+		"single-char":      {allow: []string{"pin?"}, want: []string{"ping", "reply"}},
+		// Host tools are never filtered: the planner turns model prose into a
+		// reply step unconditionally, so a catalog without reply would leave
+		// a bot that cannot answer at all.
+		"matches-nothing":   {allow: []string{"nope"}, want: []string{"reply"}},
+		"keeps-host-tools":  {allow: []string{"k8s-get"}, want: []string{"k8s-get", "reply"}},
+		"host-tool-by-name": {allow: []string{"reply"}, want: []string{"reply"}},
 	}
 
 	for name, tc := range testCases {
@@ -96,6 +100,25 @@ func Test_Allow_filters_catalog(t *testing.T) {
 			require.Equal(t, tc.want, host.Names())
 		})
 	}
+}
+
+// Test_Allow_always_keeps_reply_callable guards the failure this prevents:
+// with reply filtered out, every ordinary planner response — model prose, the
+// ping planner's clarification and fallback replies — would name a tool the
+// host does not have, and the requester would get the generic failure notice
+// instead of an answer.
+func Test_Allow_always_keeps_reply_callable(t *testing.T) {
+	var called boolFlag
+	host := newHost(t, mcphost.Config{
+		Servers:   []mcphost.ServerSpec{mcphost.InProcess("alpha", "", stubServer("alpha", "ping"))},
+		HostTools: []mcphost.HostTool{hostTool("reply", &called.b)},
+		Allow:     []string{"ping"},
+	})
+
+	require.Contains(t, host.Names(), "reply")
+	_, err := host.CallTool(context.Background(), "reply", map[string]any{"text": "hi"})
+	require.NoError(t, err)
+	require.True(t, called.b.Load())
 }
 
 func Test_Allow_hides_tool_from_calls(t *testing.T) {

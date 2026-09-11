@@ -33,6 +33,11 @@ type entry struct {
 // Host tools win over server tools of the same name, and an earlier server
 // wins over a later one; a shadowed tool is dropped with a warning rather
 // than silently taking over a name the model was already offered.
+//
+// It may run while New is still connecting servers, because a server can
+// report its tools changed as soon as it is connected. The session list is
+// therefore snapshotted under the lock, and New rebuilds once more when every
+// server is in, so an early rebuild is at worst momentarily incomplete.
 func (h *Host) rebuild() {
 	catalog := make(map[string]entry)
 	var ordered []*mcp.Tool
@@ -42,16 +47,18 @@ func (h *Host) rebuild() {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	// Host tools are not subject to the allowlist. They are what the host
+	// itself can do rather than part of the operational surface an operator
+	// curates, and the planner has no way to express a reply without the
+	// reply tool: filtering it out would leave a bot that cannot answer at
+	// all, since prose from the model becomes a reply step unconditionally.
 	for _, name := range names {
 		tool := h.hostTools[name]
-		if !h.allowed(name) {
-			continue
-		}
 		catalog[name] = entry{host: &tool}
 		ordered = append(ordered, tool.Def)
 	}
 
-	for _, s := range h.sessions {
+	for _, s := range h.snapshotSessions() {
 		for _, tool := range s.snapshot() {
 			qualified := qualify(s.alias, tool.Name)
 			if existing, taken := catalog[qualified]; taken {
