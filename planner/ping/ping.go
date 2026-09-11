@@ -39,7 +39,6 @@ import (
 
 	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/planner"
-	"github.com/hangxie/chatops/tool"
 	toolping "github.com/hangxie/chatops/tool/ping"
 	"github.com/hangxie/chatops/tool/reply"
 )
@@ -47,11 +46,11 @@ import (
 // Scheme is the URL scheme this planner serves in a planner.Registry.
 const Scheme = "ping"
 
-// Tool URLs the planner emits in plan steps, per the schemes exported
+// Tool names the planner emits in plan steps, per the names exported
 // by the tools themselves.
 const (
-	pingToolURL  = toolping.Scheme + "://"
-	replyToolURL = reply.URL
+	pingToolName  = toolping.ToolName
+	replyToolName = reply.ToolName
 )
 
 // Reply texts the planner posts back to the requester.
@@ -61,9 +60,9 @@ const (
 	unknownText = "sorry, I don't understand"
 )
 
-var confirmationChoices = []tool.Choice{
-	{Label: "Yes", Value: "yes"},
-	{Label: "No", Value: "no"},
+var confirmationChoices = []any{
+	map[string]any{"label": "Yes", "value": "yes"},
+	map[string]any{"label": "No", "value": "no"},
 }
 
 // pingWordRE matches "ping" as a standalone word — not adjoining a
@@ -90,7 +89,7 @@ const (
 // Any host, path, query, userinfo, or non-empty fragment is rejected;
 // a bare trailing "#" is parsed by net/url identically to the bare URL
 // and is therefore accepted.
-func Opener(ctx context.Context, u *url.URL, _ cred.Store, _ *tool.Registry) (planner.Planner, error) {
+func Opener(ctx context.Context, u *url.URL, _ cred.Store, _ planner.ToolSource) (planner.Planner, error) {
 	if u.Host != "" || u.Path != "" || u.RawQuery != "" || u.ForceQuery ||
 		u.Opaque != "" || u.User != nil || u.Fragment != "" {
 		return nil, fmt.Errorf("ping: URL %q takes no endpoint or configuration", u.String())
@@ -194,23 +193,19 @@ func (p *Planner) Close() error {
 
 // pingPlan is the single-step plan invoking the ping tool.
 func pingPlan() planner.Plan {
-	return planner.Plan{Steps: []planner.Step{
-		{Tool: pingToolURL, Call: tool.Call{}},
-	}}
+	return planner.Plan{Steps: []planner.Step{{Tool: pingToolName}}}
 }
 
 // replyPlan is the single-step plan posting text through the reply tool.
-// The target conversation is injected by the executor.
+// The target conversation is supplied by the executor, not the plan.
 func replyPlan(text string) planner.Plan {
 	return planner.Plan{Steps: []planner.Step{
-		{Tool: replyToolURL, Call: tool.Call{
-			Arguments: map[string]string{"text": text},
-		}},
+		{Tool: replyToolName, Arguments: map[string]any{"text": text}},
 	}}
 }
 
 func confirmationPlan() planner.Plan {
 	plan := replyPlan(askText)
-	plan.Steps[0].Call.Choices = append([]tool.Choice(nil), confirmationChoices...)
+	plan.Steps[0].Arguments["choices"] = append([]any(nil), confirmationChoices...)
 	return plan
 }

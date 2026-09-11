@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -53,6 +54,36 @@ type Checker struct {
 	providers map[string]Provider
 	aliases   map[string]string
 	names     []string
+
+	// logger receives why a provider could not be checked. The reason is not
+	// put in the snapshot: a snapshot is rendered into chat, and a transport
+	// failure names whatever stood between here and the provider — an egress
+	// proxy's address, for instance.
+	//
+	// It is set when a Checker is built for one server, never afterwards: a
+	// Checker is read by the goroutines running a concurrent check, so a
+	// field written after construction would be a race.
+	logger *slog.Logger
+}
+
+// withLogger returns a copy of c reporting to logger.
+//
+// A copy, because the default catalog is a package-level value shared by
+// every server built from it. Assigning to its field would make the last
+// server built the one every other server reports through, and would race
+// with the goroutines of any check already running. The copy shares the
+// provider table and the HTTP client behind it, both read-only.
+func (c *Checker) withLogger(logger *slog.Logger) *Checker {
+	copied := *c
+	copied.logger = logger
+	return &copied
+}
+
+func (c *Checker) log() *slog.Logger {
+	if c.logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return c.logger
 }
 
 const maxConcurrentChecks = 4
@@ -118,7 +149,7 @@ func (c *Checker) Check(ctx context.Context, target string) ([]Snapshot, error) 
 		if err != nil {
 			return nil, err
 		}
-		snapshot, err := checkProvider(ctx, name, provider)
+		snapshot, err := c.checkProvider(ctx, name, provider)
 		if err != nil {
 			return nil, err
 		}
@@ -136,7 +167,7 @@ func (c *Checker) Check(ctx context.Context, target string) ([]Snapshot, error) 
 		provider := c.providers[name]
 		go func() {
 			semaphore <- struct{}{}
-			snapshot, err := checkProvider(ctx, name, provider)
+			snapshot, err := c.checkProvider(ctx, name, provider)
 			<-semaphore
 			results <- checked{name: name, snapshot: snapshot, err: err}
 		}()
@@ -167,7 +198,14 @@ func (c *Checker) resolve(target string) (string, Provider, error) {
 	return target, provider, nil
 }
 
-func checkProvider(ctx context.Context, name string, provider Provider) (Snapshot, error) {
+// checkProvider fetches one provider's status. A provider that cannot be
+// reached yields an unknown snapshot rather than failing the whole call, so
+// one status page being down does not stop the rest from being reported.
+//
+// Why it could not be reached goes to the log, not into the snapshot: the
+// snapshot is rendered into chat, and a transport failure names whatever sat
+// between here and the provider.
+func (c *Checker) checkProvider(ctx context.Context, name string, provider Provider) (Snapshot, error) {
 	snapshot, err := provider.Check(ctx)
 	if err == nil {
 		snapshot.Provider = name
@@ -176,7 +214,9 @@ func checkProvider(ctx context.Context, name string, provider Provider) (Snapsho
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return Snapshot{}, ctxErr
 	}
-	return Snapshot{Provider: name, Health: HealthUnknown, Summary: "Unable to check: " + err.Error()}, nil
+	c.log().Warn("service status could not be checked",
+		"group", GroupName, "provider", name, "error", err.Error())
+	return Snapshot{Provider: name, Health: HealthUnknown, Summary: "Unable to check"}, nil
 }
 
 func normalizeName(name string) string {

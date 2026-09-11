@@ -1,99 +1,103 @@
-package ping_test
+package ping
 
 import (
 	"context"
+	"net/url"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hangxie/chatops/tool"
-	"github.com/hangxie/chatops/tool/ping"
+	"github.com/hangxie/chatops/internal/testutils"
+	"github.com/hangxie/chatops/mcpserve"
 )
 
-func Test_Opener_via_registry(t *testing.T) {
-	reg := tool.NewRegistry(tool.Backend{Scheme: ping.Scheme, Opener: ping.Opener, Descriptor: &ping.Descriptor})
+// newServer registers the ping group on a fresh server.
+func newServer(t *testing.T, opts url.Values) *mcp.Server {
+	t.Helper()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
+	require.NoError(t, Register(srv, mcpserve.Options{Query: opts}))
+	return srv
+}
 
+func Test_Register_options(t *testing.T) {
 	testCases := map[string]struct {
-		url    string
+		opts   url.Values
 		errMsg string
 	}{
-		"bare-url":    {url: "ping://"},
-		"scheme-only": {url: "ping:"},
-		// url.Parse drops a bare trailing "#", making it
-		// indistinguishable from the bare URL, so it is accepted.
-		"empty-fragment": {url: "ping://#"},
-		"host":           {url: "ping://somehost", errMsg: "takes no endpoint"},
-		"host-port":      {url: "ping://somehost:1234", errMsg: "takes no endpoint"},
-		"path":           {url: "ping:///some/path", errMsg: "takes no endpoint"},
-		"query":          {url: "ping://?region=x", errMsg: "takes no endpoint"},
-		"empty-query":    {url: "ping://?", errMsg: "takes no endpoint"},
-		"userinfo":       {url: "ping://secret@", errMsg: "takes no endpoint"},
-		"fragment":       {url: "ping://#fragment", errMsg: "takes no endpoint"},
+		"none":    {opts: nil},
+		"empty":   {opts: url.Values{}},
+		"unknown": {opts: url.Values{"region": {"x"}}, errMsg: "takes no options"},
 	}
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			tl, err := reg.Open(context.Background(), tc.url, nil)
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
+			err := Register(srv, mcpserve.Options{Query: tc.opts})
 			if tc.errMsg != "" {
 				require.ErrorContains(t, err, tc.errMsg)
 				return
 			}
 			require.NoError(t, err)
-			defer func() {
-				require.NoError(t, tl.Close())
-			}()
-			result, err := tl.Invoke(context.Background(), tool.Call{})
-			require.NoError(t, err)
-			require.Equal(t, "pong", result.Text)
 		})
 	}
 }
 
-func Test_Invoke(t *testing.T) {
-	tl, err := ping.Open(context.Background())
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, tl.Close())
-	}()
+func Test_Register_declares_tool(t *testing.T) {
+	session := testutils.MCPSession(t, newServer(t, nil))
 
-	// The tool always answers "pong" and ignores any arguments.
-	testCases := map[string]tool.Call{
-		"empty":           {},
-		"ignores-args":    {Arguments: map[string]string{"count": "3"}},
-		"ignores-subject": {Arguments: map[string]string{"subject": "somewhere"}},
+	listed, err := session.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	require.Len(t, listed.Tools, 1)
+	require.Equal(t, ToolName, listed.Tools[0].Name)
+	require.NotEmpty(t, listed.Tools[0].Description)
+	require.NotNil(t, listed.Tools[0].InputSchema)
+}
+
+func Test_Call(t *testing.T) {
+	session := testutils.MCPSession(t, newServer(t, nil))
+
+	// The tool always answers "pong" and reads no arguments.
+	testCases := map[string]map[string]any{
+		"no-arguments":    nil,
+		"empty-arguments": {},
 	}
 
-	for name, call := range testCases {
+	for name, args := range testCases {
 		t.Run(name, func(t *testing.T) {
-			result, err := tl.Invoke(context.Background(), call)
+			result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+				Name:      ToolName,
+				Arguments: args,
+			})
 			require.NoError(t, err)
-			require.Equal(t, tool.Result{Text: "pong"}, result)
+			require.False(t, result.IsError)
+			require.Equal(t, "pong", testutils.ResultText(t, result))
 		})
 	}
 }
 
-func Test_Invoke_cancelled_context(t *testing.T) {
-	tl, err := ping.Open(context.Background())
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, tl.Close())
-	}()
-
+func Test_Call_cancelled_context(t *testing.T) {
+	session := testutils.MCPSession(t, newServer(t, nil))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = tl.Invoke(ctx, tool.Call{})
+
+	_, err := session.CallTool(ctx, &mcp.CallToolParams{Name: ToolName})
+	require.Error(t, err)
+}
+
+func Test_handle_honors_cancellation(t *testing.T) {
+	// The handler guards its own context, so a call cancelled after it has
+	// been dispatched stops rather than answering.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := handle(ctx, nil, Args{})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func Test_Close_is_idempotent(t *testing.T) {
-	tl, err := ping.Open(context.Background())
-	require.NoError(t, err)
-	require.NoError(t, tl.Close())
-	require.NoError(t, tl.Close())
-}
+func Test_Call_unknown_tool(t *testing.T) {
+	session := testutils.MCPSession(t, newServer(t, nil))
 
-func Test_Descriptor(t *testing.T) {
-	require.NotEmpty(t, ping.Descriptor.Description)
-	require.Empty(t, ping.Descriptor.Parameters)
-	require.NoError(t, ping.Descriptor.Validate())
+	_, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "nope"})
+	require.ErrorContains(t, err, "nope")
 }

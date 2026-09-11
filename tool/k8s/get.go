@@ -2,52 +2,46 @@ package k8s
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
-	"github.com/hangxie/chatops/tool"
 )
 
-// getTool fetches specific resources by name and renders them as a
+// getResources fetches specific resources by name and renders them as a
 // describe-style brief, JSON, or YAML. Secret values are always masked.
-type getTool struct {
-	client resourceClient
-}
-
-// Invoke reads call.Arguments: kind and name are required, name may be a
-// comma-separated list; namespace and output are optional.
-func (t *getTool) Invoke(ctx context.Context, call tool.Call) (tool.Result, error) {
+func getResources(ctx context.Context, client resourceClient, args GetArgs) (*mcp.CallToolResult, any, error) {
 	if err := ctx.Err(); err != nil {
-		return tool.Result{}, fmt.Errorf("k8s: %w", err)
+		return nil, nil, fmt.Errorf("k8s: %w", err)
 	}
-	kind := strings.TrimSpace(call.Arguments[argKind])
+	kind := strings.TrimSpace(args.Kind)
 	if kind == "" {
-		return tool.Result{}, errors.New("k8s: get requires a kind")
+		return nil, nil, invalidCall("k8s: get requires a kind")
 	}
-	names := splitNames(call.Arguments[argName])
+	names := splitNames(args.Name)
 	if len(names) == 0 {
-		return tool.Result{}, errors.New("k8s: get requires a name")
+		return nil, nil, invalidCall("k8s: get requires a name")
 	}
-	output := strings.ToLower(strings.TrimSpace(call.Arguments[argOutput]))
+	output := strings.ToLower(strings.TrimSpace(args.Output))
 	if err := validateOutput(output); err != nil {
-		return tool.Result{}, err
+		return nil, nil, err
 	}
-	namespace := strings.TrimSpace(call.Arguments[argNamespace])
+	namespace := strings.TrimSpace(args.Namespace)
 
 	objs := make([]*unstructured.Unstructured, 0, len(names))
 	events := make([][]eventInfo, 0, len(names))
 	for _, name := range names {
-		obj, _, err := t.client.get(ctx, kind, namespace, name)
+		obj, mapping, err := client.get(ctx, kind, namespace, name)
 		if err != nil {
-			return tool.Result{}, err
+			return nil, nil, notFound(err, kind, name, namespace, mapping)
 		}
 		redact(obj)
 		objs = append(objs, obj)
 		if output == outputBrief || output == "" {
-			events = append(events, t.client.events(ctx, obj))
+			events = append(events, client.events(ctx, obj))
 		} else {
 			events = append(events, nil)
 		}
@@ -55,13 +49,10 @@ func (t *getTool) Invoke(ctx context.Context, call tool.Call) (tool.Result, erro
 
 	text, err := formatObjects(objs, events, output)
 	if err != nil {
-		return tool.Result{}, err
+		return nil, nil, err
 	}
-	return tool.Result{Text: text}, nil
+	return textResult(text), nil, nil
 }
-
-// Close releases nothing; the dynamic client owns its transport.
-func (t *getTool) Close() error { return nil }
 
 // splitNames parses a comma-separated name list, trimming blanks.
 func splitNames(raw string) []string {
@@ -72,4 +63,29 @@ func splitNames(raw string) []string {
 		}
 	}
 	return names
+}
+
+// notFound turns "no such object" into a message built from what the
+// requester asked for.
+//
+// The error client-go raises carries the API server's own phrasing and, on
+// the way out, its address; the requester mistyped a name and needs to be
+// told that, not sent to check whether the cluster is up.
+//
+// Where it looked is only stated when it can be stated correctly. A
+// cluster-scoped type has no namespace, so naming one would be wrong even if
+// the requester supplied it; and a namespaced lookup with no namespace given
+// used the context's default, which is not necessarily the namespace called
+// "default". Without the mapping the scope is unknown, so nothing is claimed.
+func notFound(err error, kind, name, namespace string, mapping *meta.RESTMapping) error {
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+	if mapping == nil || mapping.Scope.Name() != meta.RESTScopeNameNamespace {
+		return invalidCall("k8s: no %s named %q", kind, name)
+	}
+	if namespace == "" {
+		return invalidCall("k8s: no %s named %q in this context's default namespace", kind, name)
+	}
+	return invalidCall("k8s: no %s named %q in namespace %q", kind, name, namespace)
 }

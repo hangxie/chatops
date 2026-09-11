@@ -11,27 +11,23 @@ import (
 
 	"github.com/hangxie/chatops/planner"
 	"github.com/hangxie/chatops/planner/ping"
-	"github.com/hangxie/chatops/tool"
 	"github.com/hangxie/chatops/tool/reply"
 )
 
 // pingPlan is the plan invoking the ping tool.
 func pingPlan() planner.Plan {
-	return planner.Plan{Steps: []planner.Step{
-		{Tool: "ping://", Call: tool.Call{}},
-	}}
+	return planner.Plan{Steps: []planner.Step{{Tool: "ping"}}}
 }
 
 // replyPlan is the plan posting text back to the requester. The target
 // conversation is injected by the executor, so the plan carries only the
 // text; conv names the conversation each case operates in for readability.
-func replyPlan(_, text string, choices ...tool.Choice) planner.Plan {
-	return planner.Plan{Steps: []planner.Step{
-		{Tool: reply.URL, Call: tool.Call{
-			Arguments: map[string]string{"text": text},
-			Choices:   choices,
-		}},
-	}}
+func replyPlan(_, text string, choices ...any) planner.Plan {
+	args := map[string]any{"text": text}
+	if choices != nil {
+		args["choices"] = choices
+	}
+	return planner.Plan{Steps: []planner.Step{{Tool: reply.ToolName, Arguments: args}}}
 }
 
 const (
@@ -40,9 +36,9 @@ const (
 	unknown = "sorry, I don't understand"
 )
 
-var confirmationChoices = []tool.Choice{
-	{Label: "Yes", Value: "yes"},
-	{Label: "No", Value: "no"},
+var confirmationChoices = []any{
+	map[string]any{"label": "Yes", "value": "yes"},
+	map[string]any{"label": "No", "value": "no"},
 }
 
 func confirmationPlan(conv string) planner.Plan {

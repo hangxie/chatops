@@ -8,14 +8,15 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/internal/testutils"
 	"github.com/hangxie/chatops/planner"
-	"github.com/hangxie/chatops/tool"
 )
 
 func fakeOpener(p planner.Planner, err error) planner.OpenerFunc {
-	return func(_ context.Context, _ *url.URL, _ cred.Store, _ *tool.Registry) (planner.Planner, error) {
+	return func(_ context.Context, _ *url.URL, _ cred.Store, _ planner.ToolSource) (planner.Planner, error) {
 		return p, err
 	}
 }
@@ -113,10 +114,10 @@ func Test_Registry_Open_passes_arguments_to_opener(t *testing.T) {
 	var gotURL *url.URL
 	var gotCtxValue any
 	var gotCreds cred.Store
-	var gotTools *tool.Registry
+	var gotTools planner.ToolSource
 	reg := planner.NewRegistry(planner.Backend{
 		Scheme: "capture",
-		Opener: func(ctx context.Context, u *url.URL, creds cred.Store, tools *tool.Registry) (planner.Planner, error) {
+		Opener: func(ctx context.Context, u *url.URL, creds cred.Store, tools planner.ToolSource) (planner.Planner, error) {
 			gotURL = u
 			gotCtxValue = ctx.Value(ctxKey{})
 			gotCreds = creds
@@ -126,11 +127,7 @@ func Test_Registry_Open_passes_arguments_to_opener(t *testing.T) {
 	})
 
 	creds := testutils.CredentialStore{}
-	tools := tool.NewRegistry(tool.Backend{
-		Scheme:     "widget",
-		Opener:     fakeToolOpener,
-		Descriptor: &tool.Descriptor{Description: "widget"},
-	})
+	tools := &fakeToolSource{tools: []*mcp.Tool{{Name: "widget", Description: "widget"}}}
 	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
 	_, err := reg.Open(ctx, "capture://host/some/path?model=gpt-5", creds, tools)
 	require.NoError(t, err)
@@ -143,13 +140,13 @@ func Test_Registry_Open_passes_arguments_to_opener(t *testing.T) {
 	require.Equal(t, "gpt-5", gotURL.Query().Get("model"))
 }
 
-// Test_Registry_Open_nil_tools_becomes_empty verifies a nil tool set is
-// normalized to an empty registry so backends never see a nil.
+// Test_Registry_Open_nil_tools_becomes_empty verifies a nil tool catalog is
+// normalized to an empty one so backends never see a nil.
 func Test_Registry_Open_nil_tools_becomes_empty(t *testing.T) {
-	var gotTools *tool.Registry
+	var gotTools planner.ToolSource
 	reg := planner.NewRegistry(planner.Backend{
 		Scheme: "capture",
-		Opener: func(_ context.Context, _ *url.URL, _ cred.Store, tools *tool.Registry) (planner.Planner, error) {
+		Opener: func(_ context.Context, _ *url.URL, _ cred.Store, tools planner.ToolSource) (planner.Planner, error) {
 			gotTools = tools
 			return &fakePlanner{}, nil
 		},
@@ -158,9 +155,15 @@ func Test_Registry_Open_nil_tools_becomes_empty(t *testing.T) {
 	_, err := reg.Open(context.Background(), "capture://", nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, gotTools)
-	require.Empty(t, gotTools.Schemes())
+	require.Empty(t, gotTools.Tools(context.Background()))
+	require.Zero(t, gotTools.Generation())
 }
 
-func fakeToolOpener(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
-	return nil, nil
+// fakeToolSource is a fixed tool catalog.
+type fakeToolSource struct {
+	tools []*mcp.Tool
 }
+
+func (f *fakeToolSource) Tools(context.Context) []*mcp.Tool { return f.tools }
+
+func (f *fakeToolSource) Generation() uint64 { return 1 }

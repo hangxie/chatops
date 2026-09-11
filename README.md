@@ -2,6 +2,8 @@
 
 `chatops` connects a chat backend to a planner and operational tools, then processes messages until interrupted.
 
+Tools are [Model Context Protocol](https://modelcontextprotocol.io) tools. The built-in ones run as MCP servers inside the process and are reached over a real protocol round trip, so the same tools can also be served to any other MCP host with `chatops mcp serve`.
+
 ## Quick start
 
 This local test uses the built-in telnet chat backend and ping planner. It requires Go and netcat (`nc`) and does not require a credentials file.
@@ -45,11 +47,12 @@ $ chatops --help
 Usage: chatops <command>
 
 Commands:
-  chats      List available chat backends.
-  planners   List available planner backends.
-  server     Run the ChatOps server.
-  tools      List available tools.
-  version    Show build version.
+  chats        List available chat backends.
+  mcp serve    Serve a built-in tool group over stdio.
+  planners     List available planner backends.
+  server       Run the ChatOps server.
+  tools        List available tools.
+  version      Show build version.
 ```
 
 ## Running the system package
@@ -103,8 +106,8 @@ Available settings:
 | `--credentials` | No | None | Credential store URL used by chat backends, planners, and tools. |
 | `--connection-id` | No | `default` | Stable identifier used to scope planner conversation state. |
 | `--max-concurrency` | No | `8` | Maximum conversations processed concurrently; the maximum value is `256`. |
-| `--tool` | No | All selectable tools | Tool to expose to planners, as a bare name (`k8s-get`) or a configuring URL (`k8s-get://?context=prod`); repeat the flag to expose multiple tools. |
-| `--tool-url` | No | None | Configuring tool URL (`k8s-get://?context=prod`) applied without restricting the exposed set; repeat to configure multiple tools. |
+| `--builtin` | No | All groups | Built-in tool group to serve, as a bare name (`k8s`) or a name with options (`k8s?context=prod`); repeat for several groups. |
+| `--tool` | No | All tools | Tool name to expose to planners, with `*` and `?` wildcards (`k8s-*`); repeat to expose several. |
 | `--log-level` | No | `info` | Log verbosity: `debug`, `info`, `warn`, or `error`. |
 | `--log-format` | No | `json` | Log output format: `json` or `text`. |
 
@@ -117,9 +120,10 @@ chatops server \
     --credentials json-file:///etc/chatops/credentials.json \
     --connection-id operations \
     --max-concurrency 8 \
+    --builtin ping \
+    --builtin status \
     --tool ping \
-    --tool status-check \
-    --tool status-list \
+    --tool 'status-*' \
     --log-level info \
     --log-format json
 ```
@@ -132,17 +136,28 @@ The current server supports these URLs:
 | Chat | `telnet` | `telnet://host:port` | Port defaults to `23`; the protocol is newline-delimited text without telnet option negotiation. |
 | Planner | `ping` | `ping://` | Recognizes ping requests and requires no credentials. |
 | Planner | `openai-chat-completions` | `openai-chat-completions://host[:port][/path]?model=NAME` | Drives any OpenAI Chat Completions endpoint (OpenAI, Gemini, Ollama, …). See [OpenAI-compatible planner](#openai-compatible-planner). |
+| Tools | `ping`, `status`, `k8s` | `--builtin k8s?context=prod` | Built-in MCP tool groups, each served as its own in-process MCP server. |
 | Credentials | `json-file` | `json-file:///path/to/file.json` | Strict JSON document with optional `slack` and `planner` sections. A relative path or a leading `~` (e.g. `json-file://~/creds.json`) is accepted. |
 
-With no `--tool` flag, the server exposes every compiled-in selectable tool, preserving the default behavior. Repeat `--tool` to expose an explicit allowlist; for example, `--tool ping --tool status-check` exposes exactly `ping://` and `status-check://`. An unknown name, or a selector whose scheme names no tool, prevents startup and reports the available choices. A planner that attempts to use a compiled-in tool omitted from the allowlist receives the same unknown-tool error as any unavailable tool.
+Operational tools are **Model Context Protocol** tools. The built-in ones are grouped, and each group runs as its own MCP server inside the process, reached over an in-memory transport — a real JSON-RPC round trip, not a shortcut. `--builtin` selects which groups to serve and configures them; `--tool` filters which of the resulting tools planners are offered. The two are independent: `--builtin` decides what runs, `--tool` decides what is exposed.
 
-Each `--tool` selector is either a bare tool name or a full tool URL carrying operator configuration: the scheme selects the tool, and any URL query is remembered as that tool's configuration. Planners choose only *which* tool to invoke and emit a bare scheme URL; the server serves the operator-configured URL in its place. So `--tool 'k8s-get://?context=prod'` exposes `k8s-get` pinned to that context, while `--tool k8s-get` exposes it with no configuration (the kubeconfig's current context). Configuration is per tool, so a shared cluster is repeated across `k8s-get` and `k8s-list`. The URL query keys a tool accepts are documented with that tool; an invalid one surfaces when the tool is first invoked.
+| Group | Tools | Options |
+| --- | --- | --- |
+| `ping` | `ping` | none |
+| `status` | `status-check`, `status-list` | none |
+| `k8s` | `k8s-list`, `k8s-get` | `context`, `kubeconfig` |
 
-Because `--tool` is an allowlist, configuring one tool with it drops every tool not listed. To configure a tool while leaving the exposed set alone, use `--tool-url`: it attaches a configuring URL to a tool without restricting anything, so `--tool-url 'k8s-get://?context=prod'` pins `k8s-get` and still exposes every other tool by default. A `--tool-url` whose scheme is not exposed (a tool a present `--tool` allowlist excludes, or an unknown one) prevents startup. In short: reach for `--tool` to curate the exposed set and `--tool-url` to configure tools within it.
+With no `--builtin` flag every group is served with default options. Repeat it to choose: `--builtin ping --builtin status` serves those two and nothing else. Options are written as a query on the name, so `--builtin 'k8s?context=prod'` pins both kubernetes tools to that context — configuration is per group, so a shared cluster is no longer repeated per tool. An unknown group, an unknown option, or a group named twice prevents startup and reports the available choices.
 
-The server's internal `reply://` tool is bound directly to each live chat conversation and is therefore neither listed nor controlled by `--tool`. The first SIGINT or SIGTERM cancels in-flight work and closes resources gracefully; a second signal uses the operating system's default handling.
+`--tool` is an allowlist over the resulting tool *names*, with `*` and `?` wildcards: `--tool ping --tool status-check` exposes exactly those two, and `--tool 'k8s-*'` exposes both kubernetes tools. With no `--tool` flag every tool is exposed. A filtered-out tool is not merely hidden — it cannot be called, so a planner naming it anyway gets an unknown-tool error.
 
-A failure while handling one message — the planner erroring, a plan naming an unknown tool, a tool rejecting its arguments or failing, even a tool panicking — is not fatal: the server logs the full error at `error`, posts a brief `sorry, I couldn't complete that request` back to that conversation, and keeps serving other messages. Only losing the chat connection or receiving a shutdown signal stops the server.
+Group names and pattern syntax are checked before any backend is opened, so a typo there fails immediately rather than after a Slack connection is established. A *well-formed* pattern that matches nothing cannot be caught that way — `--tool k8s-lst` is valid syntax — so it is reported as a `tool pattern matched nothing` warning at startup instead.
+
+The `reply` tool is served by the process itself rather than by a group, because it is bound to the live chat connection. It appears in the catalog but has no group, and `--tool` never filters it: a planner turns the model's prose into a reply, so a bot without `reply` could not answer at all. The first SIGINT or SIGTERM cancels in-flight work and closes resources gracefully; a second signal uses the operating system's default handling.
+
+A failure while handling one message — the planner erroring, a plan naming an unknown tool, a server that cannot be reached, even a tool panicking — is not fatal: the server logs the full error at `error`, posts a brief `sorry, I couldn't complete that request` back to that conversation, and keeps serving other messages. Only losing the chat connection or receiving a shutdown signal stops the server.
+
+A tool that *ran* and reported its own failure is treated differently: MCP carries that on the result rather than as a protocol error, so the tool's own message is relayed to the requester instead of the generic notice. Rejecting an argument is the common case — the server validates every call against the tool's declared schema before the tool runs — so a planner that asks for `all-namespaces: "maybe"` gets a specific answer rather than a shrug.
 
 ### Logging
 
@@ -151,7 +166,7 @@ The server emits structured logs (Go's `log/slog`) to standard error, describing
 At `info` the server logs startup configuration and, per message, `message received`, `plan produced` (with the step count and the tools the planner chose), each `executing step` (with the tool), `result posted`, and any error, all tagged with the `conversation_id` and `sender`. Raise to `--log-level debug` to also see the message text, the planner request, and each tool being opened and invoked. A representative `info` line:
 
 ```json
-{"time":"2026-07-21T12:00:00Z","level":"INFO","msg":"plan produced","conversation_id":"C123","sender":"alice","steps":2,"tools":["reply://","status-check://"]}
+{"time":"2026-07-21T12:00:00Z","level":"INFO","msg":"plan produced","conversation_id":"C123","sender":"alice","steps":2,"tools":["reply","status-check"]}
 ```
 
 Credentials are never logged: component URLs are logged, but secrets live in the credential store, not the URL.
@@ -160,7 +175,11 @@ Credentials are never logged: component URLs are logged, but secrets live in the
 
 The `openai-chat-completions://` planner turns chat messages into plans using any service that speaks the OpenAI Chat Completions API. Because the endpoint is part of the URL, the same planner drives OpenAI, Google Gemini's OpenAI-compatible endpoint, a local Ollama, vLLM, LocalAI, and similar servers.
 
-On each message the planner makes one completion request, offering the enabled operational tools (from `--tool`) plus a built-in `reply` function. The model's answer maps directly to plan steps: assistant prose and each `reply` call become `reply://` steps posted to the requester, and each operational tool call becomes a step invoking that tool. Every tool performs a single intent and describes itself (see [Adding a new tool](DEVELOPMENT.md)), so it is offered as its own typed function named for the tool, carrying its typed arguments with their required fields — so the model calls the tool with the arguments it actually needs instead of guessing. This mirrors the Model Context Protocol, where each tool has a flat input schema. Each function schema is a plain object (no `oneOf` or `const`), keeping it within the schema subset that OpenAI-compatible endpoints such as Gemini accept.
+On each message the planner makes one completion request, offering every exposed tool — including `reply` — as a function named for the tool and carrying that tool's own input schema. The schemas come from the MCP servers rather than from a hand-written table, so the model calls a tool with the arguments it actually declares, with the right types and required fields, instead of guessing.
+
+Because the completion endpoints accept only a subset of JSON Schema and disagree about which, each schema is downgraded before it is offered: local `$ref`s are inlined, a nullable `oneOf`/`anyOf` is collapsed to its real branch, `const` becomes a one-entry `enum`, and keywords such as `additionalProperties`, `allOf`, and `not` are dropped. Downgrading only ever widens what the model may send, and the server validates the call anyway. A tool whose schema cannot be downgraded at all is skipped with a warning rather than breaking every request.
+
+The model's answer maps directly to plan steps: assistant prose and each `reply` call become `reply` steps posted to the requester, and each other tool call becomes a step invoking that tool.
 
 The URL configures the endpoint and model:
 
@@ -197,12 +216,12 @@ The exchange is single-shot: tool results are not fed back to the model, and the
 
 ### Service status tool
 
-The status tools let a planner check public service-status APIs without credentials. The `status-check://` tool takes a `service` argument, and the `status-list://` tool discovers the canonical services:
+The status tools let a planner check public service-status APIs without credentials. The `status-check` tool takes a `service` argument, and the `status-list` tool discovers the canonical services:
 
 ```go
 planner.Step{
-    Tool: "status-check://",
-    Call: tool.Call{Arguments: map[string]string{"service": "github"}},
+    Tool:      "status-check",
+    Arguments: map[string]any{"service": "github"},
 }
 ```
 
@@ -230,21 +249,21 @@ Provider requests for `all` are made concurrently with at most four in flight. A
 
 ### Kubernetes resource tools
 
-Two tools read Kubernetes resources for chat. `k8s-list://` lists resources of one type in a namespace or across all namespaces, and `k8s-get://` fetches specific resources by name as a describe-style brief, JSON, or YAML. Both resolve the resource type through the API server's discovery data and read objects with the dynamic client, so they serve built-in resources and CustomResourceDefinitions alike. The type may be given as a plural, singular, short name, or kind: `pods`, `po`, `pod`, `deployment`, `StatefulSet`, `deployments.apps`, or any installed CRD name.
+Two tools read Kubernetes resources for chat. `k8s-list` lists resources of one type in a namespace or across all namespaces, and `k8s-get` fetches specific resources by name as a describe-style brief, JSON, or YAML. Both resolve the resource type through the API server's discovery data and read objects with the dynamic client, so they serve built-in resources and CustomResourceDefinitions alike. The type may be given as a plural, singular, short name, or kind: `pods`, `po`, `pod`, `deployment`, `StatefulSet`, `deployments.apps`, or any installed CRD name.
 
 #### Connecting to a cluster
 
-Credentials never appear in a tool URL. How to reach a cluster — the API server address, the CA bundle that verifies its certificate, and the client certificate or token that authenticates to it — all come from a kubeconfig, exactly as `kubectl` reads one. The kubeconfig is located through the standard rules: the `KUBECONFIG` environment variable if set, otherwise `~/.kube/config`. When neither is present and the server runs inside a pod, it falls back to the pod's in-cluster service account (its token and the cluster CA are mounted automatically). Configuring `KUBECONFIG` once therefore serves every present and future Kubernetes tool; the tool URL only names which cluster and defaults to apply. That URL is the `--tool` selector the server is started with (see [Configuration](#configuration)):
+Credentials never appear in a group's options. How to reach a cluster — the API server address, the CA bundle that verifies its certificate, and the client certificate or token that authenticates to it — all come from a kubeconfig, exactly as `kubectl` reads one. The kubeconfig is located through the standard rules: the `KUBECONFIG` environment variable if set, otherwise `~/.kube/config`. When neither is present and the server runs inside a pod, it falls back to the pod's in-cluster service account (its token and the cluster CA are mounted automatically). Configuring `KUBECONFIG` once therefore serves every present and future Kubernetes tool; the group's options only name which cluster and defaults to apply, and they are the `--builtin` selector the server is started with (see [Configuration](#configuration)):
 
 ```text
-k8s-get://                             current context, or in-cluster when running in a pod
-k8s-get://?context=prod                a named kubeconfig context
-k8s-get://?kubeconfig=/path/to/config  an explicit kubeconfig file, overriding KUBECONFIG
+k8s                             current context, or in-cluster when running in a pod
+k8s?context=prod                a named kubeconfig context
+k8s?kubeconfig=/path/to/config  an explicit kubeconfig file, overriding KUBECONFIG
 ```
 
-For example, `--tool-url 'k8s-get://?context=prod' --tool-url 'k8s-list://?context=prod'` pins both tools to the `prod` context while leaving every other tool exposed; the same query is repeated because configuration is per tool. (Use `--tool 'k8s-get://?context=prod'` instead when you also want to restrict the exposed set to a curated allowlist.) The planner selects only which tool to call, so it never needs to know the context. The default namespace comes from the selected context; a request targets a specific namespace through the tools' `namespace` argument.
+For example, `--builtin 'k8s?context=prod'` pins both kubernetes tools to the `prod` context — configuration is per group, so the two tools always share a cluster and the query is written once. The planner selects only which tool to call, so it never needs to know the context. The default namespace comes from the selected context; a request targets a specific namespace through the tools' `namespace` argument.
 
-Because the kubeconfig carries the server URL, the CA, and the client credentials together, there is nothing else to configure per tool. To point the server at a cluster reachable with a CA and a client certificate, embed them in a kubeconfig context — for example generated with `kubectl config set-cluster`, `set-credentials`, and `set-context` — then set `KUBECONFIG` to that file in the service environment (see [Running the system package](#running-the-system-package)). A bearer token or an exec credential plugin works the same way; the tools honor whatever the kubeconfig context specifies.
+The kubeconfig is read when a kubernetes tool is first called, not at startup. The group is served by default, so a host that has no kubeconfig at all — or a named context that does not exist — still starts normally and reports the problem on the call, leaving every other tool working. Because the kubeconfig carries the server URL, the CA, and the client credentials together, there is nothing else to configure. To point the server at a cluster reachable with a CA and a client certificate, embed them in a kubeconfig context — for example generated with `kubectl config set-cluster`, `set-credentials`, and `set-context` — then set `KUBECONFIG` to that file in the service environment (see [Running the system package](#running-the-system-package)). A bearer token or an exec credential plugin works the same way; the tools honor whatever the kubeconfig context specifies.
 
 The systemd unit reads its environment from the package's configuration file, so add the line there to share one cluster across the Kubernetes tools:
 
@@ -254,21 +273,21 @@ KUBECONFIG=/etc/chatops/kubeconfig
 
 #### Listing and getting
 
-`k8s-list://` reads these arguments: `kind` (required), `namespace` (optional; defaults to the context's default namespace and is ignored for cluster-scoped types), and `all-namespaces` (optional boolean, listing across every namespace). The result is an aligned table of name and age, prefixed with the namespace across namespaces and suffixed with a status column when the type reports one:
+`k8s-list` reads these arguments: `kind` (required), `namespace` (optional; defaults to the context's default namespace and is ignored for cluster-scoped types), and `all-namespaces` (optional boolean, listing across every namespace). The result is an aligned table of name and age, prefixed with the namespace across namespaces and suffixed with a status column when the type reports one:
 
 ```go
 planner.Step{
-    Tool: "k8s-list://",
-    Call: tool.Call{Arguments: map[string]string{"kind": "pods", "namespace": "web"}},
+    Tool:      "k8s-list",
+    Arguments: map[string]any{"kind": "pods", "namespace": "web"},
 }
 ```
 
-`k8s-get://` reads `kind` (required), `name` (required), `namespace` (optional, as above), and `output` (optional: `brief`, `json`, or `yaml`). The default `brief` output is a describe-style summary — identity, age, labels, a status hint, and the resource's recent events — so a separate describe verb is unnecessary. `json` and `yaml` emit the full manifest. Pass several names as a comma-separated list to fetch them together in one call:
+`k8s-get` reads `kind` (required), `name` (required), `namespace` (optional, as above), and `output` (optional: `brief`, `json`, or `yaml`). The default `brief` output is a describe-style summary — identity, age, labels, a status hint, and the resource's recent events — so a separate describe verb is unnecessary. `json` and `yaml` emit the full manifest. Pass several names as a comma-separated list to fetch them together in one call:
 
 ```go
 planner.Step{
-    Tool: "k8s-get://",
-    Call: tool.Call{Arguments: map[string]string{"kind": "statefulset", "name": "api,worker", "namespace": "web", "output": "yaml"}},
+    Tool:      "k8s-get",
+    Arguments: map[string]any{"kind": "statefulset", "name": "api,worker", "namespace": "web", "output": "yaml"},
 }
 ```
 
@@ -389,19 +408,35 @@ $ chatops planners --json
 
 ### Tools
 
-List the selectable operational tools the binary knows about, one scheme per line. These are the names accepted by `server --tool`. Add `--json` (`-j`) for a machine-readable array:
+List the operational tools planners would be offered, one name per line. The list comes from connecting the built-in MCP servers and asking them, so it reflects exactly what a planner sees. `--builtin` and `--tool` mean the same here as they do on the server, so the command can be used to check a selection before starting one. Add `--json` (`-j`) for a machine-readable array with descriptions:
 
 ```console
 $ chatops tools
+reply
 k8s-get
 k8s-list
 ping
 status-check
 status-list
 
+$ chatops tools --builtin k8s --tool 'k8s-*'
+k8s-get
+k8s-list
+
 $ chatops tools --json
-["k8s-get","k8s-list","ping","status-check","status-list"]
+[{"name":"reply","description":"Post a message back to the person who sent the request, ..."}, ...]
 ```
+
+### MCP
+
+Serve a built-in tool group to any other MCP host — Claude Code, an editor, another chatops instance — over stdio:
+
+```console
+$ chatops mcp serve k8s
+$ chatops mcp serve 'k8s?context=prod' --credentials json-file:///etc/chatops/credentials.json
+```
+
+The group argument takes the same form as `server --builtin`. The command serves the *same* server object the engine connects to in process, over stdio instead, so a group reached this way behaves identically to one reached in process — which is what makes moving a group out of the server a change of configuration rather than of code. Stdout carries the protocol, so diagnostics go to stderr; the session ends when the host closes the pipe.
 
 ### Version
 

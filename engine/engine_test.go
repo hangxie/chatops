@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,17 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hangxie/chatops/chat"
-	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/planner"
-	"github.com/hangxie/chatops/tool"
 	"github.com/hangxie/chatops/tool/reply"
 )
-
-// stubDesc is a minimal valid descriptor for wiring test tools, which
-// must self-describe.
-func stubDesc() *tool.Descriptor {
-	return &tool.Descriptor{Description: "stub"}
-}
 
 type fakeConn struct {
 	mu           sync.Mutex
@@ -99,39 +90,10 @@ func (f *fakePlanner) Close() error {
 	return f.closeErr
 }
 
-type fakeTool struct {
-	mu       sync.Mutex
-	calls    []tool.Call
-	result   tool.Result
-	err      error
-	closed   int
-	closeErr error
-}
-
-func (f *fakeTool) Invoke(_ context.Context, call tool.Call) (tool.Result, error) {
-	f.mu.Lock()
-	f.calls = append(f.calls, call)
-	f.mu.Unlock()
-	return f.result, f.err
-}
-
-func (f *fakeTool) Close() error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.closed++
-	return f.closeErr
-}
-
-func (f *fakeTool) callCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.calls)
-}
-
 func Test_New_validates_dependencies(t *testing.T) {
 	conn := &fakeConn{}
 	p := &fakePlanner{}
-	tools := tool.NewRegistry()
+	tools := newHost(t, nil)
 
 	testCases := map[string]struct {
 		config Config
@@ -140,7 +102,7 @@ func Test_New_validates_dependencies(t *testing.T) {
 		"valid":       {config: Config{Chat: conn, Planner: p, Tools: tools}},
 		"nil-chat":    {config: Config{Planner: p, Tools: tools}, errMsg: "nil chat"},
 		"nil-planner": {config: Config{Chat: conn, Tools: tools}, errMsg: "nil planner"},
-		"nil-tools":   {config: Config{Chat: conn, Planner: p}, errMsg: "nil tool registry"},
+		"nil-tools":   {config: Config{Chat: conn, Planner: p}, errMsg: "nil tool host"},
 		"negative-concurrency": {
 			config: Config{Chat: conn, Planner: p, Tools: tools, MaxConcurrency: -1}, errMsg: "negative maximum concurrency",
 		},
@@ -169,14 +131,11 @@ func Test_Run_plans_executes_and_replies(t *testing.T) {
 	defer cancel()
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "conversation-1", Sender: "alice", Text: "do it"}}}
 	p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{
-		{Tool: "reply://", Call: tool.Call{Arguments: map[string]string{"text": "working"}}},
-		{Tool: "fake://", Call: tool.Call{Arguments: map[string]string{"unit": "web"}}},
+		{Tool: reply.ToolName, Arguments: map[string]any{"text": "working"}},
+		{Tool: "fake", Arguments: map[string]any{"unit": "web"}},
 	}}}}
-	taskTool := &fakeTool{result: tool.Result{Text: "restarted web"}}
-	tools := tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: func(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
-		return taskTool, nil
-	}, Descriptor: stubDesc()})
-	e, err := New(Config{ConnectionID: "chat-1", Chat: conn, Planner: p, Tools: tools})
+	taskTool := &stubTool{name: "fake", text: "restarted web"}
+	e, err := New(Config{ConnectionID: "chat-1", Chat: conn, Planner: p, Tools: newHost(t, conn, taskTool)})
 	require.NoError(t, err)
 
 	result := make(chan error, 1)
@@ -192,19 +151,18 @@ func Test_Run_plans_executes_and_replies(t *testing.T) {
 	require.Equal(t, []planner.Request{{
 		Text: "do it", ConnectionID: "chat-1", ConversationID: "conversation-1", Sender: "alice",
 	}}, p.requests)
-	require.Equal(t, []tool.Call{{Arguments: map[string]string{"unit": "web"}}}, taskTool.calls)
+	require.Equal(t, []map[string]any{{"unit": "web"}}, taskTool.recorded())
 	require.Equal(t, []chat.Message{
 		{ConversationID: "conversation-1", Text: "working"},
 		{ConversationID: "conversation-1", Text: "restarted web"},
 	}, conn.sent)
-	require.Equal(t, 1, taskTool.closed)
 	require.Equal(t, 1, conn.closed)
 	require.Equal(t, 1, p.closed)
 }
 
 // planStep builds a single-use planner that returns a one-step plan.
-func planStep(toolURL string, call tool.Call) *fakePlanner {
-	return &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{{Tool: toolURL, Call: call}}}}}
+func planStep(toolName string, args map[string]any) *fakePlanner {
+	return &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{{Tool: toolName, Arguments: args}}}}}
 }
 
 // sentContains reports whether conn has sent a message with the given text.
@@ -223,7 +181,7 @@ func Test_Run_receive_error_stops_and_closes(t *testing.T) {
 	testErr := errors.New("connection lost")
 	conn := &fakeConn{receiveErr: testErr}
 	p := &fakePlanner{}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 
 	err = e.Run(context.Background())
@@ -241,17 +199,16 @@ func Test_Run_message_failure_is_nonfatal(t *testing.T) {
 	testErr := errors.New("stage failed")
 	testCases := map[string]struct {
 		planner *fakePlanner
-		invoked *fakeTool
+		invoked *stubTool
 	}{
-		"plan":                {planner: &fakePlanner{err: testErr}},
-		"open-tool":           {planner: planStep("missing://", tool.Call{})},
-		"malformed-tool-url":  {planner: planStep("%", tool.Call{})},
-		"invoke-tool":         {planner: planStep("fake://", tool.Call{}), invoked: &fakeTool{err: testErr}},
-		"close-tool":          {planner: planStep("fake://", tool.Call{}), invoked: &fakeTool{closeErr: testErr}},
-		"misconfigured-reply": {planner: planStep("reply://send", tool.Call{Arguments: map[string]string{"text": "hi"}})},
-		// A reply step with no arguments: the engine injects the conversation
-		// into a fresh map, then reply fails for the missing text.
-		"reply-without-arguments": {planner: planStep("reply://", tool.Call{})},
+		"plan":         {planner: &fakePlanner{err: testErr}},
+		"unknown-tool": {planner: planStep("missing", nil)},
+		"call-fails": {
+			planner: planStep("fake", nil),
+			invoked: &stubTool{name: "fake", toolErr: testErr, rawError: true},
+		},
+		// A reply with no text cannot be posted; the host tool reports it.
+		"reply-without-arguments": {planner: planStep(reply.ToolName, nil)},
 	}
 
 	for name, tc := range testCases {
@@ -259,13 +216,11 @@ func Test_Run_message_failure_is_nonfatal(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			conn := &fakeConn{received: []chat.Message{{ConversationID: "c1", Text: "do it"}}}
-			tools := tool.NewRegistry()
+			var stubs []*stubTool
 			if tc.invoked != nil {
-				tools = tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: func(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
-					return tc.invoked, nil
-				}, Descriptor: stubDesc()})
+				stubs = append(stubs, tc.invoked)
 			}
-			e, err := New(Config{Chat: conn, Planner: tc.planner, Tools: tools})
+			e, err := New(Config{Chat: conn, Planner: tc.planner, Tools: newHost(t, conn, stubs...)})
 			require.NoError(t, err)
 
 			result := make(chan error, 1)
@@ -276,11 +231,28 @@ func Test_Run_message_failure_is_nonfatal(t *testing.T) {
 
 			require.Equal(t, 1, conn.closed)
 			require.Equal(t, 1, tc.planner.closed)
-			if tc.invoked != nil {
-				require.Equal(t, 1, tc.invoked.closed)
-			}
 		})
 	}
+}
+
+// Test_Run_relays_tool_reported_error verifies MCP's IsError contract: a tool
+// that ran and reported its own failure is not an engine failure, so the
+// requester sees what the tool said rather than the generic notice.
+func Test_Run_relays_tool_reported_error(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1", Text: "do it"}}}
+	taskTool := &stubTool{name: "fake", toolErr: errors.New("cluster unreachable")}
+	p := planStep("fake", nil)
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn, taskTool)})
+	require.NoError(t, err)
+
+	result := make(chan error, 1)
+	go func() { result <- e.Run(ctx) }()
+	require.Eventually(t, func() bool { return sentContains(conn, "cluster unreachable") }, time.Second, time.Millisecond)
+	cancel()
+	require.NoError(t, <-result)
+	require.False(t, sentContains(conn, failureNotice))
 }
 
 // Test_Run_survives_send_failure verifies that when even the reply cannot be
@@ -291,12 +263,9 @@ func Test_Run_survives_send_failure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}, sendErr: testErr}
-	invoked := &fakeTool{result: tool.Result{Text: "done"}}
-	tools := tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: func(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
-		return invoked, nil
-	}, Descriptor: stubDesc()})
-	p := planStep("fake://", tool.Call{})
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tools})
+	invoked := &stubTool{name: "fake", text: "done"}
+	p := planStep("fake", nil)
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn, invoked)})
 	require.NoError(t, err)
 
 	result := make(chan error, 1)
@@ -304,49 +273,158 @@ func Test_Run_survives_send_failure(t *testing.T) {
 	require.Eventually(t, func() bool { return invoked.callCount() == 1 }, time.Second, time.Millisecond)
 	cancel()
 	require.NoError(t, <-result)
-	require.Equal(t, 1, invoked.closed)
 }
 
-type panicTool struct{ closed atomic.Int32 }
+// Test_Run_survives_panicking_tool verifies that a tool panicking inside its
+// server does not take the engine down. The panic now happens across the MCP
+// boundary rather than in the engine's own goroutine, so the engine sees a
+// failed call and notifies the requester.
+// panickingPlanner panics instead of planning.
+type panickingPlanner struct{ closed int }
 
-func (t *panicTool) Invoke(context.Context, tool.Call) (tool.Result, error) {
-	panic("boom")
+func (p *panickingPlanner) Plan(context.Context, planner.Request) (planner.Plan, error) {
+	panic("planner boom")
 }
 
-func (t *panicTool) Close() error {
-	t.closed.Add(1)
+func (p *panickingPlanner) Close() error {
+	p.closed++
 	return nil
 }
 
-func Test_Run_recovers_panicking_tool_and_continues(t *testing.T) {
+func Test_Run_recovers_panicking_planner_and_continues(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
-	p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{{Tool: "panic://"}}}}}
-	taskTool := &panicTool{}
-	tools := tool.NewRegistry(tool.Backend{Scheme: "panic", Opener: func(context.Context, *url.URL, cred.Store) (tool.Tool, error) {
-		return taskTool, nil
-	}, Descriptor: stubDesc()})
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tools})
+	p := &panickingPlanner{}
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 
 	result := make(chan error, 1)
 	go func() { result <- e.Run(ctx) }()
-	// The panic is recovered, the requester is notified, and the engine keeps
-	// running.
+	// The planner runs in this process, so its panic is recovered here; the
+	// requester is notified and the engine keeps serving.
 	require.Eventually(t, func() bool { return sentContains(conn, failureNotice) }, time.Second, time.Millisecond)
 	cancel()
 	require.NoError(t, <-result)
-	require.Equal(t, int32(1), taskTool.closed.Load())
+	require.Equal(t, 1, p.closed)
+}
+
+func Test_Run_survives_panicking_tool(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
+	p := planStep("panicky", nil)
+	taskTool := &stubTool{name: "panicky", panics: true}
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn, taskTool)})
+	require.NoError(t, err)
+
+	result := make(chan error, 1)
+	go func() { result <- e.Run(ctx) }()
+	require.Eventually(t, func() bool { return sentContains(conn, failureNotice) }, time.Second, time.Millisecond)
+	cancel()
+	require.NoError(t, <-result)
 	require.Equal(t, 1, conn.closed)
 	require.Equal(t, 1, p.closed)
+}
+
+// Test_Run_abandons_the_plan_after_a_failed_step: a later step may well have
+// assumed an earlier one worked, so the rest of the plan is dropped rather
+// than run against a state that never came about.
+func Test_Run_abandons_the_plan_after_a_failed_step(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
+	failing := &stubTool{name: "failing", toolErr: errors.New("cluster unreachable")}
+	after := &stubTool{name: "after", text: "should not run"}
+	p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{
+		{Tool: "failing"},
+		{Tool: "after"},
+	}}}}
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn, failing, after)})
+	require.NoError(t, err)
+
+	result := make(chan error, 1)
+	go func() { result <- e.Run(ctx) }()
+	require.Eventually(t, func() bool { return sentContains(conn, "cluster unreachable") }, time.Second, time.Millisecond)
+	cancel()
+	require.NoError(t, <-result)
+
+	require.Equal(t, 1, failing.callCount())
+	require.Zero(t, after.callCount(), "the plan continued past a failed step")
+	require.False(t, sentContains(conn, "should not run"))
+}
+
+// Test_Run_notifies_on_a_silent_tool_failure: an external server may report a
+// failure with no content at all, and the requester must not be left hearing
+// nothing.
+func Test_Run_notifies_on_a_silent_tool_failure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
+	silent := &stubTool{name: "silent", silentError: true}
+	p := planStep("silent", nil)
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn, silent)})
+	require.NoError(t, err)
+
+	result := make(chan error, 1)
+	go func() { result <- e.Run(ctx) }()
+	require.Eventually(t, func() bool { return sentContains(conn, failureNotice) }, time.Second, time.Millisecond)
+	cancel()
+	require.NoError(t, <-result)
+}
+
+// Test_Run_posts_a_structured_only_result: a server may answer with
+// machine-readable output and nothing else. Reading only the content would
+// leave the step looking like it produced nothing, and the requester would
+// hear silence.
+func Test_Run_posts_a_structured_only_result(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
+	counter := &stubTool{name: "counter", structured: map[string]any{"count": 3}}
+	p := planStep("counter", nil)
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn, counter)})
+	require.NoError(t, err)
+
+	result := make(chan error, 1)
+	go func() { result <- e.Run(ctx) }()
+	require.Eventually(t, func() bool { return sentContains(conn, "{\n  \"count\": 3\n}") }, time.Second, time.Millisecond)
+	cancel()
+	require.NoError(t, <-result)
+}
+
+func Test_Run_chat_closed_mid_burst_is_graceful(t *testing.T) {
+	// A burst keeps the run loop submitting while a worker is failing, so the
+	// stop is observed by whichever of Submit and Done gets there first. Both
+	// must report the same graceful outcome.
+	msgs := make([]chat.Message, 8)
+	for i := range msgs {
+		msgs[i] = chat.Message{ConversationID: fmt.Sprintf("c%d", i)}
+	}
+	conn := &fakeConn{
+		received: msgs,
+		sendErr:  fmt.Errorf("fake: %w", chat.ErrClosed),
+		// Trickle the messages in so the first one has failed, and the
+		// scheduler stopped, while the run loop is still submitting.
+		afterReceive: func() { time.Sleep(10 * time.Millisecond) },
+	}
+	taskTool := &stubTool{name: "fake", text: "done"}
+	p := &fakePlanner{plans: make([]planner.Plan, len(msgs))}
+	for i := range p.plans {
+		p.plans[i] = planner.Plan{Steps: []planner.Step{{Tool: "fake"}}}
+	}
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn, taskTool), MaxConcurrency: 4})
+	require.NoError(t, err)
+
+	require.NoError(t, e.Run(context.Background()))
+	require.Equal(t, 1, conn.closed)
 }
 
 func Test_Run_context_cancellation_during_planning_is_graceful(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
 	p := &fakePlanner{err: context.Canceled, cancel: cancel}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 	require.NoError(t, e.Run(ctx))
 }
@@ -356,7 +434,7 @@ func Test_Run_context_deadline_is_graceful(t *testing.T) {
 	defer cancel()
 	conn := &fakeConn{}
 	p := &fakePlanner{}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 	// The chat has no messages, so the run ends when the context deadline
 	// fires, which is a graceful stop.
@@ -369,7 +447,7 @@ func Test_Run_preserves_receive_error_that_races_with_cancellation(t *testing.T)
 	cancel()
 	conn := &fakeConn{receiveErr: testErr}
 	p := &fakePlanner{}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 	// A fatal receive error is reported even though it races with
 	// cancellation; per-message errors, by contrast, are non-fatal and
@@ -380,7 +458,7 @@ func Test_Run_preserves_receive_error_that_races_with_cancellation(t *testing.T)
 func Test_Run_closed_chat_is_graceful(t *testing.T) {
 	conn := &fakeConn{receiveErr: fmt.Errorf("fake: %w", chat.ErrClosed)}
 	p := &fakePlanner{}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 	require.NoError(t, e.Run(context.Background()))
 }
@@ -390,71 +468,11 @@ func Test_Run_chat_closed_while_handling_is_graceful(t *testing.T) {
 		received: []chat.Message{{ConversationID: "c1"}},
 		sendErr:  fmt.Errorf("fake: %w", chat.ErrClosed),
 	}
-	p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{{Tool: "fake://"}}}}}
-	taskTool := &fakeTool{result: tool.Result{Text: "done"}}
-	tools := tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: func(context.Context, *url.URL, cred.Store) (tool.Tool, error) {
-		return taskTool, nil
-	}, Descriptor: stubDesc()})
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tools})
+	p := planStep("fake", nil)
+	taskTool := &stubTool{name: "fake", text: "done"}
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn, taskTool)})
 	require.NoError(t, err)
 	require.NoError(t, e.Run(context.Background()))
-}
-
-func Test_Run_accepts_canonical_reply_URL_variants(t *testing.T) {
-	testCases := map[string]string{
-		"canonical":  reply.URL,
-		"mixed-case": "Reply://",
-	}
-	for name, toolURL := range testCases {
-		t.Run(name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
-			p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{{
-				Tool: toolURL,
-				Call: tool.Call{Arguments: map[string]string{"text": "hello"}},
-			}}}}}
-			e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
-			require.NoError(t, err)
-			result := make(chan error, 1)
-			go func() { result <- e.Run(ctx) }()
-			require.Eventually(t, func() bool {
-				conn.mu.Lock()
-				defer conn.mu.Unlock()
-				return len(conn.sent) == 1
-			}, time.Second, time.Millisecond)
-			cancel()
-			require.NoError(t, <-result)
-		})
-	}
-}
-
-func Test_Run_rejects_configured_reply_URL(t *testing.T) {
-	testCases := map[string]string{
-		"host":     "reply://send",
-		"path":     "reply:///send",
-		"query":    "reply://?format=text",
-		"fragment": "reply://#send",
-	}
-	for name, toolURL := range testCases {
-		t.Run(name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
-			p := planStep(toolURL, tool.Call{Arguments: map[string]string{"text": "hello"}})
-			e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
-			require.NoError(t, err)
-
-			result := make(chan error, 1)
-			go func() { result <- e.Run(ctx) }()
-			// The misconfigured reply URL is rejected, so the intended text is
-			// never posted; the requester gets the failure notice instead and
-			// the engine keeps running.
-			require.Eventually(t, func() bool { return sentContains(conn, failureNotice) }, time.Second, time.Millisecond)
-			cancel()
-			require.NoError(t, <-result)
-			require.False(t, sentContains(conn, "hello"))
-		})
-	}
 }
 
 func Test_Run_binds_reply_to_originating_conversation(t *testing.T) {
@@ -462,14 +480,13 @@ func Test_Run_binds_reply_to_originating_conversation(t *testing.T) {
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "origin"}}}
 	// Hold a reference to the planner's argument map so the test can prove the
 	// engine did not mutate it while injecting the conversation.
-	replyArgs := map[string]string{"text": "hello"}
-	p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{{
-		Tool: reply.URL,
-		// The planner leaves the conversation unset; the engine binds it to
-		// the originating conversation, so this reply lands on "origin".
-		Call: tool.Call{Arguments: replyArgs},
-	}}}}}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
+	replyArgs := map[string]any{"text": "hello"}
+	// The plan names no conversation: the engine carries it on the context,
+	// so the reply lands on "origin" and the model never chooses a target.
+	p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{
+		{Tool: reply.ToolName, Arguments: replyArgs},
+	}}}}
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 	result := make(chan error, 1)
 	go func() { result <- e.Run(ctx) }()
@@ -482,10 +499,9 @@ func Test_Run_binds_reply_to_originating_conversation(t *testing.T) {
 	require.NoError(t, <-result)
 	require.Equal(t, "origin", conn.sent[0].ConversationID)
 
-	// The engine must copy the arguments before injecting the conversation,
-	// not mutate the planner's map — a concurrent-safe planner may share it
-	// across conversations.
-	require.Equal(t, map[string]string{"text": "hello"}, replyArgs)
+	// The engine passes the planner's map through untouched; nothing is
+	// injected into it, so a concurrent-safe planner may share it.
+	require.Equal(t, map[string]any{"text": "hello"}, replyArgs)
 }
 
 type parallelPlanner struct {
@@ -512,7 +528,7 @@ func Test_Run_processes_conversations_concurrently(t *testing.T) {
 	defer cancel()
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "a"}, {ConversationID: "b"}}}
 	p := &parallelPlanner{aStarted: make(chan struct{}), aRelease: make(chan struct{}), bDone: make(chan struct{})}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry(), MaxConcurrency: 2})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn), MaxConcurrency: 2})
 	require.NoError(t, err)
 	result := make(chan error, 1)
 	go func() { result <- e.Run(ctx) }()
@@ -550,7 +566,7 @@ func (p *blockingPlanner) Close() error {
 func Test_Close_waits_for_in_flight_plan(t *testing.T) {
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
 	p := &blockingPlanner{started: make(chan struct{}), release: make(chan struct{})}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 	runResult := make(chan error, 1)
 	go func() { runResult <- e.Run(context.Background()) }()
@@ -568,7 +584,7 @@ func Test_Close_waits_for_in_flight_plan(t *testing.T) {
 func Test_Run_does_not_start_work_after_Close(t *testing.T) {
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
 	p := &fakePlanner{}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 	conn.afterReceive = func() { require.NoError(t, e.Close()) }
 	require.NoError(t, e.Run(context.Background()))
@@ -578,7 +594,7 @@ func Test_Run_does_not_start_work_after_Close(t *testing.T) {
 func Test_processMessage_after_Close(t *testing.T) {
 	conn := &fakeConn{}
 	p := &fakePlanner{}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 	require.NoError(t, e.Close())
 	require.ErrorIs(t, e.processMessage(context.Background(), chat.Message{}), context.Canceled)
@@ -600,7 +616,7 @@ func Test_Close_is_idempotent_and_joins_errors(t *testing.T) {
 	plannerErr := errors.New("planner close")
 	conn := &fakeConn{closeErr: chatErr}
 	p := &fakePlanner{closeErr: plannerErr}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 
 	err = e.Close()
@@ -614,7 +630,7 @@ func Test_Close_is_idempotent_and_joins_errors(t *testing.T) {
 func Test_Run_rejects_second_run(t *testing.T) {
 	conn := &fakeConn{}
 	p := &fakePlanner{}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 	require.NoError(t, e.Close())
 
@@ -626,7 +642,7 @@ func Test_Run_rejects_concurrent_run(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	conn := &fakeConn{}
 	p := &fakePlanner{}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry()})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn)})
 	require.NoError(t, err)
 	result := make(chan error, 1)
 	go func() { result <- e.Run(ctx) }()

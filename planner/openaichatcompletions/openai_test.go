@@ -7,24 +7,47 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/internal/testutils"
 	"github.com/hangxie/chatops/planner"
-	"github.com/hangxie/chatops/tool"
 	"github.com/hangxie/chatops/tool/reply"
 )
 
-func fakeToolOpener(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
-	return nil, nil
+// toolSource is a fixed tool catalog standing in for a connected host.
+type toolSource struct {
+	tools      []*mcp.Tool
+	generation uint64
+	calls      atomic.Int64
 }
 
-func openerViaRegistry(t *testing.T, rawURL string, creds cred.Store, tools *tool.Registry) (planner.Planner, error) {
+func (s *toolSource) Tools(context.Context) []*mcp.Tool {
+	s.calls.Add(1)
+	return s.tools
+}
+
+func (s *toolSource) Generation() uint64 { return atomic.LoadUint64(&s.generation) }
+
+// namedTools builds a catalog of argument-less tools.
+func namedTools(names ...string) *toolSource {
+	src := &toolSource{generation: 1}
+	for _, name := range names {
+		src.tools = append(src.tools, &mcp.Tool{
+			Name:        name,
+			Description: name + " tool",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		})
+	}
+	return src
+}
+
+func openerViaRegistry(t *testing.T, rawURL string, creds cred.Store, tools planner.ToolSource) (planner.Planner, error) {
 	t.Helper()
 	reg := planner.NewRegistry(planner.Backend{Scheme: Scheme, Opener: Opener})
 	return reg.Open(context.Background(), rawURL, creds, tools)
@@ -104,20 +127,47 @@ func Test_Opener_rejects_invalid_url(t *testing.T) {
 }
 
 func Test_Opener_offers_enabled_tools(t *testing.T) {
-	statusDesc := tool.Descriptor{Description: "status list"}
-	pingDesc := tool.Descriptor{Description: "ping"}
-	tools := tool.NewRegistry(
-		tool.Backend{Scheme: "status-list", Opener: fakeToolOpener, Descriptor: &statusDesc},
-		tool.Backend{Scheme: "ping", Opener: fakeToolOpener, Descriptor: &pingDesc},
-	)
+	tools := namedTools("status-list", "ping")
 	opened, err := openerViaRegistry(t, "openai-chat-completions://host/v1?model=m&keyless=true", nil, tools)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, opened.Close()) }()
-	planner := opened.(*Planner)
-	// Every enabled tool becomes an offered function keyed back to its scheme.
-	require.Equal(t, "status-list", planner.funcs["status-list"].scheme)
-	require.Equal(t, "ping", planner.funcs["ping"].scheme)
-	require.Len(t, planner.funcs, 2)
+
+	// Every enabled tool becomes an offered function under its own name.
+	built := opened.(*Planner).catalogFor(context.Background())
+	require.Equal(t, map[string]bool{"status-list": true, "ping": true}, built.offered)
+}
+
+func Test_catalogFor_caches_until_generation_moves(t *testing.T) {
+	tools := namedTools("ping")
+	p, err := Open(context.Background(), Config{BaseURL: "https://x", Model: "m", Tools: tools})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, p.Close()) }()
+
+	built := p.catalogFor(context.Background())
+	require.Equal(t, map[string]bool{"ping": true}, built.offered)
+	require.Equal(t, int64(1), tools.calls.Load())
+
+	// A stable catalog is not rebuilt, so the usual request costs nothing.
+	p.catalogFor(context.Background())
+	require.Equal(t, int64(1), tools.calls.Load())
+
+	// A changed catalog is picked up without reopening the planner, which is
+	// what makes a server's tools/list_changed visible to the model.
+	tools.tools = append(tools.tools, &mcp.Tool{Name: "pong", InputSchema: map[string]any{"type": "object"}})
+	atomic.StoreUint64(&tools.generation, 2)
+	built = p.catalogFor(context.Background())
+	require.Equal(t, map[string]bool{"ping": true, "pong": true}, built.offered)
+	require.Equal(t, int64(2), tools.calls.Load())
+}
+
+func Test_catalogFor_nil_source(t *testing.T) {
+	p, err := Open(context.Background(), Config{BaseURL: "https://x", Model: "m"})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, p.Close()) }()
+
+	built := p.catalogFor(context.Background())
+	require.Empty(t, built.defs)
+	require.Empty(t, built.offered)
 }
 
 func Test_Opener_resolves_api_key(t *testing.T) {
@@ -179,7 +229,7 @@ func Test_Opener_resolves_api_key(t *testing.T) {
 
 // plannerAgainst opens a planner pointed at server, with the given tools
 // and credentials, using the insecure local endpoint form.
-func plannerAgainst(t *testing.T, server *httptest.Server, creds cred.Store, tools *tool.Registry) planner.Planner {
+func plannerAgainst(t *testing.T, server *httptest.Server, creds cred.Store, tools planner.ToolSource) planner.Planner {
 	t.Helper()
 	host := strings.TrimPrefix(server.URL, "http://")
 	rawURL := "openai-chat-completions://" + host + "/v1?insecure=true&model=test-model"
@@ -203,8 +253,18 @@ func Test_Plan_maps_completion_to_steps(t *testing.T) {
 	}))
 	defer server.Close()
 
-	statusDesc := &tool.Descriptor{Description: "check one service", Parameters: []tool.Param{{Name: "service", Type: "string", Required: true, Description: "the service"}}}
-	tools := tool.NewRegistry(tool.Backend{Scheme: "status-check", Opener: fakeToolOpener, Descriptor: statusDesc})
+	tools := &toolSource{generation: 1, tools: []*mcp.Tool{
+		{Name: "reply", Description: "post a message", InputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"text": map[string]any{"type": "string"}},
+			"required":   []string{"text"},
+		}},
+		{Name: "status-check", Description: "check one service", InputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"service": map[string]any{"type": "string", "description": "the service"}},
+			"required":   []string{"service"},
+		}},
+	}}
 	creds := testutils.CredentialStore{Values: map[cred.Key]string{cred.PlannerAPIKey: "sk-test"}}
 	p := plannerAgainst(t, server, creds, tools)
 	defer func() { require.NoError(t, p.Close()) }()
@@ -215,8 +275,8 @@ func Test_Plan_maps_completion_to_steps(t *testing.T) {
 	// The reply step carries only the text; the executor injects the target
 	// conversation.
 	require.Equal(t, []planner.Step{
-		{Tool: reply.URL, Call: tool.Call{Arguments: map[string]string{"text": "checking now"}}},
-		{Tool: "status-check://", Call: tool.Call{Arguments: map[string]string{"service": "github"}}},
+		{Tool: reply.ToolName, Arguments: map[string]any{"text": "checking now"}},
+		{Tool: "status-check", Arguments: map[string]any{"service": "github"}},
 	}, plan.Steps)
 
 	// The request carried the model, the enabled tool functions, and the key.
@@ -322,19 +382,13 @@ func Test_Open_validates_config(t *testing.T) {
 		cfg    Config
 		errMsg string
 	}{
-		"empty-base-url":      {ctx: context.Background(), cfg: Config{Model: "m"}, errMsg: "base URL"},
-		"unparseable-base":    {ctx: context.Background(), cfg: Config{BaseURL: "://bad", Model: "m"}, errMsg: "parse base URL"},
-		"non-http-base":       {ctx: context.Background(), cfg: Config{BaseURL: "ftp://x/v1", Model: "m"}, errMsg: "must use http or https"},
-		"hostless-base":       {ctx: context.Background(), cfg: Config{BaseURL: "https:///v1", Model: "m"}, errMsg: "has no host"},
-		"query-in-base":       {ctx: context.Background(), cfg: Config{BaseURL: "https://x/v1?a=b", Model: "m"}, errMsg: "must not carry query"},
-		"empty-model":         {ctx: context.Background(), cfg: Config{BaseURL: "https://x"}, errMsg: "model"},
-		"cancelled-ctx":       {ctx: cancelled, cfg: Config{BaseURL: "https://x", Model: "m"}, errMsg: "context canceled"},
-		"invalid-tool-scheme": {ctx: context.Background(), cfg: Config{BaseURL: "https://x", Model: "m", ToolSchemes: []string{"bad.name"}}, errMsg: "OpenAI function name"},
-		"missing-descriptor":  {ctx: context.Background(), cfg: Config{BaseURL: "https://x", Model: "m", ToolSchemes: []string{"ping"}}, errMsg: `enabled tool "ping" has no descriptor`},
-		"invalid-descriptor": {ctx: context.Background(), cfg: Config{
-			BaseURL: "https://x", Model: "m", ToolSchemes: []string{"ping"},
-			ToolDescriptors: map[string]tool.Descriptor{"ping": {}}, // no description
-		}, errMsg: "invalid"},
+		"empty-base-url":   {ctx: context.Background(), cfg: Config{Model: "m"}, errMsg: "base URL"},
+		"unparseable-base": {ctx: context.Background(), cfg: Config{BaseURL: "://bad", Model: "m"}, errMsg: "parse base URL"},
+		"non-http-base":    {ctx: context.Background(), cfg: Config{BaseURL: "ftp://x/v1", Model: "m"}, errMsg: "must use http or https"},
+		"hostless-base":    {ctx: context.Background(), cfg: Config{BaseURL: "https:///v1", Model: "m"}, errMsg: "has no host"},
+		"query-in-base":    {ctx: context.Background(), cfg: Config{BaseURL: "https://x/v1?a=b", Model: "m"}, errMsg: "must not carry query"},
+		"empty-model":      {ctx: context.Background(), cfg: Config{BaseURL: "https://x"}, errMsg: "model"},
+		"cancelled-ctx":    {ctx: cancelled, cfg: Config{BaseURL: "https://x", Model: "m"}, errMsg: "context canceled"},
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
@@ -377,48 +431,32 @@ func Test_Open_preserves_escaped_base_path(t *testing.T) {
 	}
 }
 
-func Test_Open_rejects_scheme_without_descriptor(t *testing.T) {
-	_, err := Open(context.Background(), Config{
-		BaseURL: "https://x", Model: "m", ToolSchemes: []string{"ping"},
-	})
-	require.ErrorContains(t, err, `enabled tool "ping" has no descriptor`)
-}
-
-// functionParams returns the JSON Schema offered for the named function.
-func functionParams(defs []toolDef, name string) json.RawMessage {
-	for _, d := range defs {
-		if d.Function.Name == name {
-			return d.Function.Parameters
+func Test_Plan_offers_current_catalog(t *testing.T) {
+	var gotNames []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body chatRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		gotNames = nil
+		for _, def := range body.Tools {
+			gotNames = append(gotNames, def.Function.Name)
 		}
-	}
-	return nil
-}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer server.Close()
 
-func Test_Open_snapshots_tool_config(t *testing.T) {
-	schemes := []string{"ping"}
-	descriptors := map[string]tool.Descriptor{
-		"ping": {Description: "liveness", Parameters: []tool.Param{{Name: "loud", Type: "boolean"}}},
-	}
-	p, err := Open(context.Background(), Config{
-		BaseURL: "https://x", Model: "m", ToolSchemes: schemes, ToolDescriptors: descriptors,
-	})
-	require.NoError(t, err)
+	tools := namedTools("ping")
+	p := plannerAgainst(t, server, nil, tools)
 	defer func() { require.NoError(t, p.Close()) }()
 
-	require.Equal(t, "ping", p.funcs["ping"].scheme)
-	before := string(functionParams(p.defs, "ping"))
-	require.Contains(t, before, "loud")
+	_, err := p.Plan(context.Background(), planner.Request{Text: "hi"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"ping"}, gotNames)
 
-	// Mutating the caller's scheme slice and the descriptor's nested
-	// Parameters after Open must not change the offered catalog: Open
-	// deep-copies the descriptors and the schemas are already serialized.
-	schemes[0] = "mutated"
-	params := descriptors["ping"].Parameters
-	params[0].Name = "changed"
-	delete(descriptors, "ping")
-
-	require.Contains(t, p.funcs, "ping")
-	require.NotContains(t, p.funcs, "mutated")
-	require.JSONEq(t, before, string(functionParams(p.defs, "ping")))
-	require.NotContains(t, string(functionParams(p.defs, "ping")), "changed")
+	// A tool added after the planner was opened is offered on the next
+	// request: the catalog is live, not frozen at Open.
+	tools.tools = append(tools.tools, &mcp.Tool{Name: "pong", InputSchema: map[string]any{"type": "object"}})
+	atomic.StoreUint64(&tools.generation, 2)
+	_, err = p.Plan(context.Background(), planner.Request{Text: "hi"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"ping", "pong"}, gotNames)
 }

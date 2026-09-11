@@ -1,24 +1,25 @@
-// Package k8s reads Kubernetes resources for chat. It resolves resource types
-// through the API server's discovery data and reads objects with the dynamic
-// client, so it serves built-in resources and CustomResourceDefinitions alike.
+// Package k8s reads Kubernetes resources for chat and exposes them as MCP
+// tools.
 //
-// The package exports two single-intent tools for wiring into a tool.Registry:
+// The package exports GroupName and Register for wiring its tools into an
+// mcpserve.Registry. The group registers two single-intent tools:
 //
 //	k8s-list  lists a resource type in a namespace or across all namespaces
 //	k8s-get   fetches specific resources as a brief, JSON, or YAML
 //
 // # Cluster selection
 //
-// Credentials never appear in the tool URL. How to reach a cluster — API server
-// URL, CA bundle, and client certificate or token — comes from a kubeconfig
-// loaded through the standard rules (the KUBECONFIG environment variable, then
-// ~/.kube/config), falling back to the in-cluster service account when running
-// in a pod. Configuring KUBECONFIG once therefore serves every k8s tool. The
-// URL only names which cluster and defaults to apply:
+// Credentials never appear in the group's options. How to reach a cluster —
+// API server URL, CA bundle, and client certificate or token — comes from a
+// kubeconfig loaded through the standard rules (the KUBECONFIG environment
+// variable, then ~/.kube/config), falling back to the in-cluster service
+// account when running in a pod. Configuring KUBECONFIG once therefore serves
+// the whole group. The options only name which cluster and defaults to apply,
+// and are shared by both tools:
 //
-//	k8s-get://                             current context (or in-cluster)
-//	k8s-get://?context=prod                a named kubeconfig context
-//	k8s-get://?kubeconfig=/path/to/config  an explicit kubeconfig file
+//	k8s                             current context (or in-cluster)
+//	k8s?context=prod                a named kubeconfig context
+//	k8s?kubeconfig=/path/to/config  an explicit kubeconfig file
 //
 // # Secret safety
 //
@@ -28,102 +29,117 @@ package k8s
 
 import (
 	"context"
-	"fmt"
-	"net/url"
+	"log/slog"
 
-	"github.com/hangxie/chatops/cred"
-	"github.com/hangxie/chatops/tool"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
+	"github.com/hangxie/chatops/mcpserve"
 )
 
-// Schemes served in a tool.Registry.
+// invalidCall marks an error as caused by the call itself — a missing
+// argument, an unknown resource type, a name that does not exist — and so
+// safe to show the requester, which is the whole point of reporting it.
+func invalidCall(format string, args ...any) error {
+	return mcpserve.UserError(format, args...)
+}
+
+// notice is what the requester is told when a failure cannot be shown. It
+// says the call did not get through without saying what it was talking to.
+const notice = "k8s: the cluster could not be reached or the request was refused; see the server log"
+
+// GroupName is the built-in group this package registers into.
+const GroupName = "k8s"
+
+// Model-facing tool names.
 const (
-	ListScheme = "k8s-list"
-	GetScheme  = "k8s-get"
+	ListToolName = "k8s-list"
+	GetToolName  = "k8s-get"
 )
 
-// Argument keys the tools read from tool.Call.Arguments.
-const (
-	argKind          = "kind"
-	argName          = "name"
-	argNamespace     = "namespace"
-	argAllNamespaces = "all-namespaces"
-	argOutput        = "output"
-)
-
-// URL query keys carrying cluster selection (operator configuration, not
+// Option keys carrying cluster selection (operator configuration, not
 // model-facing arguments).
 const (
-	queryContext    = "context"
-	queryKubeconfig = "kubeconfig"
+	optionContext    = "context"
+	optionKubeconfig = "kubeconfig"
 )
 
-// ListDescriptor and GetDescriptor are the tools' self-descriptions for
-// planners; wire each into a tool.Backend alongside its scheme and opener.
-var (
-	ListDescriptor = tool.Descriptor{
+// ListArgs is the input schema of the k8s-list tool.
+type ListArgs struct {
+	Kind          string `json:"kind" jsonschema:"Resource type: plural, singular, short name, or kind (e.g. pods, po, deployment, StatefulSet, CRD names)."`
+	Namespace     string `json:"namespace,omitempty" jsonschema:"Namespace to list; defaults to the context's default namespace. Ignored for cluster-scoped types."`
+	AllNamespaces bool   `json:"all-namespaces,omitempty" jsonschema:"List across all namespaces instead of one."`
+}
+
+// GetArgs is the input schema of the k8s-get tool.
+type GetArgs struct {
+	Kind      string `json:"kind" jsonschema:"Resource type: plural, singular, short name, or kind (e.g. pod, statefulset, CRD names)."`
+	Name      string `json:"name" jsonschema:"Resource name; pass several as a comma-separated list to fetch them together."`
+	Namespace string `json:"namespace,omitempty" jsonschema:"Namespace of the resource; defaults to the context's default namespace. Ignored for cluster-scoped types."`
+	Output    string `json:"output,omitempty" jsonschema:"Output format: brief (default, a summary with recent events), json, or yaml."`
+}
+
+// Register adds the kubernetes tools to s, both sharing the cluster selected
+// by opts. creds is unused: cluster access comes from the kubeconfig or
+// in-cluster config, never from the credential store.
+//
+// Options are validated here, because a misspelled one is an operator mistake
+// worth catching at startup. Reaching the cluster is not: the kubeconfig is
+// loaded on first use, so a host without one — or with a broken one — still
+// starts and simply reports the problem when a kubernetes tool is called. See
+// lazyCluster.
+func Register(s *mcp.Server, opts mcpserve.Options) error {
+	if err := mcpserve.CheckOptions(GroupName, opts.Query, optionContext, optionKubeconfig); err != nil {
+		return err
+	}
+	return RegisterClient(s, newLazyCluster(clusterConfig{
+		kubeconfig: opts.Query.Get(optionKubeconfig),
+		context:    opts.Query.Get(optionContext),
+	}), opts.Logger)
+}
+
+// RegisterClient adds the kubernetes tools to s backed by client, for
+// explicit wiring and tests. A nil logger discards the operational detail the
+// tools keep out of their results.
+func RegisterClient(s *mcp.Server, client resourceClient, logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        ListToolName,
 		Description: "List Kubernetes resources of one type in a namespace or across all namespaces (pods, deployments, CRDs, ...).",
-		Parameters: []tool.Param{
-			{Name: argKind, Type: "string", Required: true, Description: "Resource type: plural, singular, short name, or kind (e.g. pods, po, deployment, StatefulSet, CRD names)."},
-			{Name: argNamespace, Type: "string", Description: "Namespace to list; defaults to the context's default namespace. Ignored for cluster-scoped types."},
-			{Name: argAllNamespaces, Type: "boolean", Description: "List across all namespaces instead of one."},
-		},
-	}
-	GetDescriptor = tool.Descriptor{
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args ListArgs) (*mcp.CallToolResult, any, error) {
+		result, out, err := listResources(ctx, client, args)
+		return result, out, curate(ctx, logger, ListToolName, err)
+	})
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        GetToolName,
 		Description: "Fetch specific Kubernetes resources by name as a describe-style brief, JSON, or YAML. Secret values are masked.",
-		Parameters: []tool.Param{
-			{Name: argKind, Type: "string", Required: true, Description: "Resource type: plural, singular, short name, or kind (e.g. pod, statefulset, CRD names)."},
-			{Name: argName, Type: "string", Required: true, Description: "Resource name; pass several as a comma-separated list to fetch them together."},
-			{Name: argNamespace, Type: "string", Description: "Namespace of the resource; defaults to the context's default namespace. Ignored for cluster-scoped types."},
-			{Name: argOutput, Type: "string", Description: "Output format: brief (default, a summary with recent events), json, or yaml."},
-		},
-	}
-)
-
-// ListOpener and GetOpener are the tool.OpenerFunc values for the two tools.
-// creds is unused: cluster access comes from the kubeconfig or in-cluster
-// config selected by the URL, never from the credential store.
-func ListOpener(ctx context.Context, u *url.URL, _ cred.Store) (tool.Tool, error) {
-	client, err := openCluster(u)
-	if err != nil {
-		return nil, err
-	}
-	return &listTool{client: client}, nil
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args GetArgs) (*mcp.CallToolResult, any, error) {
+		result, out, err := getResources(ctx, client, args)
+		return result, out, curate(ctx, logger, GetToolName, err)
+	})
+	return nil
 }
 
-func GetOpener(ctx context.Context, u *url.URL, _ cred.Store) (tool.Tool, error) {
-	client, err := openCluster(u)
-	if err != nil {
-		return nil, err
-	}
-	return &getTool{client: client}, nil
-}
-
-// openCluster parses the cluster selection from u and builds a cluster client.
-func openCluster(u *url.URL) (*cluster, error) {
-	cc, err := parseURL(u)
-	if err != nil {
-		return nil, err
-	}
-	return newCluster(cc)
-}
-
-// parseURL reads cluster selection from the tool URL. The URL carries no host:
-// the API server address lives in the kubeconfig, so a stray host is rejected
-// to catch a kubeconfig path or context mistakenly placed there.
-func parseURL(u *url.URL) (clusterConfig, error) {
-	if u.Host != "" || u.Opaque != "" || u.User != nil {
-		return clusterConfig{}, fmt.Errorf("k8s: URL %q takes no host; select a cluster with ?context= or ?kubeconfig=", u.String())
-	}
-	query := u.Query()
-	for key := range query {
-		switch key {
-		case queryContext, queryKubeconfig:
-		default:
-			return clusterConfig{}, fmt.Errorf("k8s: unknown URL parameter %q", key)
+// curate keeps cluster-side failures out of the requester's view, while
+// letting through the ones they can act on.
+//
+// A refusal is recognised here rather than left to the generic branch: being
+// told the cluster might be unreachable, when the real answer is that this
+// bot may not read Secrets, sends someone to look in the wrong place. The
+// identity that was refused stays in the log.
+func curate(ctx context.Context, logger *slog.Logger, tool string, err error) error {
+	if apierrors.IsForbidden(err) {
+		if logger != nil {
+			logger.Warn("kubernetes call refused", "group", GroupName, "tool", tool, "error", err.Error())
 		}
+		return invalidCall("k8s: not permitted to read that resource")
 	}
-	return clusterConfig{
-		kubeconfig: query.Get(queryKubeconfig),
-		context:    query.Get(queryContext),
-	}, nil
+	return mcpserve.Curate(ctx, logger, GroupName, tool, notice, err)
+}
+
+// textResult wraps rendered output as a tool result.
+func textResult(text string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
 }

@@ -1,9 +1,11 @@
 package status
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -245,4 +247,54 @@ func Test_mustChecker(t *testing.T) {
 	checker := &Checker{}
 	require.Same(t, checker, mustChecker(checker, nil))
 	require.Panics(t, func() { mustChecker(nil, errors.New("invalid catalog")) })
+}
+
+func Test_checkProvider_keeps_the_reason_out_of_the_snapshot(t *testing.T) {
+	// A transport failure names whatever sat between here and the provider —
+	// an egress proxy's address, say — and the snapshot is rendered into
+	// chat, so the reason goes to the log instead.
+	var logs bytes.Buffer
+	leaky := errors.New(`Get "https://status.example.test": proxyconnect tcp: dial tcp 10.9.9.9:3128: refused`)
+	checker, err := NewChecker([]Provider{fakeProvider{name: "github", err: leaky}})
+	require.NoError(t, err)
+	checker = checker.withLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+
+	snapshots, err := checker.Check(context.Background(), "github")
+	require.NoError(t, err)
+	require.Len(t, snapshots, 1)
+
+	require.Equal(t, HealthUnknown, snapshots[0].Health)
+	require.Equal(t, "Unable to check", snapshots[0].Summary)
+	require.NotContains(t, snapshots[0].Summary, "10.9.9.9")
+	require.Contains(t, logs.String(), "10.9.9.9")
+	require.Contains(t, logs.String(), "provider=github")
+}
+
+func Test_withLogger_copies_rather_than_mutating(t *testing.T) {
+	// The default catalog is package-level and shared by every server built
+	// from it, so directing one server's reasons somewhere must not move
+	// every other server's too — nor race with a check already running.
+	shared, err := NewChecker([]Provider{fakeProvider{name: "github"}})
+	require.NoError(t, err)
+
+	var first, second bytes.Buffer
+	a := shared.withLogger(slog.New(slog.NewTextHandler(&first, nil)))
+	b := shared.withLogger(slog.New(slog.NewTextHandler(&second, nil)))
+
+	require.NotSame(t, a, b)
+	require.NotSame(t, shared, a)
+	require.Nil(t, shared.logger, "building a server must not change the shared catalog")
+	require.NotSame(t, a.logger, b.logger)
+	// The provider table is shared, not copied.
+	require.Equal(t, shared.Names(), a.Names())
+}
+
+func Test_checkProvider_without_a_logger(t *testing.T) {
+	checker, err := NewChecker([]Provider{fakeProvider{name: "github", err: errors.New("boom")}})
+	require.NoError(t, err)
+
+	// No logger set: the detail is discarded, the snapshot is still safe.
+	snapshots, err := checker.Check(context.Background(), "github")
+	require.NoError(t, err)
+	require.Equal(t, "Unable to check", snapshots[0].Summary)
 }

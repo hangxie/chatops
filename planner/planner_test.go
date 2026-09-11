@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hangxie/chatops/planner"
-	"github.com/hangxie/chatops/tool"
 )
 
 // fakePlanner is a minimal planner.Planner used to exercise the
@@ -23,14 +22,10 @@ func (f *fakePlanner) Plan(_ context.Context, req planner.Request) (planner.Plan
 		return planner.Plan{}, fmt.Errorf("fake: empty message")
 	}
 	if req.Text == "go" {
-		return planner.Plan{Steps: []planner.Step{
-			{Tool: "ping://", Call: tool.Call{}},
-		}}, nil
+		return planner.Plan{Steps: []planner.Step{{Tool: "ping"}}}, nil
 	}
 	return planner.Plan{Steps: []planner.Step{
-		{Tool: "reply://", Call: tool.Call{
-			Arguments: map[string]string{"text": "what do you mean, " + req.Sender + "?"},
-		}},
+		{Tool: "reply", Arguments: map[string]any{"text": "what do you mean, " + req.Sender + "?"}},
 	}}, nil
 }
 
@@ -50,17 +45,13 @@ func Test_Planner_contract(t *testing.T) {
 		errMsg   string
 	}{
 		"tool-step": {
-			req: planner.Request{Text: "go", ConversationID: "conv-1", Sender: "alice"},
-			expected: planner.Plan{Steps: []planner.Step{
-				{Tool: "ping://", Call: tool.Call{}},
-			}},
+			req:      planner.Request{Text: "go", ConversationID: "conv-1", Sender: "alice"},
+			expected: planner.Plan{Steps: []planner.Step{{Tool: "ping"}}},
 		},
 		"reply-step": {
 			req: planner.Request{Text: "hmm", ConversationID: "conv-1", Sender: "alice"},
 			expected: planner.Plan{Steps: []planner.Step{
-				{Tool: "reply://", Call: tool.Call{
-					Arguments: map[string]string{"text": "what do you mean, alice?"},
-				}},
+				{Tool: "reply", Arguments: map[string]any{"text": "what do you mean, alice?"}},
 			}},
 		},
 		"error": {req: planner.Request{Text: "  "}, errMsg: "empty message"},

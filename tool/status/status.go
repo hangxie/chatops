@@ -1,46 +1,39 @@
-// Package status checks the public status APIs of common external services.
+// Package status checks the public status APIs of common external services
+// and exposes them as MCP tools.
+//
+// The package exports GroupName and Register for wiring its tools into an
+// mcpserve.Registry. The group registers two single-intent tools:
+//
+//	status-check  report the status of one named service
+//	status-list   list the services whose status can be checked
+//
+// Upstream status endpoints live in the compiled provider catalog rather than
+// in configuration, so tool arguments cannot turn the group into an arbitrary
+// HTTP client. The group takes no options and no credentials.
 package status
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
+	"log/slog"
 	"strings"
 
-	"github.com/hangxie/chatops/cred"
-	"github.com/hangxie/chatops/tool"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/hangxie/chatops/mcpserve"
 )
 
-// The status package splits into two single-intent tools: one checks a
-// named service, the other lists the checkable services.
+// GroupName is the built-in group this package registers into.
+const GroupName = "status"
+
+// Model-facing tool names.
 const (
-	CheckScheme = "status-check"
-	ListScheme  = "status-list"
+	CheckToolName = "status-check"
+	ListToolName  = "status-list"
 )
 
-// serviceParam names the argument the check tool reads.
-const serviceParam = "service"
-
-// CheckDescriptor and ListDescriptor are the tools' self-descriptions for
-// planners; wire each into a tool.Backend alongside its scheme and opener.
-var (
-	CheckDescriptor = tool.Descriptor{
-		Description: "Report the current public status of one external service (GitHub, OpenAI, Slack, ...).",
-		Parameters: []tool.Param{
-			{
-				Name:        serviceParam,
-				Type:        "string",
-				Required:    true,
-				Description: "The service to check, e.g. github, openai, slack, cloudflare (use status-list to see all).",
-			},
-		},
-	}
-	ListDescriptor = tool.Descriptor{
-		Description: "List the external services whose public status can be checked.",
-	}
-)
-
+// ErrNilChecker reports a registration with no provider catalog.
 var ErrNilChecker = errors.New("nil service-status checker")
 
 var sharedDefaultChecker = defaultChecker()
@@ -64,86 +57,92 @@ var displayNames = map[string]string{
 	"docker-hub": "Docker Hub",
 }
 
-// CheckOpener and ListOpener open the check and list tools against the
-// default public service-status catalog.
-func CheckOpener(ctx context.Context, u *url.URL, creds cred.Store) (tool.Tool, error) {
-	return NewCheckOpener(sharedDefaultChecker)(ctx, u, creds)
+// CheckArgs is the input schema of the status-check tool.
+type CheckArgs struct {
+	Service string `json:"service" jsonschema:"The service to check, e.g. github, openai, slack, cloudflare; use status-list to see all, or all to check every service."`
 }
 
-func ListOpener(ctx context.Context, u *url.URL, creds cred.Store) (tool.Tool, error) {
-	return NewListOpener(sharedDefaultChecker)(ctx, u, creds)
-}
+// ListArgs is the input schema of the status-list tool: it reads nothing.
+type ListArgs struct{}
 
-// NewCheckOpener and NewListOpener create openers backed by checker,
-// primarily for explicit wiring and tests.
-func NewCheckOpener(checker *Checker) tool.OpenerFunc {
-	return openerFor(checker, func(c *Checker) tool.Tool { return &checkTool{checker: c} })
-}
-
-func NewListOpener(checker *Checker) tool.OpenerFunc {
-	return openerFor(checker, func(c *Checker) tool.Tool { return &listTool{checker: c} })
-}
-
-// openerFor builds an opener that rejects any endpoint or configuration in
-// the URL and constructs a single-intent tool via build.
-func openerFor(checker *Checker, build func(*Checker) tool.Tool) tool.OpenerFunc {
-	return func(ctx context.Context, u *url.URL, _ cred.Store) (tool.Tool, error) {
-		if u.Host != "" || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Opaque != "" || u.User != nil || u.Fragment != "" {
-			return nil, fmt.Errorf("status: URL %q takes no endpoint or configuration", u.String())
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("status: %w", err)
-		}
-		if checker == nil {
-			return nil, fmt.Errorf("status: %w", ErrNilChecker)
-		}
-		return build(checker), nil
+// Register adds the status tools to s, backed by the default public
+// service-status catalog. It takes no options and no credentials.
+func Register(s *mcp.Server, opts mcpserve.Options) error {
+	if err := mcpserve.CheckOptions(GroupName, opts.Query); err != nil {
+		return err
 	}
+	return RegisterChecker(s, sharedDefaultChecker, opts.Logger)
 }
 
-// checkTool reports the status of one named service.
-type checkTool struct {
-	checker *Checker
+// RegisterChecker adds the status tools to s backed by checker, for explicit
+// wiring and tests. A nil logger discards the reasons the tools keep out of
+// their results.
+//
+// checker is not modified: the server gets a copy carrying logger, because
+// the default catalog is shared by every server built from it.
+func RegisterChecker(s *mcp.Server, checker *Checker, logger *slog.Logger) error {
+	if checker == nil {
+		return fmt.Errorf("status: %w", ErrNilChecker)
+	}
+	checker = checker.withLogger(logger)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        CheckToolName,
+		Description: "Report the current public status of one external service (GitHub, OpenAI, Slack, ...).",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args CheckArgs) (*mcp.CallToolResult, any, error) {
+		return checkStatus(ctx, checker, args)
+	})
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        ListToolName,
+		Description: "List the external services whose public status can be checked.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ ListArgs) (*mcp.CallToolResult, any, error) {
+		return listServices(ctx, checker)
+	})
+	return nil
 }
 
-// Invoke checks the service named by call.Arguments["service"].
-func (t *checkTool) Invoke(ctx context.Context, call tool.Call) (tool.Result, error) {
+// checkStatus reports the status of the named service. Each snapshot's health
+// is also returned as structured output for callers that act on the result
+// rather than display it.
+func checkStatus(ctx context.Context, checker *Checker, args CheckArgs) (*mcp.CallToolResult, any, error) {
 	if err := ctx.Err(); err != nil {
-		return tool.Result{}, fmt.Errorf("status: %w", err)
+		return nil, nil, fmt.Errorf("status: %w", err)
 	}
-	service := strings.TrimSpace(call.Arguments[serviceParam])
+	service := strings.TrimSpace(args.Service)
 	if service == "" {
-		return tool.Result{}, errors.New("status: check requires a service")
+		return nil, nil, errors.New("status: check requires a service")
 	}
-	snapshots, err := t.checker.Check(ctx, service)
+	snapshots, err := checker.Check(ctx, service)
 	if err != nil {
-		return tool.Result{}, err
+		return nil, nil, err
 	}
-	details := make(map[string]string, len(snapshots))
+	health := make(map[string]string, len(snapshots))
 	for _, snapshot := range snapshots {
-		details[snapshot.Provider] = string(snapshot.Health)
+		health[snapshot.Provider] = string(snapshot.Health)
 	}
-	return tool.Result{Text: formatSnapshots(snapshots), Details: details}, nil
+	return &mcp.CallToolResult{
+		Content:           []mcp.Content{&mcp.TextContent{Text: formatSnapshots(snapshots)}},
+		StructuredContent: health,
+	}, nil, nil
 }
 
-// Close releases nothing; HTTP resources are owned by the checker.
-func (t *checkTool) Close() error { return nil }
-
-// listTool lists the services whose status can be checked.
-type listTool struct {
-	checker *Checker
-}
-
-// Invoke lists the checkable services. Call.Arguments is ignored.
-func (t *listTool) Invoke(ctx context.Context, _ tool.Call) (tool.Result, error) {
+// listServices lists the checkable services.
+//
+// The structured result is an object wrapping the list rather than the bare
+// array. Recent protocol versions allow any JSON value there, but the field
+// was object-only in earlier ones and a client decoding into a struct or a
+// map rejects an array either way — and these tools are served to arbitrary
+// hosts through "chatops mcp serve", so the shape every reading accepts is
+// the one to send. It names what it holds, too.
+func listServices(ctx context.Context, checker *Checker) (*mcp.CallToolResult, any, error) {
 	if err := ctx.Err(); err != nil {
-		return tool.Result{}, fmt.Errorf("status: %w", err)
+		return nil, nil, fmt.Errorf("status: %w", err)
 	}
-	return tool.Result{Text: "Supported services: " + strings.Join(t.checker.Names(), ", ")}, nil
+	names := checker.Names()
+	return &mcp.CallToolResult{
+		Content:           []mcp.Content{&mcp.TextContent{Text: "Supported services: " + strings.Join(names, ", ")}},
+		StructuredContent: map[string]any{"services": names},
+	}, nil, nil
 }
-
-// Close releases nothing; HTTP resources are owned by the checker.
-func (t *listTool) Close() error { return nil }
 
 func formatSnapshots(snapshots []Snapshot) string {
 	lines := make([]string, 0, len(snapshots)*3)

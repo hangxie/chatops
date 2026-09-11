@@ -4,9 +4,9 @@
 // An Engine receives chat messages, preserves ordering within each
 // conversation, and processes independent conversations through a bounded
 // worker pool. For each message it asks the planner for an ordered plan,
-// invokes each tool, and posts every non-empty tool result back to the
-// conversation that produced the plan. Planner replies, including
-// clarification and confirmation prompts, are ordinary reply:// tool steps.
+// calls each tool through the MCP host, and posts every non-empty tool result
+// back to the conversation that produced the plan. Planner replies, including
+// clarification and confirmation prompts, are ordinary reply tool steps.
 package engine
 
 import (
@@ -17,24 +17,22 @@ import (
 	"sync"
 
 	"github.com/hangxie/chatops/chat"
-	"github.com/hangxie/chatops/cred"
+	"github.com/hangxie/chatops/mcphost"
 	"github.com/hangxie/chatops/planner"
-	"github.com/hangxie/chatops/tool"
-	"github.com/hangxie/chatops/tool/reply"
 )
 
 // Config contains the opened components used by an Engine. The engine owns
-// Chat and Planner after New succeeds and closes both when Run returns or
-// Close is called. Tools are opened from Tools for individual plan steps;
-// Credentials is passed to their openers and remains owned by the caller.
+// Chat, Planner, and Tools after New succeeds and closes all three when Run
+// returns or Close is called.
 type Config struct {
 	// ConnectionID scopes planner conversation state to this chat connection.
 	ConnectionID string
 
-	Chat        chat.Conn
-	Planner     planner.Planner
-	Tools       *tool.Registry
-	Credentials cred.Store
+	Chat    chat.Conn
+	Planner planner.Planner
+
+	// Tools is the connected MCP host whose catalog the plan steps name.
+	Tools *mcphost.Host
 
 	// MaxConcurrency is the maximum number of conversations processed at once.
 	// Zero uses DefaultMaxConcurrency.
@@ -60,9 +58,7 @@ type Engine struct {
 	connectionID   string
 	chat           chat.Conn
 	planner        planner.Planner
-	tools          *tool.Registry
-	credentials    cred.Store
-	reply          tool.Tool
+	tools          *mcphost.Host
 	maxConcurrency int
 	logger         *slog.Logger
 
@@ -85,7 +81,7 @@ func New(config Config) (*Engine, error) {
 		return nil, errors.New("engine: nil planner")
 	}
 	if config.Tools == nil {
-		return nil, errors.New("engine: nil tool registry")
+		return nil, errors.New("engine: nil tool host")
 	}
 	if config.MaxConcurrency < 0 {
 		return nil, errors.New("engine: negative maximum concurrency")
@@ -97,8 +93,6 @@ func New(config Config) (*Engine, error) {
 	if maxConcurrency == 0 {
 		maxConcurrency = DefaultMaxConcurrency
 	}
-	// Open can only reject a nil connection, which was checked above.
-	replyTool, _ := reply.Open(context.Background(), config.Chat)
 	logger := config.Logger
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
@@ -108,8 +102,6 @@ func New(config Config) (*Engine, error) {
 		chat:           config.Chat,
 		planner:        config.Planner,
 		tools:          config.Tools,
-		credentials:    config.Credentials,
-		reply:          replyTool,
 		maxConcurrency: maxConcurrency,
 		logger:         logger,
 	}, nil
@@ -139,7 +131,7 @@ func (e *Engine) Run(ctx context.Context) (err error) {
 		"engine started",
 		"connection_id", e.connectionID,
 		"max_concurrency", e.maxConcurrency,
-		"tools", e.tools.Schemes(),
+		"tools", e.tools.Names(),
 	)
 	defer func() {
 		cancel()
@@ -162,7 +154,14 @@ func (e *Engine) Run(ctx context.Context) (err error) {
 		select {
 		case msg := <-messages:
 			if submitErr := scheduler.Submit(msg); submitErr != nil {
-				return submitErr
+				// Submit fails only once the scheduler has stopped, which
+				// means a worker already failed or the run was cancelled.
+				// That is the same condition the Done case handles, so it is
+				// classified the same way — otherwise whether a graceful stop
+				// was reported as an error would depend on which case the
+				// select happened to pick.
+				cancel()
+				return joinRunErrors(runCtx, <-receiveErrors, scheduler.Wait())
 			}
 		case receiveErr := <-receiveErrors:
 			cancel()
@@ -215,8 +214,10 @@ func (e *Engine) processMessage(ctx context.Context, msg chat.Message) error {
 	return nil
 }
 
-// safeHandle runs handle, converting a panic in a tool or planner into an
-// error so one misbehaving component cannot crash the engine.
+// safeHandle runs handle, converting a panic into an error so one misbehaving
+// component cannot crash the engine. Tools served over MCP already contain
+// their own panics, so what this guards is the in-process work: the planner
+// and the host tools.
 func (e *Engine) safeHandle(ctx context.Context, msg chat.Message) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -233,8 +234,8 @@ func isGracefulStop(ctx context.Context, err error) bool {
 }
 
 // Close cancels Run, waits for in-flight planning and tool work, then releases
-// the planner and chat connection. It is idempotent and joins errors from all
-// components so one failed cleanup does not skip another.
+// the tool host, planner, and chat connection. It is idempotent and joins
+// errors from all components so one failed cleanup does not skip another.
 func (e *Engine) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -247,6 +248,7 @@ func (e *Engine) Close() error {
 	}
 	e.work.Wait()
 	e.closeErr = errors.Join(
+		closeComponent("tools", e.tools.Close()),
 		closeComponent("planner", e.planner.Close()),
 		closeComponent("chat", e.chat.Close()),
 	)

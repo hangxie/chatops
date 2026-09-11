@@ -1,65 +1,47 @@
-// Package ping implements a dummy tool.Tool that always answers "pong",
-// useful as a liveness check and as the reference implementation of the
-// tool interface.
+// Package ping implements a dummy MCP tool that always answers "pong",
+// useful as a liveness check and as the reference implementation of a
+// chatops built-in tool.
 //
-// The package exports Scheme and Opener for wiring the tool into a
-// tool.Registry under the "ping" URL scheme. The tool has no endpoint
-// and takes no credentials, so the URL is bare:
+// The package exports GroupName and Register for wiring the tool into an
+// mcpserve.Registry. The group takes no options and no credentials.
 //
-//	ping://
-//
-// The tool takes no arguments; Call.Arguments is ignored.
+// The tool takes no arguments.
 package ping
 
 import (
 	"context"
 	"fmt"
-	"net/url"
 
-	"github.com/hangxie/chatops/cred"
-	"github.com/hangxie/chatops/tool"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/hangxie/chatops/mcpserve"
 )
 
-// Scheme is the URL scheme this tool serves in a tool.Registry.
-const Scheme = "ping"
+// GroupName is the built-in group this package registers into.
+const GroupName = "ping"
 
-// Descriptor is the tool's self-description for planners; wire it into a
-// tool.Backend alongside Scheme and Opener.
-var Descriptor = tool.Descriptor{
-	Description: "Liveness check; replies \"pong\" to confirm the bot is responsive.",
-}
+// ToolName is the model-facing name of the tool.
+const ToolName = "ping"
 
-// Opener is the tool.OpenerFunc for this tool: the URL carries no
-// endpoint or configuration, and creds is ignored. Any host, path,
-// query, userinfo, or non-empty fragment is rejected; a bare trailing
-// "#" is parsed by net/url identically to the bare URL and is
-// therefore accepted.
-func Opener(ctx context.Context, u *url.URL, _ cred.Store) (tool.Tool, error) {
-	if u.Host != "" || u.Path != "" || u.RawQuery != "" || u.ForceQuery ||
-		u.Opaque != "" || u.User != nil || u.Fragment != "" {
-		return nil, fmt.Errorf("ping: URL %q takes no endpoint or configuration", u.String())
+// Args is the tool's input schema: the ping tool reads nothing.
+type Args struct{}
+
+// Register adds the ping tool to s. It takes no options and no credentials.
+func Register(s *mcp.Server, opts mcpserve.Options) error {
+	if err := mcpserve.CheckOptions(GroupName, opts.Query); err != nil {
+		return err
 	}
-	return Open(ctx)
-}
-
-// Tool is the dummy ping tool.
-type Tool struct{}
-
-// Open returns a ready ping tool; it holds no resources and needs no
-// location parameters.
-func Open(_ context.Context) (*Tool, error) {
-	return &Tool{}, nil
-}
-
-// Invoke always answers "pong". Call.Arguments is ignored.
-func (t *Tool) Invoke(ctx context.Context, _ tool.Call) (tool.Result, error) {
-	if err := ctx.Err(); err != nil {
-		return tool.Result{}, fmt.Errorf("ping: %w", err)
-	}
-	return tool.Result{Text: "pong"}, nil
-}
-
-// Close releases nothing; the ping tool holds no resources.
-func (t *Tool) Close() error {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        ToolName,
+		Description: `Liveness check; replies "pong" to confirm the bot is responsive.`,
+	}, handle)
 	return nil
+}
+
+// handle answers "pong". Arguments are ignored.
+func handle(ctx context.Context, _ *mcp.CallToolRequest, _ Args) (*mcp.CallToolResult, any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, fmt.Errorf("ping: %w", err)
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "pong"}}}, nil, nil
 }

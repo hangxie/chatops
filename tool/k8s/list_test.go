@@ -5,12 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-
-	"github.com/hangxie/chatops/tool"
 )
 
 func podMapping(t *testing.T) *meta.RESTMapping {
@@ -23,31 +22,31 @@ func podMapping(t *testing.T) *meta.RESTMapping {
 func Test_listTool_Invoke(t *testing.T) {
 	list := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*newPod("web", "api"), *newPod("web", "worker")}}
 	var gotAll bool
-	tl := &listTool{client: &fakeClient{
+	client := &fakeClient{
 		listFn: func(_ context.Context, _, _ string, all bool) (*unstructured.UnstructuredList, *meta.RESTMapping, error) {
 			gotAll = all
 			return list, podMapping(t), nil
 		},
-	}}
+	}
 
-	res, err := tl.Invoke(context.Background(), tool.Call{Arguments: map[string]string{argKind: "pods", argAllNamespaces: "true"}})
+	res, _, err := listResources(context.Background(), client, ListArgs{Kind: "pods", AllNamespaces: true})
 	require.NoError(t, err)
 	require.True(t, gotAll)
-	require.Contains(t, res.Text, "NAME")
-	require.Contains(t, res.Text, "api")
-	require.Contains(t, res.Text, "worker")
+	text := res.Content[0].(*mcp.TextContent).Text
+	require.Contains(t, text, "NAME")
+	require.Contains(t, text, "api")
+	require.Contains(t, text, "worker")
 }
 
 func Test_listTool_Invoke_errors(t *testing.T) {
 	testCases := map[string]struct {
-		args   map[string]string
+		args   ListArgs
 		listFn func(context.Context, string, string, bool) (*unstructured.UnstructuredList, *meta.RESTMapping, error)
 		errMsg string
 	}{
-		"missing kind": {args: map[string]string{}, errMsg: "requires a kind"},
-		"bad bool":     {args: map[string]string{argKind: "pods", argAllNamespaces: "maybe"}, errMsg: "invalid boolean"},
+		"missing kind": {args: ListArgs{}, errMsg: "requires a kind"},
 		"client error": {
-			args: map[string]string{argKind: "pods"},
+			args: ListArgs{Kind: "pods"},
 			listFn: func(context.Context, string, string, bool) (*unstructured.UnstructuredList, *meta.RESTMapping, error) {
 				return nil, nil, errors.New("boom")
 			},
@@ -56,42 +55,15 @@ func Test_listTool_Invoke_errors(t *testing.T) {
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			tl := &listTool{client: &fakeClient{listFn: tc.listFn}}
-			_, err := tl.Invoke(context.Background(), tool.Call{Arguments: tc.args})
+			_, _, err := listResources(context.Background(), &fakeClient{listFn: tc.listFn}, tc.args)
 			require.ErrorContains(t, err, tc.errMsg)
 		})
 	}
 }
 
 func Test_listTool_Invoke_cancelledContext(t *testing.T) {
-	tl := &listTool{client: &fakeClient{}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := tl.Invoke(ctx, tool.Call{Arguments: map[string]string{argKind: "pods"}})
+	_, _, err := listResources(ctx, &fakeClient{}, ListArgs{Kind: "pods"})
 	require.ErrorIs(t, err, context.Canceled)
-}
-
-func Test_parseBool(t *testing.T) {
-	testCases := map[string]struct {
-		in   string
-		want bool
-		err  bool
-	}{
-		"empty": {in: "", want: false},
-		"true":  {in: "TRUE", want: true},
-		"yes":   {in: "yes", want: true},
-		"false": {in: "false", want: false},
-		"bad":   {in: "maybe", err: true},
-	}
-	for name, tc := range testCases {
-		t.Run(name, func(t *testing.T) {
-			got, err := parseBool(tc.in)
-			if tc.err {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			require.Equal(t, tc.want, got)
-		})
-	}
 }
