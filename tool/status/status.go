@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -70,15 +71,20 @@ func Register(s *mcp.Server, opts mcpserve.Options) error {
 	if err := mcpserve.CheckOptions(GroupName, opts.Query); err != nil {
 		return err
 	}
-	return RegisterChecker(s, sharedDefaultChecker.withLogger(opts.Logger))
+	return RegisterChecker(s, sharedDefaultChecker, opts.Logger)
 }
 
 // RegisterChecker adds the status tools to s backed by checker, for explicit
-// wiring and tests.
-func RegisterChecker(s *mcp.Server, checker *Checker) error {
+// wiring and tests. A nil logger discards the reasons the tools keep out of
+// their results.
+//
+// checker is not modified: the server gets a copy carrying logger, because
+// the default catalog is shared by every server built from it.
+func RegisterChecker(s *mcp.Server, checker *Checker, logger *slog.Logger) error {
 	if checker == nil {
 		return fmt.Errorf("status: %w", ErrNilChecker)
 	}
+	checker = checker.withLogger(logger)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        CheckToolName,
 		Description: "Report the current public status of one external service (GitHub, OpenAI, Slack, ...).",

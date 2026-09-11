@@ -64,8 +64,10 @@ func downgradeSchema(raw any) (json.RawMessage, error) {
 		converted["type"] = "object"
 	}
 	// The root's type may have just been defaulted, so its properties are
-	// settled after it rather than inside convertSchema.
-	ensureObjectProperties(converted)
+	// settled after it rather than inside convertSchema. The source is
+	// consulted too, because what decides this — additionalProperties — has
+	// already been dropped from the converted schema by now.
+	ensureObjectProperties(converted, root)
 	return mustJSON(converted), nil
 }
 
@@ -149,13 +151,21 @@ func convertSchema(node, root map[string]any, depth int) (map[string]any, error)
 // properties to what remains would say "an object with no fields" where the
 // tool meant "any object" — narrowing the schema rather than widening it,
 // which is the one thing downgrading must not do.
-func ensureObjectProperties(schema map[string]any) {
+func ensureObjectProperties(schema, source map[string]any) {
 	if schema["type"] != "object" {
 		return
 	}
-	if _, declared := schema["properties"]; !declared {
-		schema["properties"] = map[string]any{}
+	if _, declared := schema["properties"]; declared {
+		return
 	}
+	// A tool whose input is free-form says so with an additionalProperties
+	// that is not false, and that keyword has been dropped by now. Declaring
+	// an empty properties in its place would say the tool accepts no fields
+	// at all, which is the same narrowing this avoids for nested nodes.
+	if additional, present := source["additionalProperties"]; present && additional != false {
+		return
+	}
+	schema["properties"] = map[string]any{}
 }
 
 // pruneRequired drops required names with no matching property.

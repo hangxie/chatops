@@ -1,7 +1,10 @@
 package status
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"net/url"
 	"testing"
 
@@ -17,7 +20,7 @@ import (
 func newSession(t *testing.T, checker *Checker) *mcp.ClientSession {
 	t.Helper()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-	require.NoError(t, RegisterChecker(srv, checker))
+	require.NoError(t, RegisterChecker(srv, checker, nil))
 	return testutils.MCPSession(t, srv)
 }
 
@@ -113,9 +116,31 @@ func Test_Register_options(t *testing.T) {
 	}
 }
 
+// Test_RegisterChecker_reports_through_the_given_logger: a caller wiring a
+// status server directly gets the same reporting the group does, rather than
+// having its failure reasons discarded.
+func Test_RegisterChecker_reports_through_the_given_logger(t *testing.T) {
+	var logs bytes.Buffer
+	shared, err := NewChecker([]Provider{fakeProvider{name: "github", err: errors.New("proxyconnect tcp 10.9.9.9:3128")}})
+	require.NoError(t, err)
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
+	require.NoError(t, RegisterChecker(srv, shared, slog.New(slog.NewTextHandler(&logs, nil))))
+	session := testutils.MCPSession(t, srv)
+
+	result := call(t, session, CheckToolName, map[string]any{"service": "github"})
+	require.False(t, result.IsError)
+	require.Contains(t, testutils.ResultText(t, result), "Unable to check")
+	require.NotContains(t, testutils.ResultText(t, result), "10.9.9.9")
+	require.Contains(t, logs.String(), "10.9.9.9")
+
+	// The catalog it was given is untouched.
+	require.Nil(t, shared.logger)
+}
+
 func Test_Register_rejects_nil_checker(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-	require.ErrorIs(t, RegisterChecker(srv, nil), ErrNilChecker)
+	require.ErrorIs(t, RegisterChecker(srv, nil, nil), ErrNilChecker)
 }
 
 func Test_Register_uses_default_catalog(t *testing.T) {

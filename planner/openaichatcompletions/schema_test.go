@@ -465,6 +465,33 @@ func Test_downgradeSchema_always_gives_an_object_properties(t *testing.T) {
 	}
 }
 
+func Test_downgradeSchema_leaves_a_free_form_root_alone(t *testing.T) {
+	// A tool whose input is free-form says so with additionalProperties, and
+	// that keyword is dropped on the way out. Declaring an empty properties
+	// in its place would say the tool accepts no fields at all.
+	testCases := map[string]any{
+		"open":            true,
+		"typed-values":    map[string]any{"type": "string"},
+		"closed-is-empty": false,
+	}
+
+	for name, additional := range testCases {
+		t.Run(name, func(t *testing.T) {
+			got := downgraded(t, map[string]any{"type": "object", "additionalProperties": additional})
+
+			require.NotContains(t, got, "additionalProperties")
+			if name == "closed-is-empty" {
+				// additionalProperties:false is what inference emits for a
+				// tool that reads nothing, which is the case the empty
+				// properties exists for.
+				require.Equal(t, map[string]any{}, got["properties"])
+				return
+			}
+			require.NotContains(t, got, "properties")
+		})
+	}
+}
+
 func Test_downgradeSchema_leaves_a_non_object_root_alone(t *testing.T) {
 	// MCP input schemas are objects, but nothing stops a server sending
 	// something else; it must not be handed a properties map that would make
