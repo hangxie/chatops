@@ -57,11 +57,23 @@ func (f *listFailer) middleware() mcp.Middleware {
 	}
 }
 
+// testSessionConfig is a session configuration with generous timeouts and a
+// no-op change hook, for tests that care about neither.
+func testSessionConfig(spec ServerSpec, logger *slog.Logger) sessionConfig {
+	return sessionConfig{
+		spec:           spec,
+		connectTimeout: time.Second,
+		listTimeout:    time.Second,
+		logger:         logger,
+		onChange:       func() {},
+	}
+}
+
 // newTestSession connects a session to srv, failing the test if it cannot.
 func newTestSession(t *testing.T, srv *mcp.Server, logger *slog.Logger) *session {
 	t.Helper()
-	s, err := newSession(context.Background(), ServerSpec{Name: "alpha", Transport: serve(t, srv)},
-		time.Second, logger, func() {})
+	s, err := newSession(context.Background(),
+		testSessionConfig(ServerSpec{Name: "alpha", Transport: serve(t, srv)}, logger))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.close() })
 	return s
@@ -76,8 +88,8 @@ func Test_newSession_fails_when_tools_cannot_be_listed(t *testing.T) {
 
 	// A server that connects but cannot describe itself is useless, so the
 	// session is rejected rather than joining the host with no tools.
-	s, err := newSession(context.Background(), ServerSpec{Name: "alpha", Transport: serve(t, srv)},
-		time.Second, slog.New(slog.NewTextHandler(&logs, nil)), func() {})
+	s, err := newSession(context.Background(),
+		testSessionConfig(ServerSpec{Name: "alpha", Transport: serve(t, srv)}, slog.New(slog.NewTextHandler(&logs, nil))))
 	require.Error(t, err)
 	require.ErrorContains(t, err, "listing refused")
 	require.Nil(t, s)
@@ -158,11 +170,62 @@ func Test_session_listTools_error_is_wrapped(t *testing.T) {
 	require.ErrorContains(t, err, "list tools:")
 }
 
+// slowTransport delays opening, standing in for a handshake that consumes
+// most of the connect budget.
+type slowTransport struct {
+	inner mcp.Transport
+	delay time.Duration
+}
+
+func (t slowTransport) Connect(ctx context.Context) (mcp.Connection, error) {
+	select {
+	case <-time.After(t.delay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return t.inner.Connect(ctx)
+}
+
+// Test_newSession_gives_the_listing_its_own_budget checks that a slow
+// handshake does not eat into the time allowed for the initial tools/list.
+//
+// The two are separate round trips with separately configured budgets, but
+// deriving the listing's deadline from a context that already carries the
+// handshake's would silently cap it at whatever was left — so a server that
+// was merely slow to connect could never be listed, however generous
+// ListTimeout was.
+func Test_newSession_gives_the_listing_its_own_budget(t *testing.T) {
+	srv := echoServer("slow", "one")
+	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == "tools/list" {
+				// Longer than the connect budget leaves over, shorter than
+				// the listing is allowed on its own.
+				time.Sleep(150 * time.Millisecond)
+			}
+			return next(ctx, method, req)
+		}
+	})
+
+	cfg := testSessionConfig(ServerSpec{
+		Name:      "slow",
+		Transport: slowTransport{inner: serve(t, srv), delay: 200 * time.Millisecond},
+	}, slog.New(slog.DiscardHandler))
+	cfg.connectTimeout = 250 * time.Millisecond
+	cfg.listTimeout = 2 * time.Second
+
+	s, err := newSession(context.Background(), cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.close() })
+	require.Len(t, s.snapshot(), 1)
+}
+
 func Test_session_refreshes_on_tool_list_changed(t *testing.T) {
 	srv := echoServer("alpha", "one")
 	changed := make(chan struct{}, 4)
-	s, err := newSession(context.Background(), ServerSpec{Name: "alpha", Transport: serve(t, srv)},
-		time.Second, slog.New(slog.DiscardHandler), func() { changed <- struct{}{} })
+	cfg := testSessionConfig(ServerSpec{Name: "alpha", Transport: serve(t, srv)}, slog.New(slog.DiscardHandler))
+	cfg.onChange = func() { changed <- struct{}{} }
+	s, err := newSession(context.Background(), cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.close() })
 	require.Len(t, s.snapshot(), 1)
@@ -194,8 +257,7 @@ func Test_newSession_reports_a_transport_that_cannot_connect(t *testing.T) {
 	connectErr := errors.New("no such server")
 
 	s, err := newSession(context.Background(),
-		ServerSpec{Name: "alpha", Transport: unconnectableTransport{err: connectErr}},
-		time.Second, slog.New(slog.DiscardHandler), func() {})
+		testSessionConfig(ServerSpec{Name: "alpha", Transport: unconnectableTransport{err: connectErr}}, slog.New(slog.DiscardHandler)))
 	require.ErrorIs(t, err, connectErr)
 	require.Nil(t, s)
 }
@@ -259,8 +321,8 @@ func Test_notification_before_install_is_dropped(t *testing.T) {
 		_ = serverSession.Close()
 	}()
 
-	s, err := newSession(context.Background(), ServerSpec{Name: "eager", Transport: clientTransport},
-		time.Second, slog.New(slog.DiscardHandler), func() {})
+	s, err := newSession(context.Background(),
+		testSessionConfig(ServerSpec{Name: "eager", Transport: clientTransport}, slog.New(slog.DiscardHandler)))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.close() })
 	require.NotEmpty(t, s.snapshot())
@@ -301,9 +363,10 @@ func (c failingCloseConn) Close() error {
 
 func Test_session_close_wraps_error(t *testing.T) {
 	closeErr := errors.New("close refused")
-	s, err := newSession(context.Background(),
+	s, err := newSession(context.Background(), testSessionConfig(
 		ServerSpec{Name: "alpha", Transport: failingCloseTransport{inner: serve(t, echoServer("alpha", "one")), err: closeErr}},
-		time.Second, slog.New(slog.DiscardHandler), func() {})
+		slog.New(slog.DiscardHandler),
+	))
 	require.NoError(t, err)
 
 	err = s.close()

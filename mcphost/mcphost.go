@@ -102,18 +102,22 @@ type Config struct {
 	Allow []string
 
 	// ListTimeout bounds one tools/list request. Zero uses
-	// DefaultListTimeout. It applies to every listing, including the
-	// refreshes a server triggers by reporting its tools changed, which have
-	// no caller to cancel them.
+	// DefaultListTimeout. It applies to every listing, including the initial
+	// one and the refreshes a server triggers by reporting its tools changed,
+	// which have no caller to cancel them.
 	ListTimeout time.Duration
 
-	// ConnectTimeout bounds one server's handshake. Zero uses
-	// DefaultConnectTimeout.
+	// ConnectTimeout bounds one server's handshake, and only the handshake:
+	// the listing that follows it gets ListTimeout of its own rather than
+	// whatever the handshake left over. Zero uses DefaultConnectTimeout.
 	//
 	// It is a hard bound rather than a courtesy: a transport whose peer
 	// accepts the connection but never answers leaves the handshake blocked
 	// with no way to interrupt it, so without a timeout one unresponsive
 	// server would hang startup indefinitely.
+	//
+	// Bringing up a server can therefore take up to ConnectTimeout plus
+	// ListTimeout, and New connects servers one at a time.
 	ConnectTimeout time.Duration
 
 	// Logger receives structured records about server sessions and catalog
@@ -228,9 +232,13 @@ func (h *Host) connect(ctx context.Context, spec ServerSpec) (*session, error) {
 			}
 		}()
 	}
-	connectCtx, cancel := context.WithTimeout(ctx, h.connectTimeout)
-	defer cancel()
-	return newSession(connectCtx, spec, h.listTimeout, h.logger, h.rebuild)
+	return newSession(ctx, sessionConfig{
+		spec:           spec,
+		connectTimeout: h.connectTimeout,
+		listTimeout:    h.listTimeout,
+		logger:         h.logger,
+		onChange:       h.rebuild,
+	})
 }
 
 // indexHostTools validates the host tools and keys them by name.

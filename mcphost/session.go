@@ -58,21 +58,43 @@ func (s *session) listFailure() error {
 	return s.listErr
 }
 
+// sessionConfig is what newSession needs to bring up one server session.
+type sessionConfig struct {
+	spec ServerSpec
+
+	// connectTimeout bounds the handshake and listTimeout bounds the initial
+	// listing. They are separate budgets: a slow handshake must not eat into
+	// the time allowed for listing, which is a second round trip to the same
+	// server and was configured on its own.
+	connectTimeout time.Duration
+	listTimeout    time.Duration
+
+	logger *slog.Logger
+
+	// onChange is called after the tool list changes, so the host can rebuild
+	// its catalog.
+	onChange func()
+}
+
 // newSession connects to one server and fetches its initial tool list.
-// onChange is called after the tool list changes, so the host can rebuild its
-// catalog.
-func newSession(ctx context.Context, spec ServerSpec, listTimeout time.Duration, logger *slog.Logger, onChange func()) (*session, error) {
-	s := &session{name: spec.Name, alias: spec.Alias, logger: logger, listTimeout: listTimeout}
+func newSession(ctx context.Context, cfg sessionConfig) (*session, error) {
+	spec, logger, onChange := cfg.spec, cfg.logger, cfg.onChange
+	s := &session{name: spec.Name, alias: spec.Alias, logger: logger, listTimeout: cfg.listTimeout}
 	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: ClientVersion}, &mcp.ClientOptions{
 		ToolListChangedHandler: func(ctx context.Context, _ *mcp.ToolListChangedRequest) {
 			s.toolsChanged(ctx, onChange)
 		},
 	})
-	sess, err := connect(ctx, client, spec.Transport)
+	connectCtx, cancel := context.WithTimeout(ctx, cfg.connectTimeout)
+	defer cancel()
+	sess, err := connect(connectCtx, client, spec.Transport)
 	if err != nil {
 		return nil, err
 	}
 	s.install(sess)
+	// The initial listing is bounded from the caller's context, not from what
+	// the handshake left of its own: refresh derives its deadline from what it
+	// is given, and a context that already carries an earlier one would cap it.
 	s.refresh(ctx)
 	if err := s.listFailure(); err != nil {
 		return nil, errors.Join(err, sess.Close())
