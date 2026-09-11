@@ -1,16 +1,17 @@
 package openaichatcompletions
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
-
-	"github.com/hangxie/chatops/tool"
 )
 
-// funcSchema is the decoded shape of one tool function's flat JSON Schema.
+// funcSchema is the decoded shape of one offered function's JSON Schema.
 type funcSchema struct {
 	Type       string `json:"type"`
 	Properties map[string]struct {
@@ -35,53 +36,139 @@ func defsByName(defs []toolDef) map[string]functionDef {
 	return byName
 }
 
-func Test_buildCatalog_offers_reply_and_per_tool_functions(t *testing.T) {
-	descriptors := map[string]tool.Descriptor{
-		"status-check": {Description: "status check summary"},
-		"ping":         {Description: "ping summary"},
+// objectSchema builds a tool input schema with the given properties.
+func objectSchema(required []string, props map[string]any) map[string]any {
+	schema := map[string]any{"type": "object", "properties": props}
+	if required != nil {
+		schema["required"] = required
 	}
-	defs, funcs, err := buildCatalog([]string{"status-check", "ping"}, descriptors)
-	require.NoError(t, err)
-
-	names := make([]string, len(defs))
-	for i, def := range defs {
-		require.Equal(t, "function", def.Type)
-		names[i] = def.Function.Name
-	}
-	// reply is always first; then one function per tool, schemes sorted.
-	require.Equal(t, []string{"reply", "ping", "status-check"}, names)
-
-	// The reply function's schema requires text; each tool function is named
-	// by its scheme and maps back to it.
-	require.JSONEq(t, string(replyParams), string(defs[0].Function.Parameters))
-	require.Equal(t, "ping", funcs["ping"].scheme)
-	require.Equal(t, "status-check", funcs["status-check"].scheme)
-	require.Len(t, funcs, 2)
-
-	byName := defsByName(defs)
-	require.Equal(t, "ping summary", byName["ping"].Description)
-	require.Equal(t, "status check summary", byName["status-check"].Description)
+	return schema
 }
 
-func Test_validateSchemes(t *testing.T) {
-	testCases := map[string]struct {
-		schemes []string
-		wantErr string
-	}{
-		"valid":              {schemes: []string{"ping", "status-check", "k8s-prod"}},
-		"empty":              {schemes: nil},
-		"dot-invalid":        {schemes: []string{"service.status"}, wantErr: "cannot be an OpenAI function name"},
-		"plus-invalid":       {schemes: []string{"a+b"}, wantErr: "cannot be an OpenAI function name"},
-		"too-long":           {schemes: []string{strings.Repeat("a", 65)}, wantErr: "cannot be an OpenAI function name"},
-		"max-length-ok":      {schemes: []string{strings.Repeat("a", 64)}},
-		"reply-collision":    {schemes: []string{"reply"}, wantErr: "collides with the built-in reply"},
-		"one-bad-among-good": {schemes: []string{"ping", "bad.name"}, wantErr: "bad.name"},
+// discardLogger drops catalog warnings.
+func discardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
+
+func Test_buildCatalog_offers_each_tool(t *testing.T) {
+	tools := []*mcp.Tool{
+		{Name: "reply", Description: "post a message", InputSchema: objectSchema([]string{"text"}, map[string]any{
+			"text": map[string]any{"type": "string", "description": "the text"},
+		})},
+		{Name: "status-check", Description: "status check summary", InputSchema: objectSchema([]string{"service"}, map[string]any{
+			"service": map[string]any{"type": "string", "description": "service to check"},
+		})},
+		{Name: "ping", Description: "liveness check", InputSchema: objectSchema(nil, map[string]any{})},
 	}
+
+	built := buildCatalog(tools, discardLogger())
+
+	require.Len(t, built.defs, 3)
+	require.Equal(t, map[string]bool{"reply": true, "status-check": true, "ping": true}, built.offered)
+
+	byName := defsByName(built.defs)
+	require.Equal(t, "status check summary", byName["status-check"].Description)
+
+	// Each tool carries its own schema, so the model is told the arguments
+	// the tool actually reads rather than guessing them.
+	check := decodeSchema(t, byName["status-check"].Parameters)
+	require.Equal(t, "object", check.Type)
+	require.Equal(t, "string", check.Properties["service"].Type)
+	require.Equal(t, "service to check", check.Properties["service"].Description)
+	require.Equal(t, []string{"service"}, check.Required)
+
+	// A tool that reads nothing still declares an object schema.
+	ping := decodeSchema(t, byName["ping"].Parameters)
+	require.Equal(t, "object", ping.Type)
+	require.Empty(t, ping.Required)
+}
+
+func Test_buildCatalog_preserves_order(t *testing.T) {
+	tools := []*mcp.Tool{
+		{Name: "zulu", InputSchema: objectSchema(nil, nil)},
+		{Name: "alpha", InputSchema: objectSchema(nil, nil)},
+	}
+
+	built := buildCatalog(tools, discardLogger())
+
+	// The catalog order is the host's, which already sorts within each
+	// server; the planner does not reorder it.
+	require.Equal(t, "zulu", built.defs[0].Function.Name)
+	require.Equal(t, "alpha", built.defs[1].Function.Name)
+}
+
+func Test_buildCatalog_skips_unusable_tools(t *testing.T) {
+	testCases := map[string]struct {
+		tool   *mcp.Tool
+		reason string
+	}{
+		"no-name":     {tool: &mcp.Tool{Name: ""}, reason: "has no name"},
+		"bad-charset": {tool: &mcp.Tool{Name: "bad name"}, reason: "not a valid function name"},
+		"too-long":    {tool: &mcp.Tool{Name: strings.Repeat("a", 65)}, reason: "exceeds 64 characters"},
+		"bad-schema":  {tool: &mcp.Tool{Name: "broken", InputSchema: map[string]any{"$ref": "https://example.test/x"}}, reason: "cannot resolve schema reference"},
+		"non-object":  {tool: &mcp.Tool{Name: "scalar", InputSchema: "nope"}, reason: "schema is not an object"},
+	}
+
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			err := validateSchemes(tc.schemes)
-			if tc.wantErr != "" {
-				require.ErrorContains(t, err, tc.wantErr)
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, nil))
+
+			// One unusable tool must cost only that tool: the rest of the
+			// catalog is still offered, so a bad external server cannot make
+			// every request fail.
+			built := buildCatalog([]*mcp.Tool{tc.tool, {Name: "ping", InputSchema: objectSchema(nil, nil)}}, logger)
+
+			require.Equal(t, map[string]bool{"ping": true}, built.offered)
+			require.Len(t, built.defs, 1)
+			require.Contains(t, logs.String(), "tool not offered to the model")
+			require.Contains(t, logs.String(), tc.reason)
+		})
+	}
+}
+
+func Test_buildCatalog_skips_duplicates_and_nils(t *testing.T) {
+	var logs bytes.Buffer
+	tools := []*mcp.Tool{
+		nil,
+		{Name: "ping", Description: "first", InputSchema: objectSchema(nil, nil)},
+		{Name: "ping", Description: "second", InputSchema: objectSchema(nil, nil)},
+	}
+
+	built := buildCatalog(tools, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	require.Len(t, built.defs, 1)
+	require.Equal(t, "first", built.defs[0].Function.Description)
+	require.Contains(t, logs.String(), "duplicate function name")
+}
+
+func Test_buildCatalog_empty(t *testing.T) {
+	built := buildCatalog(nil, discardLogger())
+
+	require.Empty(t, built.defs)
+	require.Empty(t, built.offered)
+}
+
+func Test_checkFuncName(t *testing.T) {
+	testCases := map[string]struct {
+		name   string
+		errMsg string
+	}{
+		"simple":     {name: "ping"},
+		"dashes":     {name: "status-check"},
+		"underscore": {name: "search_repos"},
+		"digits":     {name: "k8s-get"},
+		"max-length": {name: strings.Repeat("a", 64)},
+		"empty":      {name: "", errMsg: "has no name"},
+		"too-long":   {name: strings.Repeat("a", 65), errMsg: "exceeds 64"},
+		"dot":        {name: "a.b", errMsg: "not a valid function name"},
+		"slash":      {name: "a/b", errMsg: "not a valid function name"},
+		"space":      {name: "a b", errMsg: "not a valid function name"},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			err := checkFuncName(tc.name)
+			if tc.errMsg != "" {
+				require.ErrorContains(t, err, tc.errMsg)
 				return
 			}
 			require.NoError(t, err)
@@ -89,146 +176,6 @@ func Test_validateSchemes(t *testing.T) {
 	}
 }
 
-func Test_buildCatalog_with_no_schemes_still_offers_reply(t *testing.T) {
-	defs, funcs, err := buildCatalog(nil, nil)
-	require.NoError(t, err)
-	require.Len(t, defs, 1)
-	require.Equal(t, replyFunc, defs[0].Function.Name)
-	require.Empty(t, funcs)
-}
-
-func Test_buildCatalog_does_not_mutate_input(t *testing.T) {
-	schemes := []string{"status-check", "ping"}
-	descriptors := map[string]tool.Descriptor{
-		"status-check": {Description: "s"},
-		"ping":         {Description: "p"},
-	}
-	_, _, err := buildCatalog(schemes, descriptors)
-	require.NoError(t, err)
-	require.Equal(t, []string{"status-check", "ping"}, schemes)
-}
-
-func Test_buildCatalog_errors_on_missing_descriptor(t *testing.T) {
-	// Every enabled tool must describe itself; a scheme without a
-	// descriptor is a wiring bug reported as an error.
-	_, _, err := buildCatalog([]string{"ping"}, nil)
-	require.ErrorContains(t, err, `no descriptor for enabled tool "ping"`)
-}
-
-func Test_buildCatalog_rejects_invalid_and_colliding_names(t *testing.T) {
-	testCases := map[string]struct {
-		schemes     []string
-		descriptors map[string]tool.Descriptor
-		wantErr     string
-	}{
-		"invalid-scheme-char": {
-			schemes:     []string{"check it"},
-			descriptors: map[string]tool.Descriptor{"check it": {Description: "s"}},
-			wantErr:     "invalid function name",
-		},
-		"too-long-scheme": {
-			schemes:     []string{strings.Repeat("a", 65)},
-			descriptors: map[string]tool.Descriptor{strings.Repeat("a", 65): {Description: "s"}},
-			wantErr:     "invalid function name",
-		},
-		"duplicate-scheme": {
-			schemes:     []string{"dup", "dup"},
-			descriptors: map[string]tool.Descriptor{"dup": {Description: "s"}},
-			wantErr:     "collides",
-		},
-	}
-	for name, tc := range testCases {
-		t.Run(name, func(t *testing.T) {
-			_, _, err := buildCatalog(tc.schemes, tc.descriptors)
-			require.ErrorContains(t, err, tc.wantErr)
-		})
-	}
-}
-
-func Test_buildCatalog_builds_tool_functions(t *testing.T) {
-	descriptors := map[string]tool.Descriptor{
-		"status-check": {
-			Description: "check one external service",
-			Parameters: []tool.Param{
-				{Name: "service", Type: "string", Required: true, Description: "the service"},
-			},
-		},
-		"status-list": {Description: "list all services"},
-	}
-	defs, funcs, err := buildCatalog([]string{"status-check", "status-list"}, descriptors)
-	require.NoError(t, err)
-
-	byName := defsByName(defs)
-	require.Contains(t, byName, "status-check")
-	require.Contains(t, byName, "status-list")
-
-	// check: description is the tool's; the required "service" argument sits
-	// directly on the flat schema.
-	check := byName["status-check"]
-	require.Equal(t, "check one external service", check.Description)
-	cs := decodeSchema(t, check.Parameters)
-	require.Equal(t, "object", cs.Type)
-	require.Equal(t, "the service", cs.Properties["service"].Description)
-	require.Equal(t, "string", cs.Properties["service"].Type)
-	require.Equal(t, []string{"service"}, cs.Required)
-	require.Equal(t, "status-check", funcs["status-check"].scheme)
-
-	// list: takes no arguments, so nothing is required.
-	list := byName["status-list"]
-	require.Equal(t, "list all services", list.Description)
-	ls := decodeSchema(t, list.Parameters)
-	require.Empty(t, ls.Properties)
-	require.Empty(t, ls.Required)
-	require.Equal(t, "status-list", funcs["status-list"].scheme)
-}
-
-func Test_toolSchema_required_and_optional_params(t *testing.T) {
-	// A tool with a required and an optional parameter lists only the
-	// required one, and preserves each declared scalar type.
-	params := []tool.Param{
-		{Name: "replicas", Type: "integer", Required: true, Description: "desired count"},
-		{Name: "force", Type: "boolean"},
-	}
-	s := decodeSchema(t, mustJSON(toolSchema(params)))
-	require.Equal(t, "object", s.Type)
-	require.Equal(t, "integer", s.Properties["replicas"].Type)
-	require.Equal(t, "boolean", s.Properties["force"].Type)
-	require.Equal(t, []string{"replicas"}, s.Required)
-}
-
-func Test_toolSchema_default_type_and_no_const_or_oneOf(t *testing.T) {
-	// A parameter with no declared type defaults to string; the schema uses
-	// no const or oneOf so restrictive endpoints accept it.
-	params := []tool.Param{
-		{Name: "key", Required: true}, // no Type -> string
-		{Name: "value", Type: "string"},
-	}
-	raw := mustJSON(toolSchema(params))
-	require.NotContains(t, string(raw), "oneOf")
-	require.NotContains(t, string(raw), "const")
-
-	s := decodeSchema(t, raw)
-	require.Equal(t, "string", s.Properties["key"].Type)
-	require.Equal(t, []string{"key"}, s.Required)
-}
-
-func Test_toolSchema_no_params(t *testing.T) {
-	// A tool with no parameters is an empty object with no required list.
-	s := decodeSchema(t, mustJSON(toolSchema(nil)))
-	require.Equal(t, "object", s.Type)
-	require.Empty(t, s.Properties)
-	require.Empty(t, s.Required)
-}
-
-func Test_replyParams_is_valid_json(t *testing.T) {
-	var v any
-	require.NoError(t, json.Unmarshal(replyParams, &v))
-}
-
-func Test_mustJSON_panics_on_unmarshalable_value(t *testing.T) {
-	// A channel cannot be marshaled, exercising the panic path used to
-	// catch a malformed static schema at startup.
-	require.PanicsWithValue(t, "openai: marshal static schema: json: unsupported type: chan int", func() {
-		mustJSON(make(chan int))
-	})
+func Test_mustJSON_panics_on_unmarshalable(t *testing.T) {
+	require.Panics(t, func() { mustJSON(make(chan int)) })
 }

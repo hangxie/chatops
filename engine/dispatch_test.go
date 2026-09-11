@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -15,9 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hangxie/chatops/chat"
-	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/planner"
-	"github.com/hangxie/chatops/tool"
+	"github.com/hangxie/chatops/tool/reply"
 )
 
 // syncBuffer is an io.Writer safe for the concurrent workers writing log
@@ -73,9 +71,9 @@ func hasRecord(recs []map[string]any, msg string, attrs map[string]any) bool {
 
 func Test_stepTools(t *testing.T) {
 	require.Empty(t, stepTools(nil))
-	require.Equal(t, []string{"reply://", "ping://"}, stepTools([]planner.Step{
-		{Tool: "reply://"},
-		{Tool: "ping://"},
+	require.Equal(t, []string{"reply", "ping"}, stepTools([]planner.Step{
+		{Tool: "reply"},
+		{Tool: "ping"},
 	}))
 }
 
@@ -90,14 +88,11 @@ func runWithLogger(t *testing.T, level slog.Level) []map[string]any {
 	defer cancel()
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1", Sender: "alice", Text: "do it"}}}
 	p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{
-		{Tool: "reply://", Call: tool.Call{Arguments: map[string]string{"text": "working"}}},
-		{Tool: "fake://", Call: tool.Call{Arguments: map[string]string{"unit": "web"}}},
+		{Tool: reply.ToolName, Arguments: map[string]any{"text": "working"}},
+		{Tool: "fake", Arguments: map[string]any{"unit": "web"}},
 	}}}}
-	taskTool := &fakeTool{result: tool.Result{Text: "restarted web"}}
-	tools := tool.NewRegistry(tool.Backend{Scheme: "fake", Opener: func(_ context.Context, _ *url.URL, _ cred.Store) (tool.Tool, error) {
-		return taskTool, nil
-	}, Descriptor: stubDesc()})
-	e, err := New(Config{ConnectionID: "chat-1", Chat: conn, Planner: p, Tools: tools, Logger: logger})
+	taskTool := &stubTool{name: "fake", text: "restarted web"}
+	e, err := New(Config{ConnectionID: "chat-1", Chat: conn, Planner: p, Tools: newHost(t, conn, taskTool), Logger: logger})
 	require.NoError(t, err)
 
 	result := make(chan error, 1)
@@ -118,15 +113,15 @@ func Test_handle_logs_planner_and_tool_flow(t *testing.T) {
 	require.True(t, hasRecord(recs, "engine started", map[string]any{"connection_id": "chat-1"}))
 	require.True(t, hasRecord(recs, "message received", map[string]any{"conversation_id": "c1", "sender": "alice"}))
 	require.True(t, hasRecord(recs, "plan produced", map[string]any{"conversation_id": "c1", "steps": float64(2)}))
-	require.True(t, hasRecord(recs, "executing step", map[string]any{"tool": "fake://"}))
-	// The reply step posts directly and returns no text, so the posted-result
-	// record belongs to the tool step that produced output.
-	require.True(t, hasRecord(recs, "result posted", map[string]any{"tool": "fake://"}))
-	require.True(t, hasRecord(recs, "step produced no output", map[string]any{"tool": "reply://"}))
+	require.True(t, hasRecord(recs, "executing step", map[string]any{"tool": "fake"}))
+	// The reply step posts directly and returns no output, so the
+	// posted-result record belongs to the tool step that produced some.
+	require.True(t, hasRecord(recs, "result posted", map[string]any{"tool": "fake"}))
+	require.True(t, hasRecord(recs, "step produced no output", map[string]any{"tool": "reply"}))
 	require.True(t, hasRecord(recs, "engine stopped", nil))
 	// Detail records are emitted only at debug level.
 	require.True(t, hasRecord(recs, "planning message", map[string]any{"text": "do it"}))
-	require.True(t, hasRecord(recs, "opening tool", map[string]any{"tool": "fake://"}))
+	require.True(t, hasRecord(recs, "tool called", map[string]any{"tool": "fake", "has_output": true}))
 }
 
 func Test_handle_info_level_omits_debug_records(t *testing.T) {
@@ -134,7 +129,7 @@ func Test_handle_info_level_omits_debug_records(t *testing.T) {
 
 	require.True(t, hasRecord(recs, "message received", map[string]any{"conversation_id": "c1"}))
 	require.False(t, hasRecord(recs, "planning message", nil))
-	require.False(t, hasRecord(recs, "opening tool", nil))
+	require.False(t, hasRecord(recs, "tool called", nil))
 }
 
 func Test_handle_logs_message_failure_and_continues(t *testing.T) {
@@ -145,7 +140,7 @@ func Test_handle_logs_message_failure_and_continues(t *testing.T) {
 	defer cancel()
 	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1", Text: "do it"}}}
 	p := &fakePlanner{err: errors.New("backend down")}
-	e, err := New(Config{Chat: conn, Planner: p, Tools: tool.NewRegistry(), Logger: logger})
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn), Logger: logger})
 	require.NoError(t, err)
 
 	result := make(chan error, 1)

@@ -80,7 +80,7 @@ func Test_Cmd_parse(t *testing.T) {
 				"--max-concurrency", "3",
 				"--tool", "ping",
 				"--tool", "status-check",
-				"--tool-url", "k8s-get://?context=prod",
+				"--builtin", "k8s?context=prod",
 				"--log-level", "debug",
 				"--log-format", "text",
 			},
@@ -91,7 +91,7 @@ func Test_Cmd_parse(t *testing.T) {
 				ConnectionID:   "operations",
 				MaxConcurrency: 3,
 				Tools:          []string{"ping", "status-check"},
-				ToolURLs:       []string{"k8s-get://?context=prod"},
+				Builtin:        []string{"k8s?context=prod"},
 				LogLevel:       "debug",
 				LogFormat:      "text",
 			},
@@ -133,14 +133,67 @@ func Test_Cmd_parse(t *testing.T) {
 	}
 }
 
-func Test_run_rejects_invalid_tool_before_opening_backends(t *testing.T) {
-	command := Cmd{ChatURL: "unknown://", PlannerURL: "unknown://", Tools: []string{"bogus"}}
-	require.EqualError(t, command.run(context.Background()), `server: configure tools: tool: unknown tool "bogus"; available tools: k8s-get, k8s-list, ping, status-check, status-list`)
+func Test_run_rejects_invalid_builtin_group(t *testing.T) {
+	testCases := map[string]struct {
+		command Cmd
+		errMsg  string
+	}{
+		"unknown-group": {
+			command: Cmd{ChatURL: "unknown://", PlannerURL: "unknown://", Builtin: []string{"bogus"}},
+			errMsg:  `server: configure tools: mcpserve: unknown built-in group "bogus"; available groups: k8s, ping, status`,
+		},
+		"bad-option": {
+			command: Cmd{ChatURL: "unknown://", PlannerURL: "unknown://", Builtin: []string{"ping?loud=true"}},
+			errMsg:  "ping: unknown option loud",
+		},
+		"repeated-group": {
+			command: Cmd{ChatURL: "unknown://", PlannerURL: "unknown://", Builtin: []string{"ping", "ping"}},
+			errMsg:  `built-in group "ping" selected more than once`,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			// Misconfiguration fails before any backend is opened.
+			require.ErrorContains(t, tc.command.run(context.Background()), tc.errMsg)
+		})
+	}
 }
 
-func Test_run_rejects_tool_url_for_unexposed_tool(t *testing.T) {
-	command := Cmd{ChatURL: "unknown://", PlannerURL: "unknown://", Tools: []string{"ping"}, ToolURLs: []string{"k8s-get://?context=prod"}}
-	require.EqualError(t, command.run(context.Background()), `server: configure tools: tool: cannot configure unexposed tool "k8s-get"; available tools: ping`)
+func Test_run_rejects_invalid_engine_config(t *testing.T) {
+	// A live chat connection is needed to get as far as building the engine,
+	// so the misconfiguration is reported after the backends are open and
+	// every one of them is closed again.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, listener.Close()) }()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		accepted <- conn
+	}()
+
+	command := Cmd{
+		ChatURL:        "telnet://" + listener.Addr().String(),
+		PlannerURL:     "ping://",
+		Builtin:        []string{"ping"},
+		MaxConcurrency: -1,
+	}
+	require.ErrorContains(t, command.run(context.Background()), "server: initialize engine")
+
+	select {
+	case conn := <-accepted:
+		require.NoError(t, conn.Close())
+	default:
+	}
+}
+
+func Test_run_rejects_invalid_tool_pattern(t *testing.T) {
+	command := Cmd{ChatURL: "unknown://", PlannerURL: "unknown://", Tools: []string{"[bad"}}
+	require.ErrorContains(t, command.run(context.Background()), `server: configure tools: mcphost: invalid tool pattern "[bad"`)
 }
 
 func Test_run_ping_round_trip_and_graceful_cancellation(t *testing.T) {

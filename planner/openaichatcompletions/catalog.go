@@ -3,146 +3,89 @@ package openaichatcompletions
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
-	"sort"
 
-	"github.com/hangxie/chatops/tool"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-// replyFunc is the built-in function the model calls to reply to the
-// requester; it is always offered, alongside the operational tools.
-const replyFunc = "reply"
-
-// replyFuncDesc is the description the model sees for the reply function.
-const replyFuncDesc = "Post a message back to the person who sent the request, " +
-	"for answers, clarifying questions, or acknowledgements."
-
-// replyParams is the JSON Schema for the built-in reply function: it takes
-// only the message text. Operational tools get a typed schema built at
-// runtime from their descriptor (see toolSchema).
-var replyParams = mustJSON(map[string]any{
-	"type": "object",
-	"properties": map[string]any{
-		"text": map[string]any{
-			"type":        "string",
-			"description": "The message text to post back to the requester.",
-		},
-	},
-	"required": []string{"text"},
-})
 
 // maxFuncNameLen is the OpenAI limit on function names.
 const maxFuncNameLen = 64
 
-// funcNameRE is the character set OpenAI allows in a function name;
-// the tool registry's scheme syntax is broader (it permits "+" and ".").
+// funcNameRE is the character set OpenAI allows in a function name. The host
+// already sanitizes catalog names to this set; the check is kept because an
+// unusable name must cost one tool, not every request.
 var funcNameRE = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-// validateSchemes rejects enabled tool schemes that cannot be offered to
-// the model as function names, so an incompatible scheme fails when the
-// planner is opened rather than making every completion request fail.
-func validateSchemes(schemes []string) error {
-	for _, scheme := range schemes {
-		if scheme == replyFunc {
-			return fmt.Errorf("openai: tool scheme %q collides with the built-in reply function", scheme)
+// catalog is the set of functions offered to the model for one generation of
+// the tool source.
+type catalog struct {
+	defs []toolDef
+	// offered is the set of function names the model may call, used to
+	// reject a call to something that was never offered.
+	offered map[string]bool
+}
+
+// buildCatalog converts the enabled MCP tools into function definitions.
+//
+// Each tool is offered under its catalog name, carrying its own input schema
+// downgraded to the subset the completion endpoints accept. A tool that
+// cannot be offered — an unusable name, or a schema that cannot be
+// downgraded — is skipped with a warning: one bad tool from an external
+// server must not make every request fail.
+func buildCatalog(tools []*mcp.Tool, logger *slog.Logger) catalog {
+	built := catalog{
+		defs:    make([]toolDef, 0, len(tools)),
+		offered: make(map[string]bool, len(tools)),
+	}
+	for _, tool := range tools {
+		if tool == nil {
+			continue
 		}
-		if len(scheme) > maxFuncNameLen || !funcNameRE.MatchString(scheme) {
-			return fmt.Errorf("openai: tool scheme %q cannot be an OpenAI function name (allowed: letters, digits, '_', '-'; max %d characters)", scheme, maxFuncNameLen)
+		if err := checkFuncName(tool.Name); err != nil {
+			logger.Warn("tool not offered to the model", "tool", tool.Name, "error", err.Error())
+			continue
 		}
+		if built.offered[tool.Name] {
+			logger.Warn("tool not offered to the model", "tool", tool.Name, "error", "duplicate function name")
+			continue
+		}
+		params, err := downgradeSchema(tool.InputSchema)
+		if err != nil {
+			logger.Warn("tool not offered to the model", "tool", tool.Name, "error", err.Error())
+			continue
+		}
+		built.offered[tool.Name] = true
+		built.defs = append(built.defs, toolDef{Type: "function", Function: functionDef{
+			Name:        tool.Name,
+			Description: tool.Description,
+			Parameters:  params,
+		}})
+	}
+	return built
+}
+
+// checkFuncName rejects a tool name an endpoint cannot accept as a function
+// name.
+func checkFuncName(name string) error {
+	if name == "" {
+		return fmt.Errorf("tool has no name")
+	}
+	if len(name) > maxFuncNameLen {
+		return fmt.Errorf("name exceeds %d characters", maxFuncNameLen)
+	}
+	if !funcNameRE.MatchString(name) {
+		return fmt.Errorf("name is not a valid function name (allowed: letters, digits, '_', '-')")
 	}
 	return nil
 }
 
-// toolFunc is the tool one offered function invokes, kept so a call's
-// arguments can be validated against the tool's parameters.
-type toolFunc struct {
-	scheme string
-	params []tool.Param
-}
-
-// buildCatalog returns the functions offered to the model — reply plus one
-// typed function per tool scheme — and the reverse map from function name to
-// the tool it invokes. Each tool performs a single intent, so its scheme is
-// the function name and its schema is a flat object of the tool's arguments.
-// An invalid or too-long scheme is a configuration error.
-func buildCatalog(schemes []string, descriptors map[string]tool.Descriptor) ([]toolDef, map[string]toolFunc, error) {
-	defs := make([]toolDef, 0, len(schemes)+1)
-	defs = append(defs, toolDef{Type: "function", Function: functionDef{
-		Name:        replyFunc,
-		Description: replyFuncDesc,
-		Parameters:  replyParams,
-	}})
-	funcs := map[string]toolFunc{}
-
-	sorted := append([]string(nil), schemes...)
-	sort.Strings(sorted)
-	for _, scheme := range sorted {
-		d, ok := descriptors[scheme]
-		if !ok {
-			return nil, nil, fmt.Errorf("openai: no descriptor for enabled tool %q", scheme)
-		}
-		if len(scheme) > maxFuncNameLen || !funcNameRE.MatchString(scheme) {
-			return nil, nil, fmt.Errorf("openai: tool %q yields invalid function name (allowed: letters, digits, '_', '-'; max %d characters)", scheme, maxFuncNameLen)
-		}
-		if _, dup := funcs[scheme]; dup {
-			return nil, nil, fmt.Errorf("openai: tool %q collides with another offered function", scheme)
-		}
-		funcs[scheme] = toolFunc{scheme: scheme, params: d.Parameters}
-		defs = append(defs, toolDef{Type: "function", Function: functionDef{
-			Name:        scheme,
-			Description: d.Description,
-			Parameters:  mustJSON(toolSchema(d.Parameters)),
-		}})
-	}
-	return defs, funcs, nil
-}
-
-// toolSchema builds one tool's function schema: a flat object whose
-// properties are the tool's arguments, with the required ones listed. It
-// avoids const/oneOf/additionalProperties to stay within the schema subset
-// endpoints such as Gemini accept.
-func toolSchema(params []tool.Param) map[string]any {
-	props, required := paramSchemas(params)
-	schema := map[string]any{
-		"type":       "object",
-		"properties": props,
-	}
-	if len(required) > 0 {
-		schema["required"] = required
-	}
-	return schema
-}
-
-// paramSchemas builds a tool's parameter property schemas keyed by name,
-// plus its sorted required-name list. A parameter with no declared type
-// defaults to "string".
-func paramSchemas(params []tool.Param) (map[string]any, []string) {
-	props := map[string]any{}
-	var required []string
-	for _, p := range params {
-		typ := p.Type
-		if typ == "" {
-			typ = "string"
-		}
-		schema := map[string]any{"type": typ}
-		if p.Description != "" {
-			schema["description"] = p.Description
-		}
-		props[p.Name] = schema
-		if p.Required {
-			required = append(required, p.Name)
-		}
-	}
-	sort.Strings(required)
-	return props, required
-}
-
-// mustJSON marshals a static schema value, panicking on failure (a
-// programmer error caught at startup).
+// mustJSON marshals a schema value, panicking on failure. Only values built
+// by this package reach it, so a failure is a programmer error.
 func mustJSON(v any) json.RawMessage {
 	buf, err := json.Marshal(v)
 	if err != nil {
-		panic(fmt.Sprintf("openai: marshal static schema: %v", err))
+		panic(fmt.Sprintf("openai: marshal schema: %v", err))
 	}
 	return buf
 }

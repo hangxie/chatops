@@ -98,8 +98,28 @@ func Test_cli_run_tools(t *testing.T) {
 	stdout, stderr := testutils.CaptureStdoutStderr(func() {
 		require.NoError(t, runCLI(newParser(), []string{"tools"}, context.Background()))
 	})
-	require.Equal(t, "k8s-get\nk8s-list\nping\nstatus-check\nstatus-list\n", stdout)
+	// reply is a host tool rather than one served by a built-in group, so it
+	// leads the catalog.
+	require.Equal(t, "reply\nk8s-get\nk8s-list\nping\nstatus-check\nstatus-list\n", stdout)
 	require.Empty(t, stderr)
+}
+
+func Test_cli_run_mcp_serve(t *testing.T) {
+	// The command serves until stdin closes; an empty stdin ends it at once.
+	stdin := os.Stdin
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	os.Stdin = reader
+	defer func() { os.Stdin = stdin }()
+
+	// The transport closes stdin itself when the session ends.
+	require.NoError(t, runCLI(newParser(), []string{"mcp", "serve", "ping"}, context.Background()))
+}
+
+func Test_cli_run_mcp_serve_unknown_group(t *testing.T) {
+	err := runCLI(newParser(), []string{"mcp", "serve", "nope"}, context.Background())
+	require.ErrorContains(t, err, "unknown built-in group")
 }
 
 func Test_cli_run_server_with_bound_context(t *testing.T) {

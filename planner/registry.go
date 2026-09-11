@@ -8,8 +8,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/hangxie/chatops/cred"
-	"github.com/hangxie/chatops/tool"
 )
 
 // OpenerFunc opens the planner backend described by u, resolving any
@@ -18,12 +19,12 @@ import (
 // matched, and interpretation of the rest of the URL is
 // backend-specific. Backends that need no credentials ignore creds.
 //
-// tools is the set of operational tools the caller has enabled, so an
+// tools is the live catalog of tools the caller has enabled, so an
 // LLM-backed backend can offer them to the model as callable
-// functions; backends emit plan steps naming these tools by their URL
-// scheme. It is never nil, though it may be empty. Backends that plan
-// a fixed set of steps (such as the ping backend) ignore it.
-type OpenerFunc func(ctx context.Context, u *url.URL, creds cred.Store, tools *tool.Registry) (Planner, error)
+// functions; backends emit plan steps naming these tools. It is never
+// nil, though it may be empty. Backends that plan a fixed set of steps
+// (such as the ping backend) ignore it.
+type OpenerFunc func(ctx context.Context, u *url.URL, creds cred.Store, tools ToolSource) (Planner, error)
 
 // Backend pairs a URL scheme with the opener serving it, for wiring
 // into NewRegistry.
@@ -82,10 +83,10 @@ func (r *Registry) Schemes() []string {
 // may be nil when every wired backend takes no credentials; openers
 // that need credentials must report an error.
 //
-// tools is the set of operational tools the caller has enabled, passed
+// tools is the live catalog of tools the caller has enabled, passed
 // through to the backend so an LLM-backed planner can offer them to
-// the model. A nil tools is treated as the empty set.
-func (r *Registry) Open(ctx context.Context, rawURL string, creds cred.Store, tools *tool.Registry) (Planner, error) {
+// the model. A nil tools is treated as the empty catalog.
+func (r *Registry) Open(ctx context.Context, rawURL string, creds cred.Store, tools ToolSource) (Planner, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("planner: parse planner URL: %w", err)
@@ -95,7 +96,15 @@ func (r *Registry) Open(ctx context.Context, rawURL string, creds cred.Store, to
 		return nil, fmt.Errorf("planner: unknown planner scheme %q", u.Scheme)
 	}
 	if tools == nil {
-		tools = tool.NewRegistry()
+		tools = emptyToolSource{}
 	}
 	return opener(ctx, u, creds, tools)
 }
+
+// emptyToolSource is the catalog substituted for a nil tools argument: it
+// offers nothing and never changes.
+type emptyToolSource struct{}
+
+func (emptyToolSource) Tools(context.Context) []*mcp.Tool { return nil }
+
+func (emptyToolSource) Generation() uint64 { return 0 }

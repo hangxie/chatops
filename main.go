@@ -10,6 +10,7 @@ import (
 	"github.com/alecthomas/kong"
 
 	"github.com/hangxie/chatops/cmd/chats"
+	cmdmcp "github.com/hangxie/chatops/cmd/mcp"
 	"github.com/hangxie/chatops/cmd/planners"
 	"github.com/hangxie/chatops/cmd/server"
 	"github.com/hangxie/chatops/cmd/tools"
@@ -18,6 +19,7 @@ import (
 
 var cli struct {
 	Chats    chats.Cmd    `cmd:"" help:"List available chat backends."`
+	MCP      cmdmcp.Cmd   `cmd:"" name:"mcp" help:"Serve built-in tools to other MCP hosts."`
 	Planners planners.Cmd `cmd:"" help:"List available planner backends."`
 	Server   server.Cmd   `cmd:"" help:"Run the ChatOps server."`
 	Tools    tools.Cmd    `cmd:"" help:"List available tools."`

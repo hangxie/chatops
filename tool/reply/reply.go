@@ -1,93 +1,155 @@
-// Package reply implements a tool.Tool that posts text back into a
-// chat conversation, so planners can express "say this to the
-// requester" as an ordinary tool step alongside operational tool
-// calls.
+// Package reply implements the host tool that posts text back into a chat
+// conversation, so planners can express "say this to the requester" as an
+// ordinary tool call alongside operational tool calls.
 //
-// Unlike other tools, a reply tool is bound to a live chat.Conn — the
-// connection the message being answered arrived on — rather than to
-// an endpoint of its own, so it exports no tool.OpenerFunc and cannot
-// be opened from a URL through a tool.Registry. Callers open it
-// directly with Open(ctx, conn) and make it available to plan
-// execution under the conventional bare URL:
+// Unlike the built-in operational tools, reply is not served by an MCP server:
+// it is bound to a live chat.Conn — the connection the message being answered
+// arrived on — which is host state rather than anything a server could hold.
+// It is therefore registered with the host directly, exactly as an MCP host
+// adds its own local tools to the catalog it offers the model, and it is the
+// one tool that never leaves the process.
 //
-//	reply://
-//
-// URL exports that canonical spelling for planners and executors.
-//
-// The reply tool reads Call.Arguments["text"] for the text to post and
-// Call.Arguments["conversation"] for the conversation ID to post into
-// (chat.Message.ConversationID of the message being answered). The
-// conversation is injected by the executor, not the model: planners
-// leave it empty and the executor sets it to the conversation the
-// request arrived on. Call.Choices carries optional interactive
-// responses. Sending is the whole outcome, so Result.Text stays empty
-// and callers that post non-empty Result.Text back to chat do not
+// The tool reads "text" for the message to post and optional "choices" for
+// interactive responses. The target conversation is not an argument: the host
+// carries it on the context (see chat.WithConversation), so the model never
+// selects it and replies cannot be misrouted. Posting is the whole outcome, so
+// the result carries no content and callers relaying tool output do not
 // double-post.
 package reply
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/hangxie/chatops/chat"
-	"github.com/hangxie/chatops/tool"
 )
 
-// Scheme names the reply tool URL scheme. There is no tool.OpenerFunc for it;
-// see the package documentation.
-const Scheme = "reply"
+// ToolName is the model-facing name of the reply tool.
+const ToolName = "reply"
 
-// URL is the canonical bare URL under which callers make an opened reply tool
-// available to plan execution.
-const URL = Scheme + "://"
+// Args is the tool's input schema.
+type Args struct {
+	Text    string   `json:"text" jsonschema:"The message text to post back to the requester."`
+	Choices []Choice `json:"choices,omitempty" jsonschema:"Optional bounded set of responses to offer the requester as interactive controls."`
+}
+
+// Choice is one response offered to the human receiving the reply. Chat
+// backends may render choices as interactive controls and otherwise retain
+// the message text as a plain-text fallback.
+type Choice struct {
+	Label string `json:"label" jsonschema:"The text shown on the control."`
+	Value string `json:"value" jsonschema:"The message sent back when the control is chosen."`
+}
+
+// argsSchema is the input schema inferred from Args, so the definition the
+// model sees and the struct the handler decodes into cannot drift apart. The
+// inference runs on a type this package owns, so failure is a programmer
+// error.
+var argsSchema = mustSchema(jsonschema.For[Args](nil))
+
+// mustSchema returns the inferred schema, panicking on failure. Inference
+// runs on a type this package owns, so a failure is a programmer error.
+func mustSchema(schema *jsonschema.Schema, err error) *jsonschema.Schema {
+	if err != nil {
+		panic(fmt.Sprintf("reply: infer input schema: %v", err))
+	}
+	return schema
+}
+
+// Definition is the model-facing description of the reply tool, for
+// registering it with the host catalog.
+func Definition() *mcp.Tool {
+	return &mcp.Tool{
+		Name: ToolName,
+		Description: "Post a message back to the person who sent the request, " +
+			"for answers, clarifying questions, or acknowledgements.",
+		InputSchema: argsSchema,
+	}
+}
 
 // Tool posts text into conversations of one chat connection.
 type Tool struct {
 	conn chat.Conn
 }
 
-// Open returns a reply tool bound to conn. The connection stays owned
-// by the caller: the tool sends on it but never closes it.
-func Open(_ context.Context, conn chat.Conn) (*Tool, error) {
+// Open returns a reply tool bound to conn. The connection stays owned by the
+// caller: the tool sends on it but never closes it.
+//
+// A nil connection is a mistake at the wiring site rather than a runtime
+// condition, so it panics, as the registries in this repository do.
+func Open(_ context.Context, conn chat.Conn) *Tool {
 	if conn == nil {
-		return nil, errors.New("reply: open with nil connection")
+		panic("reply: open with nil connection")
 	}
-	return &Tool{conn: conn}, nil
+	return &Tool{conn: conn}
 }
 
-// Invoke posts call.Arguments["text"] into the conversation identified
-// by call.Arguments["conversation"]. A missing conversation or
-// missing/empty text is an error; errors from the underlying send (e.g.
-// wrapping chat.ErrUnknownConversation) are passed through wrapped.
-func (t *Tool) Invoke(ctx context.Context, call tool.Call) (tool.Result, error) {
+// Invoke posts args.Text into the conversation carried by ctx. A context
+// without a conversation, or empty text, is an error; errors from the
+// underlying send (e.g. wrapping chat.ErrUnknownConversation) are passed
+// through wrapped.
+func (t *Tool) Invoke(ctx context.Context, args Args) (*mcp.CallToolResult, error) {
 	if err := ctx.Err(); err != nil {
-		return tool.Result{}, fmt.Errorf("reply: %w", err)
+		return nil, fmt.Errorf("reply: %w", err)
 	}
-	conversation := call.Arguments["conversation"]
-	if conversation == "" {
-		return tool.Result{}, errors.New("reply: no target conversation")
+	conversation, ok := chat.ConversationFrom(ctx)
+	if !ok || conversation == "" {
+		return nil, errors.New("reply: no target conversation")
 	}
-	text := call.Arguments["text"]
-	if text == "" {
-		return tool.Result{}, errors.New(`reply: no "text" argument`)
+	if args.Text == "" {
+		return nil, errors.New(`reply: no "text" argument`)
 	}
 	var choices []chat.Choice
-	if call.Choices != nil {
-		choices = make([]chat.Choice, len(call.Choices))
-		for i, choice := range call.Choices {
+	if args.Choices != nil {
+		choices = make([]chat.Choice, len(args.Choices))
+		for i, choice := range args.Choices {
 			choices[i] = chat.Choice{Label: choice.Label, Value: choice.Value}
 		}
 	}
-	msg := chat.Message{ConversationID: conversation, Text: text, Choices: choices}
+	msg := chat.Message{ConversationID: conversation, Text: args.Text, Choices: choices}
 	if err := t.conn.Send(ctx, msg); err != nil {
-		return tool.Result{}, fmt.Errorf("reply: %w", err)
+		return nil, fmt.Errorf("reply: %w", err)
 	}
-	return tool.Result{}, nil
+	// Posting is the whole outcome: no content, so a caller relaying tool
+	// output stays silent rather than double-posting.
+	return &mcp.CallToolResult{}, nil
 }
 
-// Close releases nothing; the chat connection is owned by the caller
-// and stays open.
+// Handler adapts Invoke to the host-tool calling convention: it decodes the
+// call's arguments into Args before invoking. Decoding goes through JSON so
+// the arguments are read exactly as they would be by a server across a
+// transport, keeping the host tool and an MCP tool behaviourally identical.
+func (t *Tool) Handler(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	decoded, err := decodeArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	return t.Invoke(ctx, decoded)
+}
+
+// decodeArgs converts a raw argument bag into Args.
+func decodeArgs(args map[string]any) (Args, error) {
+	if len(args) == 0 {
+		return Args{}, nil
+	}
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		return Args{}, fmt.Errorf("reply: encode arguments: %w", err)
+	}
+	var decoded Args
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return Args{}, fmt.Errorf("reply: invalid arguments: %w", err)
+	}
+	return decoded, nil
+}
+
+// Close releases nothing; the chat connection is owned by the caller and
+// stays open.
 func (t *Tool) Close() error {
 	return nil
 }

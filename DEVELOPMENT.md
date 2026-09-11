@@ -4,15 +4,14 @@ This guide describes the internal packages and how to add credential stores, cha
 
 ## Engine (`engine`)
 
-The `engine` package joins the component interfaces into the server loop. It receives messages from one `chat.Conn`, passes each message and its connection metadata to a `planner.Planner`, executes the returned tool steps in order, and sends every non-empty tool result back to the originating conversation. A planner asks for clarification or confirmation by returning a `reply://` step, so multi-message interaction state stays in the planner instead of the engine.
+The `engine` package joins the component interfaces into the server loop. It receives messages from one `chat.Conn`, passes each message and its connection metadata to a `planner.Planner`, calls the returned tool steps in order through an `mcphost.Host`, and sends every non-empty tool result back to the originating conversation. A planner asks for clarification or confirmation by returning a `reply` step, so multi-message interaction state stays in the planner instead of the engine.
 
 ```go
 e, err := engine.New(engine.Config{
     ConnectionID: "operations",
     Chat:         conn,
     Planner:      p,
-    Tools:        tools,
-    Credentials:  credentials,
+    Tools:        host,
 })
 if err != nil {
     // handle error
@@ -22,9 +21,13 @@ if err := e.Run(ctx); err != nil {
 }
 ```
 
-`Run` preserves message order within each conversation while processing independent conversations concurrently through a fixed-size worker pool. The pool and its bounded backlog prevent messages from creating unbounded worker goroutines; `Config.MaxConcurrency` controls the worker count and defaults to `engine.DefaultMaxConcurrency`. The engine is deliberately fail-fast: a planner, tool step, or result-delivery failure stops the server and returns the error to its caller instead of continuing with potentially incomplete work. A panic from a planner or tool is recovered at the message boundary and returned as a processing error so cleanup can finish. Context cancellation and a connection deliberately closed through `chat.Conn.Close` are graceful outcomes. A remote disconnect such as telnet EOF is a connection failure and is returned, allowing the caller or service supervisor to decide whether to reconnect or restart.
+`Run` preserves message order within each conversation while processing independent conversations concurrently through a fixed-size worker pool. The pool and its bounded backlog prevent messages from creating unbounded worker goroutines; `Config.MaxConcurrency` controls the worker count and defaults to `engine.DefaultMaxConcurrency`. A failure while handling one message — a bad plan, an unknown tool, a server that cannot be reached — posts a generic notice to the requester, is logged in full, and leaves the engine running. Context cancellation and a connection deliberately closed through `chat.Conn.Close` are graceful outcomes. A remote disconnect such as telnet EOF is a connection failure and is returned, allowing the caller or service supervisor to decide whether to reconnect or restart.
 
-The engine owns and closes the chat connection and planner after `New` succeeds, while the caller retains ownership of the credential store. It intentionally opens and closes each operational tool around one plan step, favoring isolated ownership and simple cleanup over engine-level instance reuse. A backend with expensive setup should implement safe pooling behind its opener rather than relying on the engine to retain stateful tool instances. Reply steps are different: the engine binds their destination to the originating conversation and accepts only the canonical `reply.URL`, preventing planner output from redirecting a reply or silently attaching unsupported URL configuration.
+A tool that *ran* and reported its own failure is different: MCP carries that as `IsError` on the result rather than as a protocol error, so the engine relays the tool's own message to the requester instead of the generic notice. Panics are contained where they happen — a tool's inside its server (see `mcpserve`), and the planner's and host tools' at the message boundary in the engine — so no single misbehaving component can stop a long-running bot.
+
+The engine owns and closes the chat connection, the planner, and the tool host after `New` succeeds. Unlike the per-step tool instances it used to open, MCP sessions are long-lived: the host connects every server once at startup and keeps the sessions for the engine's lifetime.
+
+Tools that act on the requester's conversation do not take it as an argument. The engine puts it on the context with `chat.WithConversation`, and the reply tool reads it back with `chat.ConversationFrom`, so the conversation is host state the model never selects and a bad plan cannot redirect a reply.
 
 ## Credential store (`cred`)
 
@@ -197,7 +200,7 @@ The Slack backend uses the Events API and interactive payloads over Socket Mode 
 
 Every accepted Socket Mode envelope is acknowledged before its event is processed. Human message and `app_mention` events become `chat.Message` values only when their text starts with the exact `<@USERID>` obtained for the authenticated bot. The backend strips that stable bot identity before planning, so changing the bot's display name requires no ChatOps configuration. Mentions of other users, bot mentions later in the text, unmentioned messages, bot messages, message subtypes, events without a sender, and empty commands are ignored. The conversation ID combines the Slack channel ID with the root message timestamp. A root message and all replies in its thread therefore share one engine conversation, and `Send` posts back into that thread. Routing entries refresh on receive and send, expire after 24 hours of inactivity, and are limited to 4,096 entries. An indexed min-heap makes refresh, expiry, and capacity eviction O(log n); reaching capacity evicts the earliest-expiring route.
 
-`chat.Message.Choices` carries optional label/value responses. The reply tool maps choices supplied on `tool.Call` into that backend-neutral field. Slack renders them as Block Kit buttons and treats a click as an ordinary inbound message containing the selected value; telnet ignores the metadata and sends the message's fallback text. Slack accepts only values registered for a prompt message posted by this process. Prompt routes expire after ten minutes, are capped at 4,096 entries, and are atomically removed on selection, which rejects expired, foreign, unregistered, and duplicate clicks without unbounded state. A valid click clears the message's buttons before delivery to the planner.
+`chat.Message.Choices` carries optional label/value responses. The reply tool maps the `choices` argument of a call into that backend-neutral field. Slack renders them as Block Kit buttons and treats a click as an ordinary inbound message containing the selected value; telnet ignores the metadata and sends the message's fallback text. Slack accepts only values registered for a prompt message posted by this process. Prompt routes expire after ten minutes, are capped at 4,096 entries, and are atomically removed on selection, which rejects expired, foreign, unregistered, and duplicate clicks without unbounded state. A valid click clears the message's buttons before delivery to the planner.
 
 ### telnet backend
 
@@ -227,134 +230,104 @@ The connection carries a single conversation whose ID is the `telnet.Conversatio
 5. Add a test file with table-driven tests covering `Open` failures, receive/send round-trips, conversation ID mapping, context cancellation, `Close` semantics, and opening through a `chat.Registry` with the exported scheme.
 6. List the backend in the table above and document its protocol and conversation ID scheme in a section like the telnet one.
 
-## Tools (`tool`)
+## Tools (`mcphost`, `mcpserve`, `tool`)
 
-The `tool` package provides a generic way to invoke operational tools (kubernetes, proxmox, harbor, a dummy ping tool, ...). The top-level package defines the interface; each tool lives in its own sub-package and exports the URL scheme it serves plus an opener, which callers wire into a registry (no `init()` side effects — supported tools are always visible at the wiring site):
+Operational tools are **Model Context Protocol** tools. chatops does not define a tool interface of its own: a tool is an `mcp.Tool` with a JSON Schema, a call is `tools/call`, and a result is an `mcp.CallToolResult`. Three packages divide the work:
 
-```go
-type Tool interface {
-    // Invoke performs the tool's operation with the arguments in call and
-    // returns its outcome. It returns an error when the arguments are
-    // invalid or the operation fails.
-    Invoke(ctx context.Context, call Call) (Result, error)
+| Package    | Role                                                                         |
+| ---------- | ---------------------------------------------------------------------------- |
+| `tool/*`   | the tool implementations, each registering itself on an `*mcp.Server`        |
+| `mcpserve` | assembles the built-in tools into MCP servers, one per group                 |
+| `mcphost`  | the client half: connects servers and presents their tools as one catalog    |
 
-    // Close releases any resources held by the tool.
-    Close() error
-}
-```
+### Built-in servers are real servers
 
-Each tool performs a single intent, so a call names no verb — the tool *is* the intent. A call carries only a flat bag of **arguments** (e.g. `service`: `github`), keyed by the parameter names the tool declares in its descriptor; this mirrors the Model Context Protocol, where each tool has a name and a flat input schema and a call supplies only arguments. The result carries **text** — the human-readable outcome, composed by the tool and ready to post to chat as-is — plus optional machine-readable key-value **details**; callers never need the details to render a reply. Text is empty only when the tool has already delivered the outcome to the human itself (like the reply tool, whose intent is posting into chat), so callers relay non-empty text and stay silent on empty text.
+Built-in groups run in this process, each on its own goroutine, reached over the SDK's in-memory transport. That transport is not a shortcut: it is `net.Pipe` driving the same newline-delimited JSON codec the stdio transport uses, so every call is a real JSON round trip with a real `initialize` handshake, real schema validation, and real cancellation. There is deliberately **no** direct-call path that bypasses it.
 
-A tool instance is identified by a single URL — the scheme selects the implementation, host/port/path locate the endpoint it operates on, and query parameters carry further non-secret instance configuration. Credential *values* are **never** part of the URL; tools resolve predefined `cred.Key` identifiers from the `cred.Store` passed to `Open`. Adding a credential-bearing tool therefore extends the application credential schema rather than accepting caller-selected key prefixes.
+This is what makes a group splittable out later without touching its code. Moving one out of process is a change of `ServerSpec` at the wiring site — and once `chatops mcp serve` is used (see the user guide), a change of configuration and nothing more. The rule that keeps it true: **nothing crosses the boundary except JSON**. A group may not close over host state, and all of its operator configuration must be expressible as server options.
 
-Available tools:
+### Groups
 
-| Scheme  | Sub-package   | Tool URL                        |
-| ------- | ------------- | ------------------------------- |
-| `ping`  | `tool/ping`   | `ping://`                       |
-| `status-check` | `tool/status` | `status-check://`        |
-| `status-list` | `tool/status` | `status-list://`          |
-| `reply` | `tool/reply`  | `reply://` (no registry opener) |
+A group is the unit of deployment, not just of organization. Each becomes its own `*mcp.Server` and its own session, so one group can move out of process while the rest stay in.
 
-### Usage
+| Group    | Sub-package   | Tools                        | Options                      |
+| -------- | ------------- | ---------------------------- | ---------------------------- |
+| `ping`   | `tool/ping`   | `ping`                       | none                         |
+| `status` | `tool/status` | `status-check`, `status-list` | none                         |
+| `k8s`    | `tool/k8s`    | `k8s-list`, `k8s-get`        | `context`, `kubeconfig`      |
 
-Build a registry from the tools you want, open the tool by URL with a credential store, then invoke it:
+Options are non-secret instance configuration written as a query on the group selector (`k8s?context=prod`). Credential *values* are never options; groups resolve predefined `cred.Key` identifiers from the `cred.Store` passed to their `RegisterFunc`.
 
-```go
-import (
-    "context"
-    "fmt"
+### The host catalog
 
-    "github.com/hangxie/chatops/tool"
-    "github.com/hangxie/chatops/tool/ping"
-)
-
-reg := tool.NewRegistry(
-    tool.Backend{Scheme: ping.Scheme, Opener: ping.Opener, Descriptor: &ping.Descriptor},
-)
-tl, err := reg.Open(context.Background(), "ping://", nil) // creds not needed by ping
-if err != nil {
-    // handle error
-}
-defer tl.Close()
-
-result, err := tl.Invoke(context.Background(), tool.Call{})
-if err != nil {
-    // handle error
-}
-fmt.Println(result.Text) // "pong"
-```
-
-Tools also expose a typed `Open` function for direct use, e.g. `ping.Open(ctx)`.
-
-### ping tool
-
-A dummy tool that always answers `pong`, useful as a liveness check and as the reference implementation of the interface. It has no endpoint and takes no credentials, so the URL is a bare `ping://` (anything beyond the scheme — host, path, query, userinfo, or non-empty fragment — is rejected; a bare trailing `#` parses identically to the bare URL and is accepted). The tool takes no arguments; `Call.Arguments` is ignored. It exports a `tool.Descriptor` as a reference for the typed-schema wiring.
-
-### status tools
-
-The service-status tools check public third-party status APIs and normalize their different schemas. They have no credentials or caller-configurable endpoint, so their only URLs are the bare `status-check://` and `status-list://`; keeping upstream URLs in the compiled provider catalog prevents planner output from turning the tools into an arbitrary HTTP client.
-
-`status-check://` requires one canonical provider or alias in `Call.Arguments["service"]`. The canonical providers are `github`, `anthropic`, `cloudflare`, `openai`, `gemini`, `slack`, and `docker-hub`; the special service `all` checks every canonical provider. `status-list://` takes no arguments and returns the canonical provider names. See the user guide for the complete alias table. Each tool exports a `tool.Descriptor` (the check tool declaring its required `service` argument), so an LLM planner is offered `status-check` and `status-list` as separate typed functions rather than guessing a verb.
-
-Providers use adapters for their public status platform: GitHub, Anthropic, Cloudflare, and OpenAI use the common Statuspage summary schema; Slack uses the Slack Status API; Gemini combines active incidents for the stable Vertex Gemini and Workspace Gemini product IDs from Google's public JSON feeds; and Docker Hub uses the Status.io public API. Health is normalized to `operational`, `maintenance`, `degraded`, `partial_outage`, `major_outage`, or `unknown`.
-
-The checker preserves catalog order and limits aggregate checks to four concurrent provider requests. Network failures, non-success HTTP responses, and malformed upstream data become `unknown` snapshots so a status-page outage does not trigger the engine's fail-fast path; invalid tool calls and context cancellation are still returned as errors. Response bodies are bounded, and the shared HTTP client applies a five-second timeout.
-
-When adding a provider, prefer an existing adapter and add aliases only when they are unambiguous. Public catalogs such as [awesome-status-pages](https://github.com/ivbeg/awesome-status-pages) can help identify candidates, but they are discovery aids rather than runtime dependencies: verify the provider's official page, machine-readable endpoint, response format, and continued availability before adding it to the compiled catalog. Add a new adapter only when no existing status platform schema fits, and cover its health mapping, incidents, malformed responses, and cancellation behavior with table-driven tests.
-
-### reply tool
-
-A tool that posts text back into a chat conversation, so a planner (see below) can express "say this to the requester" as an ordinary tool step alongside operational tool calls. Unlike other tools it is bound to a live `chat.Conn` — the connection the message being answered arrived on — rather than to an endpoint of its own, so it has **no `Opener`** and cannot be opened through a `tool.Registry`. Callers open it directly and make it available to plan execution under the conventional bare URL exported as `reply.URL` (`reply://`):
+`mcphost.Host` connects every configured server, caches each one's tool list, and presents the union as one catalog.
 
 ```go
-import "github.com/hangxie/chatops/tool/reply"
-
-rt, err := reply.Open(ctx, conn) // conn is the chat.Conn messages arrive on
+host, err := mcphost.New(ctx, mcphost.Config{
+    Servers:   servers,                      // from internal/builtin
+    HostTools: []mcphost.HostTool{replyTool}, // tools this process serves itself
+    Allow:     []string{"k8s-*"},            // optional name filter
+})
+tools := host.Tools(ctx)
+result, err := host.CallTool(ctx, "k8s-get", map[string]any{"kind": "pod", "name": "web-0"})
 ```
 
-The reply tool reads `Arguments["text"]` for the text to post and `Arguments["conversation"]` for the conversation ID to post into (the `ConversationID` of the message being answered). The conversation is injected by the executor, not the model: planners leave it unset and the engine sets it to the conversation the request arrived on. Sending is the whole outcome, so `Result.Text` stays empty — callers that post non-empty `Result.Text` back to chat will not double-post. The tool never closes the connection; that stays with the caller.
+Points worth knowing:
+
+- **The catalog is live.** A server that reports `tools/list_changed` refreshes the session's cache and bumps `Host.Generation()`, so a planner caching function definitions against that value picks the change up without being reopened.
+- **Listing cannot fail.** A server that cannot be listed contributes nothing and says so in the logs; failing the requester's message because one of several servers is unwell would be the wrong response, so `Tools` returns what is available and may simply return less.
+- **Names are qualified and sanitized.** A server's `Alias` prefixes its tools (`github-search_repos`); an empty alias leaves them under their own names, which is what the built-in groups use because their names are already distinct. Names are coerced into the character set LLM tool-use APIs accept and capped at 64 characters, with a hash suffix if one has to be shortened. A name claimed twice is offered once, and the shadowed tool is reported.
+- **Timeouts are hard bounds.** `Client.Connect` and a pending `tools/list` do not honour context cancellation on a transport whose peer has gone quiet, so the host bounds both itself (`ConnectTimeout`, `ListTimeout`). Without them one unresponsive server would hang startup, or wedge a refresh that has no caller to cancel it.
+
+### Host tools
+
+A host tool is served by this process rather than by an MCP server, because it acts on host state. `reply` is the only one: it is bound to the live `chat.Conn`, which no server could hold. It appears in the same catalog and is called the same way — exactly as an MCP host adds its own local tools to what it offers the model.
 
 ### Adding a new tool
 
-Each tool performs a single intent. A tool that would otherwise offer several verbs is split into one sub-package exposing one scheme, opener, and descriptor per intent (as `tool/status` does with `status-check` and `status-list`).
+Adding a tool is now a typed input struct and one `mcp.AddTool` call. There is no scheme, opener, or descriptor to write: the SDK infers the input schema from the struct and validates arguments against it before the handler runs.
 
-1. Create a sub-package under `tool/` named after the tool (e.g. `tool/kubernetes`).
-2. Define a `Tool` type implementing the `tool.Tool` interface:
-   - `Invoke` reads the arguments it needs from `Call.Arguments` and maps them onto the tool's API, returning an error when a required argument is missing or invalid.
-   - Compose `Result.Text` as the complete human-readable answer; put supplementary machine-readable output in `Result.Details`.
-   - `Close` releases connections or other resources.
-3. Provide an `Open` function taking `context.Context` plus tool-specific parameters and returning `(*Tool, error)`. Resolve credentials from the `cred.Store` using predefined `cred.Key` identifiers; never accept credential values as parameters or URL elements.
-4. Export the scheme and an opener so callers can wire the tool into a `tool.Registry` (tools never self-register via `init()`):
+1. Pick a group — an existing sub-package under `tool/`, or a new one if the tool is a new deployment unit.
+2. Define the input as a struct, with a `json` tag per argument and a `jsonschema` tag describing it to the model. Fields without `omitempty` are required.
 
-   ```go
-   // Scheme is the URL scheme this tool serves in a tool.Registry.
-   const Scheme = "my-tool"
+    ```go
+    // GetArgs is the input schema of the k8s-get tool.
+    type GetArgs struct {
+        Kind      string `json:"kind" jsonschema:"Resource type, e.g. pod or statefulset."`
+        Namespace string `json:"namespace,omitempty" jsonschema:"Namespace; defaults to the context's."`
+    }
+    ```
 
-   // Opener is the tool.OpenerFunc for this tool.
-   func Opener(ctx context.Context, u *url.URL, creds cred.Store) (tool.Tool, error) {
-       return Open(ctx, u.Host, creds)
-   }
-   ```
+3. Register the tool in the group's `RegisterFunc`, composing the complete human-readable answer as text content. Return an error for a bad argument or a failed operation — the SDK turns it into a tool result with `IsError` set, which is what lets the requester see what went wrong.
 
-5. Export a `tool.Descriptor` describing the tool and wire it into the `Backend` alongside the scheme and opener — it is required, so `NewRegistry` panics on a backend without one. The descriptor lets an LLM planner offer the tool as its own typed function (named for the scheme, with a flat input schema of its typed arguments and their required fields) instead of making the model guess the vocabulary. Keep the described arguments in step with `Invoke`.
+    ```go
+    // GroupName is the built-in group this package registers into.
+    const GroupName = "k8s"
 
-   ```go
-   // Descriptor is the tool's self-description for planners.
-   var Descriptor = tool.Descriptor{
-       Description: "One-line, model-facing description of the tool.",
-       Parameters: []tool.Param{
-           {Name: "deployment", Type: "string", Required: true, Description: "the deployment to restart"},
-       },
-   }
-   ```
+    func Register(s *mcp.Server, creds cred.Store, opts url.Values) error {
+        if err := mcpserve.CheckOptions(GroupName, opts, optionContext); err != nil {
+            return err
+        }
+        mcp.AddTool(s, &mcp.Tool{
+            Name:        "k8s-get",
+            Description: "One-line, model-facing description of the tool.",
+        }, func(ctx context.Context, _ *mcp.CallToolRequest, args GetArgs) (*mcp.CallToolResult, any, error) {
+            return getResources(ctx, client, args)
+        })
+        return nil
+    }
+    ```
 
-   ```go
-   tool.Backend{Scheme: mytool.Scheme, Opener: mytool.Opener, Descriptor: &mytool.Descriptor}
-   ```
+4. Wire the group into `internal/registry.Builtin()` if it is new:
 
-6. Add a test file with table-driven tests covering `Open` failures, valid and invalid arguments, context cancellation, `Close` semantics, opening through a `tool.Registry` with the exported scheme, and that the descriptor validates.
-7. List the tool in the table above and document its arguments and credential identifiers in a section like the ping one.
+    ```go
+    mcpserve.Group{Name: toolk8s.GroupName, Register: toolk8s.Register}
+    ```
+
+5. Add a test file with table-driven tests covering valid and invalid arguments, option validation, context cancellation, and at least one call made **through a session** (`testutils.MCPSession`) so the declared schema is exercised the way a real caller would exercise it.
+6. List the tool in the group table above and document its arguments and credential identifiers.
+
+Keep in mind that the schema is the contract the model sees. Typed arguments are worth using: `all-namespaces` is a real boolean, so the server rejects `"maybe"` before the tool ever runs.
 
 ## Planners (`planner`)
 
@@ -372,13 +345,15 @@ type Planner interface {
 }
 ```
 
-A request carries the message **text**, the **conversation ID** and **sender** (both as computed by the chat backend, see `chat.Message`), and a caller-assigned **connection ID**; planners use the connection and conversation IDs together to keep per-conversation context across requests. The connection ID exists because conversation IDs are only unique within one `chat.Conn` (every telnet connection reports the same one, for example): a caller serving several connections from one planner must give each connection a distinct opaque ID, while a caller with a single connection may leave it empty. The returned plan is a sequence of **steps**, each naming a tool by the URL it is opened from (see the `tool` package) plus the `tool.Call` to invoke on it. Replying to the requester is itself a step — one invoking the `reply://` tool — so a clarifying question and an operational action have the same shape, mirroring how LLM tool-use APIs treat text output and tool calls as peers in one turn.
+A request carries the message **text**, the **conversation ID** and **sender** (both as computed by the chat backend, see `chat.Message`), and a caller-assigned **connection ID**; planners use the connection and conversation IDs together to keep per-conversation context across requests. The connection ID exists because conversation IDs are only unique within one `chat.Conn` (every telnet connection reports the same one, for example): a caller serving several connections from one planner must give each connection a distinct opaque ID, while a caller with a single connection may leave it empty. The returned plan is a sequence of **steps**, each naming a tool from the catalog the planner was opened with plus the arguments to call it with. Replying to the requester is itself a step — one invoking the `reply` tool — so a clarifying question and an operational action have the same shape, mirroring how LLM tool-use APIs treat text output and tool calls as peers in one turn.
 
-Steps name tools by URL only, so a plan is **not self-contained**: the caller executes it in the context of the request that produced it. In particular, `reply://` resolves to the reply tool bound to the chat connection that request arrived on — a caller serving several connections keeps one reply tool per connection rather than sharing one — which is what keeps replies on the right connection even when conversation IDs collide across connections.
+Steps name tools only, so a plan is **not self-contained**: the caller executes it in the context of the request that produced it. In particular the `reply` tool posts into the conversation the caller puts on the context, which is what keeps replies on the right connection even when conversation IDs collide across connections. A step never names a conversation of its own.
 
 A planner is identified by a single URL — the scheme selects the backend, host/port/path locate the endpoint it talks to (empty for providers with a well-known API endpoint), and query parameters carry further configuration such as the model (e.g. `openai-chat-completions://api.openai.com/v1?model=gpt-5`, `anthropic://?model=claude-fable-5`). Credential *values* are **never** part of the URL. Because the server runs one planner, an authenticated backend resolves the single `cred.PlannerAPIKey`; caller-selected credential prefixes are not supported.
 
-`Open` also receives the caller's enabled tool set (the `*tool.Registry` built from `--tool`), so an LLM-backed backend can offer those tools to the model as callable functions and emit plan steps naming them by scheme. A backend that plans a fixed set of steps (such as `ping`) ignores it. Backend `OpenerFunc` implementations take the trailing `tools *tool.Registry` parameter (never nil, possibly empty) and ignore it unless they offer tools to a model.
+`Open` also receives the caller's enabled tool catalog as a `planner.ToolSource`, so an LLM-backed backend can offer those tools to the model as callable functions and emit plan steps naming them. A backend that plans a fixed set of steps (such as `ping`) ignores it. Backend `OpenerFunc` implementations take the trailing `tools ToolSource` parameter (never nil, possibly empty).
+
+The source is **live**, not a snapshot: `Tools` returns the current catalog and `Generation` changes whenever it does, so a backend caches what it derives from the catalog against that value and rebuilds only when it moves. This is what lets a server's `tools/list_changed` reach the model without reopening the planner. Listing cannot fail — see the host catalog notes above.
 
 Available backends:
 
@@ -404,8 +379,9 @@ reg := planner.NewRegistry(
     planner.Backend{Scheme: planneropenaichat.Scheme, Opener: planneropenaichat.Opener},
     planner.Backend{Scheme: ping.Scheme, Opener: ping.Opener},
 )
-// tools is the enabled *tool.Registry; nil is treated as the empty set.
-// creds and tools are passed through to the backend's opener.
+// tools is the enabled planner.ToolSource (an *mcphost.Host, typically);
+// nil is treated as the empty catalog. creds and tools are passed
+// through to the backend's opener.
 p, err := reg.Open(context.Background(), "ping://", nil, tools)
 if err != nil {
     // handle error
@@ -420,11 +396,13 @@ plan, err := p.Plan(context.Background(), planner.Request{
 if err != nil {
     // handle error
 }
+ctx = chat.WithConversation(ctx, msg.ConversationID)
 for _, step := range plan.Steps {
-    // resolve step.Tool ("ping://", "reply://", ...) to an opened
-    // tool.Tool — "reply://" to the reply tool bound to the
-    // connection msg arrived on — invoke step.Call on it, and post
-    // any non-empty Result.Text back into the conversation
+    // call step.Tool ("ping", "reply", ...) with step.Arguments through
+    // the host, and post any non-empty rendered result back into the
+    // conversation
+    result, err := host.CallTool(ctx, step.Tool, step.Arguments)
+    _ = mcphost.Render(result)
 }
 ```
 
@@ -445,9 +423,10 @@ A dummy planner that recognizes only the ping intent, useful as a wiring check a
 A planner backed by any service that speaks the OpenAI Chat Completions API, so the same backend drives OpenAI, Google Gemini's OpenAI-compatible endpoint, a local Ollama, vLLM, LocalAI, and similar servers. The endpoint is configured through the URL: the host is required (the planner is not tied to a fixed provider) and locates the endpoint, whose path defaults to `/v1`, with `insecure=true` selecting plain HTTP. The `model` query parameter is required (there is no universal default across services). By default the backend requires `cred.PlannerAPIKey` (`planner.api-key`) and sends it as a bearer token. `keyless=true` explicitly selects an unauthenticated endpoint; a missing or empty key is otherwise a startup error.
 
 - The host is required, so a hostless or mistyped URL (e.g. the typo `openai-chat-completions:///host/v1` with three slashes, which parses to an empty host) is rejected rather than silently defaulting to some provider.
-- Each enabled tool's scheme is offered to the model as a function name, so the schemes must satisfy the OpenAI function-name rules (letters, digits, `_`, `-`, up to 64 characters). A tool whose scheme uses `+` or `.` is rejected when the planner is opened, rather than making every completion request fail.
-- On each message the planner makes one Chat Completions request, offering the enabled operational tools (from the tool set passed to `Open`) plus a built-in `reply` function. Each tool is offered as one function named for its scheme, with a flat input schema built from the tool's descriptor — its typed arguments and their required fields — mirroring the Model Context Protocol.
-- The model's response maps to plan steps: assistant prose and each `reply` call become `reply://` steps, and each operational tool call becomes a step invoking that tool by its `<scheme>://` URL.
+- On each message the planner makes one Chat Completions request, offering every tool in the catalog as a function named for the tool and carrying the tool's own input schema. The catalog already includes `reply`, so the planner needs no special case for it.
+- MCP places no restriction on a tool's input schema beyond it being JSON Schema, but the completion endpoints accept only a subset and disagree about which — Gemini's OpenAI-compatible endpoint rejects `additionalProperties`, and several reject `$ref`, `oneOf`, `allOf`, and `not`. Each schema is therefore **downgraded** before it is offered (`schema.go`): local `$ref`s are inlined, a single-branch `oneOf`/`anyOf` (how a nullable value is usually spelled) is collapsed, a single-valued `const` becomes a one-entry `enum`, and unsupported keywords are dropped. Downgrading is lossy on purpose — a dropped keyword only widens what the model may send, and the server validates the call anyway.
+- Downgrading is per tool, not per request. A tool whose name an endpoint cannot accept as a function name, or whose schema cannot be downgraded at all (an unresolvable `$ref`), is **skipped with a warning**; one bad tool from an external server must not make every request fail.
+- The model's response maps to plan steps: assistant prose and each `reply` call become `reply` steps, and each other tool call becomes a step invoking that tool. A call naming a function that was not offered is an error; argument *values* are not checked here, because the tool's schema is the server's to enforce and it reports a violation as a tool error the requester can see.
 - The exchange is single-shot — tool results are not fed back to the model — and the planner keeps no per-conversation history yet.
 
 A typical exchange:
@@ -463,7 +442,7 @@ bot>  pong
 
 1. Create a sub-package under `planner/` named after the backend (e.g. `planner/openaichatcompletions`, `planner/anthropic`).
 2. Define a `Planner` type implementing the `planner.Planner` interface:
-   - `Plan` turns one inbound message into steps; express replies and clarifying questions as steps invoking the `reply://` tool with the text in `Arguments["text"]` (the executor injects the target conversation). Keep any per-conversation context keyed by the `(ConnectionID, ConversationID)` pair — never by `ConversationID` alone, which collides across chat connections — and make the planner safe for concurrent use.
+   - `Plan` turns one inbound message into steps; express replies and clarifying questions as steps invoking the `reply` tool with the text in `Arguments["text"]` (the executor supplies the target conversation on the context). Keep any per-conversation context keyed by the `(ConnectionID, ConversationID)` pair — never by `ConversationID` alone, which collides across chat connections — and make the planner safe for concurrent use.
    - `Close` releases connections or other resources.
 3. Provide an `Open` function taking `context.Context` plus backend-specific parameters and returning `(*Planner, error)`. Resolve authentication from `cred.PlannerAPIKey` when needed; never accept credential values as parameters or URL elements.
 4. Export the scheme and an opener so callers can wire the backend into a `planner.Registry` (backends never self-register via `init()`):

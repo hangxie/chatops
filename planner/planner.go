@@ -21,28 +21,44 @@
 // endpoint it talks to (empty for providers with a well-known API
 // endpoint), and query parameters carry further configuration such as
 // the model (e.g. "openai-chat-completions://api.openai.com/v1?model=gpt-5",
-// "anthropic://?model=claude-fable-5"). The tools argument is the set
-// of operational tools the caller has enabled, passed through to the
-// backend so an LLM-backed planner can offer them to the model (see
-// Registry.Open); a nil set is treated as empty.
+// "anthropic://?model=claude-fable-5"). The tools argument is the live
+// catalog of Model Context Protocol tools the caller has enabled, passed
+// through to the backend so an LLM-backed planner can offer them to the
+// model (see Registry.Open); a nil source is treated as empty.
 //
 // Credential values are never part of the URL; the selected backend resolves
 // the single predefined planner API key from the cred.Store passed to Open.
 //
-// A plan is a sequence of tool invocations, each naming the tool by
-// the URL it is opened from (see the tool package). Saying something
-// back to the requester is itself a tool step: the tool/reply tool
-// posts text into the conversation the message came from, so a
-// clarifying question and an operational action have the same shape —
-// mirroring how LLM tool-use APIs treat text output and tool calls as
-// peers in one turn.
+// A plan is a sequence of tool invocations, each naming a tool from
+// the catalog the planner was opened with. Saying something back to
+// the requester is itself a tool step: the reply tool posts text into
+// the conversation the message came from, so a clarifying question and
+// an operational action have the same shape — mirroring how LLM
+// tool-use APIs treat text output and tool calls as peers in one turn.
 package planner
 
 import (
 	"context"
 
-	"github.com/hangxie/chatops/tool"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// ToolSource is the live catalog of tools a planner may offer the model.
+//
+// It is live rather than a snapshot: a server may report a changed tool list
+// at any time, so a planner rebuilds its offer from the source instead of
+// freezing it when it was opened. Generation changes whenever the catalog
+// does, so a planner can cache what it derives from the catalog and rebuild
+// only when that value moves.
+//
+// Listing cannot fail. A source that cannot reach a server drops that
+// server's tools and says so through its own logs; failing the requester's
+// message because one of several servers is unwell would be the wrong
+// response, so the catalog is always readable and may simply be smaller.
+type ToolSource interface {
+	Tools(ctx context.Context) []*mcp.Tool
+	Generation() uint64
+}
 
 // Request is one inbound chat message for the planner to act on.
 type Request struct {
@@ -73,20 +89,18 @@ type Request struct {
 
 // Step is one tool invocation of a plan.
 type Step struct {
-	// Tool is the URL of the tool to invoke, e.g. "ping://" or
-	// "reply://". The caller resolves it to an opened tool.Tool
-	// (typically via a tool.Registry, or directly for tools like
-	// tool/reply that are bound to the chat connection). Resolution
-	// happens in the context of the request that produced the plan:
-	// in particular "reply://" resolves to the reply tool bound to
-	// the chat connection that request arrived on, which is what
-	// keeps replies on the right connection when conversation IDs
-	// collide across connections — steps carry no connection
-	// identity of their own.
+	// Tool names the tool to invoke, as it appears in the catalog the
+	// planner was opened with (e.g. "ping" or "reply"). The caller
+	// dispatches it in the context of the request that produced the plan:
+	// in particular the reply tool posts into the conversation that
+	// request arrived on, which is what keeps replies on the right
+	// connection when conversation IDs collide across connections —
+	// steps carry no connection identity of their own.
 	Tool string
 
-	// Call is the invocation to perform on the opened tool.
-	Call tool.Call
+	// Arguments is the tool's input, matching its model-facing schema.
+	// It may be nil for a tool that reads nothing.
+	Arguments map[string]any
 }
 
 // Plan is the planner's decision on one request: the steps to execute

@@ -9,10 +9,10 @@ import (
 	"github.com/hangxie/chatops/chat/telnet"
 	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/cred/jsonfile"
+	"github.com/hangxie/chatops/mcpserve"
 	"github.com/hangxie/chatops/planner"
 	planneropenaichat "github.com/hangxie/chatops/planner/openaichatcompletions"
 	plannerping "github.com/hangxie/chatops/planner/ping"
-	"github.com/hangxie/chatops/tool"
 	toolk8s "github.com/hangxie/chatops/tool/k8s"
 	toolping "github.com/hangxie/chatops/tool/ping"
 	toolstatus "github.com/hangxie/chatops/tool/status"
@@ -41,13 +41,13 @@ func Planner() *planner.Registry {
 	)
 }
 
-// Tool builds the registry of operational tools the binary knows about.
-func Tool() *tool.Registry {
-	return tool.NewRegistry(
-		tool.Backend{Scheme: toolping.Scheme, Opener: toolping.Opener, Descriptor: &toolping.Descriptor},
-		tool.Backend{Scheme: toolstatus.CheckScheme, Opener: toolstatus.CheckOpener, Descriptor: &toolstatus.CheckDescriptor},
-		tool.Backend{Scheme: toolstatus.ListScheme, Opener: toolstatus.ListOpener, Descriptor: &toolstatus.ListDescriptor},
-		tool.Backend{Scheme: toolk8s.ListScheme, Opener: toolk8s.ListOpener, Descriptor: &toolk8s.ListDescriptor},
-		tool.Backend{Scheme: toolk8s.GetScheme, Opener: toolk8s.GetOpener, Descriptor: &toolk8s.GetDescriptor},
+// Builtin builds the registry of built-in MCP tool groups the binary knows
+// about. Each group becomes its own MCP server, so any one of them can be
+// moved out of process without touching the others.
+func Builtin() *mcpserve.Registry {
+	return mcpserve.NewRegistry(
+		mcpserve.Group{Name: toolk8s.GroupName, Register: toolk8s.Register},
+		mcpserve.Group{Name: toolping.GroupName, Register: toolping.Register},
+		mcpserve.Group{Name: toolstatus.GroupName, Register: toolstatus.Register},
 	)
 }
