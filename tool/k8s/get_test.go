@@ -149,31 +149,47 @@ func Test_getTool_Invoke_formatError(t *testing.T) {
 func Test_notFound(t *testing.T) {
 	missing := apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "web-0")
 
+	namespaced := podMapping(t)
+	clusterScoped := &meta.RESTMapping{Scope: meta.RESTScopeRoot}
+
 	testCases := map[string]struct {
 		err       error
 		kind      string
 		name      string
 		namespace string
+		mapping   *meta.RESTMapping
 		want      string
 		user      bool
 	}{
 		"named namespace": {
-			err: missing, kind: "pod", name: "web-0", namespace: "web",
+			err: missing, kind: "pod", name: "web-0", namespace: "web", mapping: namespaced,
 			want: `k8s: no pod named "web-0" in namespace "web"`, user: true,
 		},
-		"default namespace": {
-			err: missing, kind: "pod", name: "web-0",
-			want: `k8s: no pod named "web-0" in the default namespace`, user: true,
+		// The lookup used the context's default, which is not necessarily
+		// the namespace literally called "default".
+		"context default": {
+			err: missing, kind: "pod", name: "web-0", mapping: namespaced,
+			want: `k8s: no pod named "web-0" in this context's default namespace`, user: true,
+		},
+		// A cluster-scoped type has no namespace, so naming one would be
+		// wrong even though the requester supplied it.
+		"cluster scoped": {
+			err: missing, kind: "node", name: "node-1", namespace: "web", mapping: clusterScoped,
+			want: `k8s: no node named "node-1"`, user: true,
+		},
+		"unknown scope": {
+			err: missing, kind: "pod", name: "web-0", namespace: "web",
+			want: `k8s: no pod named "web-0"`, user: true,
 		},
 		"other errors pass through": {
-			err: errors.New("dial tcp 10.1.2.3:6443: refused"), kind: "pod", name: "web-0",
+			err: errors.New("dial tcp 10.1.2.3:6443: refused"), kind: "pod", name: "web-0", mapping: namespaced,
 			want: "dial tcp 10.1.2.3:6443: refused",
 		},
 	}
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			got := notFound(tc.err, tc.kind, tc.name, tc.namespace)
+			got := notFound(tc.err, tc.kind, tc.name, tc.namespace, tc.mapping)
 			require.EqualError(t, got, tc.want)
 			// A mistyped name is the requester's to see; anything else is not.
 			require.Equal(t, tc.user, mcpserve.IsUserError(got))
@@ -187,7 +203,7 @@ func Test_notFound(t *testing.T) {
 func Test_get_tool_reports_a_missing_resource_plainly(t *testing.T) {
 	client := &fakeClient{
 		getFn: func(context.Context, string, string, string) (*unstructured.Unstructured, *meta.RESTMapping, error) {
-			return nil, nil, apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "web-0")
+			return nil, podMapping(t), apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "web-0")
 		},
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)

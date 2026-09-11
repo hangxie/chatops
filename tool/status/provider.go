@@ -59,13 +59,24 @@ type Checker struct {
 	// put in the snapshot: a snapshot is rendered into chat, and a transport
 	// failure names whatever stood between here and the provider — an egress
 	// proxy's address, for instance.
+	//
+	// It is set when a Checker is built for one server, never afterwards: a
+	// Checker is read by the goroutines running a concurrent check, so a
+	// field written after construction would be a race.
 	logger *slog.Logger
 }
 
-// SetLogger directs the reasons behind unknown results to logger. A Checker
-// without one discards them.
-func (c *Checker) SetLogger(logger *slog.Logger) {
-	c.logger = logger
+// withLogger returns a copy of c reporting to logger.
+//
+// A copy, because the default catalog is a package-level value shared by
+// every server built from it. Assigning to its field would make the last
+// server built the one every other server reports through, and would race
+// with the goroutines of any check already running. The copy shares the
+// provider table and the HTTP client behind it, both read-only.
+func (c *Checker) withLogger(logger *slog.Logger) *Checker {
+	copied := *c
+	copied.logger = logger
+	return &copied
 }
 
 func (c *Checker) log() *slog.Logger {

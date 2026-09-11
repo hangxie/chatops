@@ -257,7 +257,7 @@ func Test_checkProvider_keeps_the_reason_out_of_the_snapshot(t *testing.T) {
 	leaky := errors.New(`Get "https://status.example.test": proxyconnect tcp: dial tcp 10.9.9.9:3128: refused`)
 	checker, err := NewChecker([]Provider{fakeProvider{name: "github", err: leaky}})
 	require.NoError(t, err)
-	checker.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+	checker = checker.withLogger(slog.New(slog.NewTextHandler(&logs, nil)))
 
 	snapshots, err := checker.Check(context.Background(), "github")
 	require.NoError(t, err)
@@ -268,6 +268,25 @@ func Test_checkProvider_keeps_the_reason_out_of_the_snapshot(t *testing.T) {
 	require.NotContains(t, snapshots[0].Summary, "10.9.9.9")
 	require.Contains(t, logs.String(), "10.9.9.9")
 	require.Contains(t, logs.String(), "provider=github")
+}
+
+func Test_withLogger_copies_rather_than_mutating(t *testing.T) {
+	// The default catalog is package-level and shared by every server built
+	// from it, so directing one server's reasons somewhere must not move
+	// every other server's too — nor race with a check already running.
+	shared, err := NewChecker([]Provider{fakeProvider{name: "github"}})
+	require.NoError(t, err)
+
+	var first, second bytes.Buffer
+	a := shared.withLogger(slog.New(slog.NewTextHandler(&first, nil)))
+	b := shared.withLogger(slog.New(slog.NewTextHandler(&second, nil)))
+
+	require.NotSame(t, a, b)
+	require.NotSame(t, shared, a)
+	require.Nil(t, shared.logger, "building a server must not change the shared catalog")
+	require.NotSame(t, a.logger, b.logger)
+	// The provider table is shared, not copied.
+	require.Equal(t, shared.Names(), a.Names())
 }
 
 func Test_checkProvider_without_a_logger(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -33,9 +34,9 @@ func getResources(ctx context.Context, client resourceClient, args GetArgs) (*mc
 	objs := make([]*unstructured.Unstructured, 0, len(names))
 	events := make([][]eventInfo, 0, len(names))
 	for _, name := range names {
-		obj, _, err := client.get(ctx, kind, namespace, name)
+		obj, mapping, err := client.get(ctx, kind, namespace, name)
 		if err != nil {
-			return nil, nil, notFound(err, kind, name, namespace)
+			return nil, nil, notFound(err, kind, name, namespace, mapping)
 		}
 		redact(obj)
 		objs = append(objs, obj)
@@ -70,13 +71,21 @@ func splitNames(raw string) []string {
 // The error client-go raises carries the API server's own phrasing and, on
 // the way out, its address; the requester mistyped a name and needs to be
 // told that, not sent to check whether the cluster is up.
-func notFound(err error, kind, name, namespace string) error {
+//
+// Where it looked is only stated when it can be stated correctly. A
+// cluster-scoped type has no namespace, so naming one would be wrong even if
+// the requester supplied it; and a namespaced lookup with no namespace given
+// used the context's default, which is not necessarily the namespace called
+// "default". Without the mapping the scope is unknown, so nothing is claimed.
+func notFound(err error, kind, name, namespace string, mapping *meta.RESTMapping) error {
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
-	where := "the default namespace"
-	if namespace != "" {
-		where = fmt.Sprintf("namespace %q", namespace)
+	if mapping == nil || mapping.Scope.Name() != meta.RESTScopeNameNamespace {
+		return invalidCall("k8s: no %s named %q", kind, name)
 	}
-	return invalidCall("k8s: no %s named %q in %s", kind, name, where)
+	if namespace == "" {
+		return invalidCall("k8s: no %s named %q in this context's default namespace", kind, name)
+	}
+	return invalidCall("k8s: no %s named %q in namespace %q", kind, name, namespace)
 }

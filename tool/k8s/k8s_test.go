@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"path/filepath"
@@ -180,14 +181,35 @@ func Test_refusal_is_reported_as_a_refusal(t *testing.T) {
 	require.Contains(t, logs.String(), "kubernetes call refused")
 }
 
-func Test_curate_passes_cancellation_through(t *testing.T) {
-	var logs bytes.Buffer
-	// Shutting down with a call in flight is ordinary; it should not be
-	// logged as a failure on every restart.
-	err := curate(slog.New(slog.NewTextHandler(&logs, nil)), ListToolName, context.Canceled)
+func Test_curate_separates_cancellation_from_a_timeout(t *testing.T) {
+	// Whether the caller went away is decided by the context, not by the
+	// error: an http.Client timeout reports an error matching
+	// context.DeadlineExceeded that carries the address it was calling.
+	leakyTimeout := fmt.Errorf(`Get "https://10.1.2.3:6443/api": %w (Client.Timeout exceeded)`, context.DeadlineExceeded)
 
-	require.ErrorIs(t, err, context.Canceled)
-	require.Empty(t, logs.String())
+	t.Run("caller went away", func(t *testing.T) {
+		var logs bytes.Buffer
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := curate(cancelled, slog.New(slog.NewTextHandler(&logs, nil)), ListToolName, context.Canceled)
+
+		// Ordinary during shutdown, so not logged as a failure on every
+		// restart, and it says nothing beyond that.
+		require.EqualError(t, err, "k8s: call cancelled")
+		require.Empty(t, logs.String())
+	})
+
+	t.Run("timed out inside the call", func(t *testing.T) {
+		var logs bytes.Buffer
+
+		err := curate(context.Background(), slog.New(slog.NewTextHandler(&logs, nil)), ListToolName, leakyTimeout)
+
+		// An operational failure like any other: hidden and logged.
+		require.NotContains(t, err.Error(), "10.1.2.3")
+		require.Contains(t, err.Error(), "could not be reached")
+		require.Contains(t, logs.String(), "10.1.2.3")
+	})
 }
 
 func Test_invalidCall_preserves_the_wrapped_error(t *testing.T) {
@@ -200,7 +222,7 @@ func Test_invalidCall_preserves_the_wrapped_error(t *testing.T) {
 	require.Equal(t, "k8s: bad argument: underlying", marked.Error())
 
 	// And it is still recognised as relayable, so curate passes it through.
-	require.Equal(t, marked, curate(slog.New(slog.DiscardHandler), ListToolName, marked))
+	require.Equal(t, marked, curate(context.Background(), slog.New(slog.DiscardHandler), ListToolName, marked))
 }
 
 // Test_invalid_call_errors_reach_the_requester: the argument the caller got

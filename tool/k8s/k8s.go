@@ -110,14 +110,14 @@ func RegisterClient(s *mcp.Server, client resourceClient, logger *slog.Logger) e
 		Description: "List Kubernetes resources of one type in a namespace or across all namespaces (pods, deployments, CRDs, ...).",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args ListArgs) (*mcp.CallToolResult, any, error) {
 		result, out, err := listResources(ctx, client, args)
-		return result, out, curate(logger, ListToolName, err)
+		return result, out, curate(ctx, logger, ListToolName, err)
 	})
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        GetToolName,
 		Description: "Fetch specific Kubernetes resources by name as a describe-style brief, JSON, or YAML. Secret values are masked.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args GetArgs) (*mcp.CallToolResult, any, error) {
 		result, out, err := getResources(ctx, client, args)
-		return result, out, curate(logger, GetToolName, err)
+		return result, out, curate(ctx, logger, GetToolName, err)
 	})
 	return nil
 }
@@ -129,14 +129,14 @@ func RegisterClient(s *mcp.Server, client resourceClient, logger *slog.Logger) e
 // told the cluster might be unreachable, when the real answer is that this
 // bot may not read Secrets, sends someone to look in the wrong place. The
 // identity that was refused stays in the log.
-func curate(logger *slog.Logger, tool string, err error) error {
+func curate(ctx context.Context, logger *slog.Logger, tool string, err error) error {
 	if apierrors.IsForbidden(err) {
 		if logger != nil {
 			logger.Warn("kubernetes call refused", "group", GroupName, "tool", tool, "error", err.Error())
 		}
 		return invalidCall("k8s: not permitted to read that resource")
 	}
-	return mcpserve.Curate(logger, GroupName, tool, notice, err)
+	return mcpserve.Curate(ctx, logger, GroupName, tool, notice, err)
 }
 
 // textResult wraps rendered output as a tool result.

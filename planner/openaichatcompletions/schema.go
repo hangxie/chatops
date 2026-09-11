@@ -131,7 +131,6 @@ func convertSchema(node, root map[string]any, depth int) (map[string]any, error)
 		}
 		out = merged
 	}
-	ensureObjectProperties(out)
 	pruneRequired(out)
 	return out, nil
 }
@@ -139,12 +138,17 @@ func convertSchema(node, root map[string]any, depth int) (map[string]any, error)
 // ensureObjectProperties gives an object schema a properties map when it has
 // none.
 //
-// A tool that reads nothing is the common case: schema inference emits
+// It is applied to a tool's own schema and nowhere else. A tool that reads
+// nothing is the common case: schema inference emits
 // {"type":"object","additionalProperties":false} with no properties at all,
 // and dropping additionalProperties would otherwise leave a bare
-// {"type":"object"}. Some endpoints are particular about that, and a tool
-// that declares an empty object should be offered the same shape as one that
-// declares none.
+// {"type":"object"}, which some endpoints are particular about.
+//
+// Nested nodes are deliberately left alone. A map-typed field carries its
+// value schema in additionalProperties, which is dropped, so adding an empty
+// properties to what remains would say "an object with no fields" where the
+// tool meant "any object" — narrowing the schema rather than widening it,
+// which is the one thing downgrading must not do.
 func ensureObjectProperties(schema map[string]any) {
 	if schema["type"] != "object" {
 		return

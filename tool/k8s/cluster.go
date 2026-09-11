@@ -156,7 +156,9 @@ func (c *cluster) get(ctx context.Context, kind, namespace, name string) (*unstr
 	ns := c.namespaceFor(mapping, namespace)
 	obj, err := c.resourceInterface(mapping, ns, false).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("k8s: get %s/%s: %w", mapping.Resource.Resource, name, err)
+		// The mapping goes back even on failure: the caller needs to know
+		// whether the type is namespaced before it can say where it looked.
+		return nil, mapping, fmt.Errorf("k8s: get %s/%s: %w", mapping.Resource.Resource, name, err)
 	}
 	return obj, mapping, nil
 }

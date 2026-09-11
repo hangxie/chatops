@@ -465,13 +465,30 @@ func Test_downgradeSchema_always_gives_an_object_properties(t *testing.T) {
 	}
 }
 
-func Test_downgradeSchema_gives_nested_objects_properties(t *testing.T) {
+func Test_downgradeSchema_leaves_a_non_object_root_alone(t *testing.T) {
+	// MCP input schemas are objects, but nothing stops a server sending
+	// something else; it must not be handed a properties map that would make
+	// no sense for it.
+	got := downgraded(t, map[string]any{"type": "array", "items": map[string]any{"type": "string"}})
+
+	require.Equal(t, "array", got["type"])
+	require.NotContains(t, got, "properties")
+}
+
+func Test_downgradeSchema_leaves_nested_objects_alone(t *testing.T) {
+	// Only the tool's own schema is settled. A map-typed field carries its
+	// value schema in additionalProperties, which is dropped, so giving what
+	// remains an empty properties would say "an object with no fields" where
+	// the tool meant "any object" — narrowing rather than widening.
 	schema := map[string]any{"type": "object", "properties": map[string]any{
-		"filter": map[string]any{"type": "object"},
+		"labels": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
 	}}
 
-	props := downgraded(t, schema)["properties"].(map[string]any)
-	require.Equal(t, map[string]any{"type": "object", "properties": map[string]any{}}, props["filter"])
+	labels := downgraded(t, schema)["properties"].(map[string]any)["labels"].(map[string]any)
+
+	// Just the type: additionalProperties is gone, and nothing was invented
+	// in its place.
+	require.Equal(t, map[string]any{"type": "object"}, labels)
 }
 
 func Test_downgradeSchema_reports_a_bad_collapsed_branch(t *testing.T) {

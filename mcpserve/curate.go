@@ -42,18 +42,24 @@ func IsUserError(err error) bool {
 
 // Curate returns the error a tool handler should report.
 //
-// A UserError passes through unchanged, as does a cancellation, whose message
-// carries nothing. Anything else is logged with its detail and replaced by
-// notice, so the requester learns that the call failed without learning where
-// it failed. A nil logger discards the detail.
-func Curate(logger *slog.Logger, group, tool, notice string, err error) error {
+// A UserError passes through unchanged. A call that ended because the caller
+// went away is reported as cancelled — ordinary during shutdown, and not
+// worth logging as a fault on every restart. Everything else is logged with
+// its detail and replaced by notice, so the requester learns that the call
+// failed without learning where it failed. A nil logger discards the detail.
+//
+// Whether the caller went away is decided by ctx, not by the error. An
+// http.Client with a Timeout reports its own expiry as an error that matches
+// context.DeadlineExceeded, wrapped in a *url.Error carrying the address it
+// was calling — so trusting the error would relay exactly what this exists to
+// hide, for the most ordinary HTTP client setup there is. A deadline that
+// fired inside the call is an operational failure like any other.
+func Curate(ctx context.Context, logger *slog.Logger, group, tool, notice string, err error) error {
 	if err == nil || IsUserError(err) {
 		return err
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		// Shutting down with a call in flight is ordinary, not a fault, and
-		// the message says nothing worth hiding.
-		return err
+	if ctx.Err() != nil {
+		return fmt.Errorf("%s: call cancelled", group)
 	}
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
