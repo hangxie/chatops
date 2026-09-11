@@ -7,3 +7,9 @@ import "github.com/google/jsonschema-go/jsonschema"
 func MustSchemaForTest(schema *jsonschema.Schema, err error) *jsonschema.Schema {
 	return mustSchema(schema, err)
 }
+
+// MustResolveForTest exposes mustResolve for the same reason: resolving a
+// schema this package inferred never fails.
+func MustResolveForTest(resolved *jsonschema.Resolved, err error) *jsonschema.Resolved {
+	return mustResolve(resolved, err)
+}

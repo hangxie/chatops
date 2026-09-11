@@ -52,6 +52,15 @@ type Choice struct {
 // error.
 var argsSchema = mustSchema(jsonschema.For[Args](nil))
 
+// resolvedArgs validates a call against argsSchema.
+//
+// A tool served by an MCP server has its arguments checked against the
+// declared schema before the handler runs. This one is called directly by the
+// host, so nothing checks them unless it does: decoding alone accepts fields
+// the schema forbids and misses required ones, so a choice with a label and
+// no value would reach the chat backend despite being advertised as invalid.
+var resolvedArgs = mustResolve(argsSchema.Resolve(nil))
+
 // mustSchema returns the inferred schema, panicking on failure. Inference
 // runs on a type this package owns, so a failure is a programmer error.
 func mustSchema(schema *jsonschema.Schema, err error) *jsonschema.Schema {
@@ -59,6 +68,15 @@ func mustSchema(schema *jsonschema.Schema, err error) *jsonschema.Schema {
 		panic(fmt.Sprintf("reply: infer input schema: %v", err))
 	}
 	return schema
+}
+
+// mustResolve returns the resolved schema, panicking on failure. It resolves
+// a schema this package inferred, so a failure is a programmer error.
+func mustResolve(resolved *jsonschema.Resolved, err error) *jsonschema.Resolved {
+	if err != nil {
+		panic(fmt.Sprintf("reply: resolve input schema: %v", err))
+	}
+	return resolved
 }
 
 // Definition is the model-facing description of the reply tool, for
@@ -132,7 +150,8 @@ func (t *Tool) Handler(ctx context.Context, args map[string]any) (*mcp.CallToolR
 	return t.Invoke(ctx, decoded)
 }
 
-// decodeArgs converts a raw argument bag into Args.
+// decodeArgs validates a raw argument bag against the declared schema and
+// converts it into Args.
 func decodeArgs(args map[string]any) (Args, error) {
 	if len(args) == 0 {
 		return Args{}, nil
@@ -141,10 +160,15 @@ func decodeArgs(args map[string]any) (Args, error) {
 	if err != nil {
 		return Args{}, fmt.Errorf("reply: encode arguments: %w", err)
 	}
-	var decoded Args
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
+	// Validation reads the arguments as given, so it sees every field the
+	// caller sent rather than only the ones Args happens to name.
+	if err := resolvedArgs.Validate(args); err != nil {
 		return Args{}, fmt.Errorf("reply: invalid arguments: %w", err)
 	}
+	// The schema was inferred from Args and the arguments have just been
+	// checked against it, so they decode into it.
+	var decoded Args
+	_ = json.Unmarshal(encoded, &decoded)
 	return decoded, nil
 }
 

@@ -148,6 +148,80 @@ func Test_downgradeSchema_inlines_refs(t *testing.T) {
 	require.NotContains(t, got, "$defs")
 }
 
+func Test_downgradeSchema_resolves_any_local_pointer(t *testing.T) {
+	// "$defs" and "definitions" are where a generator usually puts a target,
+	// but any JSON Pointer into the document is as valid — and rejecting one
+	// costs the whole tool, since a schema that cannot be inlined cannot be
+	// offered.
+	testCases := map[string]struct {
+		schema map[string]any
+		want   map[string]any
+	}{
+		"sibling property": {
+			schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{"type": "string", "description": "the query"},
+					"also":  map[string]any{"$ref": "#/properties/query"},
+				},
+			},
+			want: map[string]any{"type": "string", "description": "the query"},
+		},
+		"nested path": {
+			schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"also": map[string]any{"$ref": "#/$defs/Outer/properties/inner"},
+				},
+				"$defs": map[string]any{"Outer": map[string]any{
+					"properties": map[string]any{"inner": map[string]any{"type": "integer"}},
+				}},
+			},
+			want: map[string]any{"type": "integer"},
+		},
+		"array index": {
+			schema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"also": map[string]any{"$ref": "#/$defs/Choice/anyOf/0"}},
+				"$defs": map[string]any{"Choice": map[string]any{
+					"anyOf": []any{map[string]any{"type": "boolean"}, map[string]any{"type": "null"}},
+				}},
+			},
+			want: map[string]any{"type": "boolean"},
+		},
+		"escaped tokens": {
+			schema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"also": map[string]any{"$ref": "#/$defs/a~1b~0c"}},
+				"$defs":      map[string]any{"a/b~c": map[string]any{"type": "number"}},
+			},
+			want: map[string]any{"type": "number"},
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			props := downgraded(t, tc.schema)["properties"].(map[string]any)
+			require.Equal(t, tc.want, props["also"])
+		})
+	}
+}
+
+func Test_downgradeSchema_resolves_the_document_root(t *testing.T) {
+	// "#" names the document itself, which is how a recursive schema refers
+	// back to its own top level.
+	schema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"child": map[string]any{"$ref": "#"}},
+	}
+
+	// It resolves rather than failing; the recursion is stopped by the depth
+	// bound, which widens.
+	got := downgraded(t, schema)
+	require.Equal(t, "object", got["type"])
+	require.Contains(t, got["properties"].(map[string]any), "child")
+}
+
 func Test_downgradeSchema_inlines_legacy_definitions(t *testing.T) {
 	schema := map[string]any{
 		"type":        "object",
@@ -226,6 +300,31 @@ func Test_downgradeSchema_rejects_unresolvable_refs(t *testing.T) {
 				"items": map[string]any{"$ref": "https://example.test/x"},
 			},
 		}},
+		"index past the end": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"a": map[string]any{"$ref": "#/$defs/Choice/anyOf/9"}},
+			"$defs":      map[string]any{"Choice": map[string]any{"anyOf": []any{map[string]any{"type": "boolean"}}}},
+		},
+		"negative index": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"a": map[string]any{"$ref": "#/$defs/Choice/anyOf/-1"}},
+			"$defs":      map[string]any{"Choice": map[string]any{"anyOf": []any{map[string]any{"type": "boolean"}}}},
+		},
+		"non-numeric index": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"a": map[string]any{"$ref": "#/$defs/Choice/anyOf/first"}},
+			"$defs":      map[string]any{"Choice": map[string]any{"anyOf": []any{map[string]any{"type": "boolean"}}}},
+		},
+		"path through a scalar": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"a": map[string]any{"$ref": "#/$defs/Name/nope"}},
+			"$defs":      map[string]any{"Name": "not-a-schema"},
+		},
+		"points at a scalar": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"a": map[string]any{"$ref": "#/$defs/Name"}},
+			"$defs":      map[string]any{"Name": "not-a-schema"},
+		},
 	}
 
 	for name, schema := range testCases {
@@ -314,6 +413,10 @@ func Test_downgradeSchema_reduces_type_lists(t *testing.T) {
 		"null-first":      {in: []any{"null", "integer"}, want: "integer"},
 		"only-null":       {in: []any{"null"}, want: nil},
 		"not-a-type":      {in: 42, want: nil},
+		// Two real types are a genuine alternative; picking one would say the
+		// tool rejects the other, so the keyword goes instead.
+		"two real types":   {in: []any{"string", "integer"}, want: nil},
+		"three real types": {in: []any{"string", "integer", "null"}, want: nil},
 	}
 
 	for name, tc := range testCases {

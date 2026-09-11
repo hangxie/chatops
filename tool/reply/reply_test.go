@@ -70,6 +70,12 @@ func Test_mustSchema_panics_on_failure(t *testing.T) {
 	})
 }
 
+func Test_mustResolve_panics_on_failure(t *testing.T) {
+	require.PanicsWithValue(t, "reply: resolve input schema: broken", func() {
+		reply.MustResolveForTest(nil, errors.New("broken"))
+	})
+}
+
 func Test_Handler(t *testing.T) {
 	conversation := "conv-1"
 
@@ -129,6 +135,29 @@ func Test_Handler(t *testing.T) {
 		},
 		"bad-argument-type": {
 			args:         map[string]any{"text": 42},
+			conversation: conversation,
+			errMsg:       "invalid arguments",
+		},
+		// The schema is the contract even though nothing between the host and
+		// this tool enforces it: a server-side tool would have had these
+		// rejected before the handler ran.
+		"choice missing value": {
+			args:         map[string]any{"text": "pick", "choices": []any{map[string]any{"label": "Yes"}}},
+			conversation: conversation,
+			errMsg:       "invalid arguments",
+		},
+		"choice missing label": {
+			args:         map[string]any{"text": "pick", "choices": []any{map[string]any{"value": "yes"}}},
+			conversation: conversation,
+			errMsg:       "invalid arguments",
+		},
+		"choice of the wrong type": {
+			args:         map[string]any{"text": "pick", "choices": []any{"yes"}},
+			conversation: conversation,
+			errMsg:       "invalid arguments",
+		},
+		"undeclared field": {
+			args:         map[string]any{"text": "hi", "conversation": "somewhere-else"},
 			conversation: conversation,
 			errMsg:       "invalid arguments",
 		},

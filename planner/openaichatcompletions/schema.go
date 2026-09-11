@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 // MCP places no restriction on a tool's input schema beyond it being JSON
@@ -259,9 +261,13 @@ func convertProperties(value any, root map[string]any, depth int) (map[string]an
 	return out, nil
 }
 
-// resolveRef follows a "$ref" into the document's "$defs" or "definitions".
-// Only local references resolve; an external one cannot be inlined and is
-// reported so the tool is dropped rather than offered with a broken schema.
+// resolveRef follows a local "$ref" to the schema it names.
+//
+// Any JSON Pointer into the document resolves, not just the "$defs" and
+// "definitions" sections a generator most often writes: "#/properties/query"
+// and deeper paths are as valid, and rejecting them costs the whole tool,
+// since a schema that cannot be inlined cannot be offered. An external
+// reference still cannot be inlined and is reported.
 func resolveRef(node, root map[string]any, depth int) (map[string]any, error) {
 	ref, ok := node["$ref"].(string)
 	if !ok {
@@ -272,22 +278,55 @@ func resolveRef(node, root map[string]any, depth int) (map[string]any, error) {
 		// costing the tool.
 		return map[string]any{}, nil
 	}
-	for _, section := range []string{"$defs", "definitions"} {
-		prefix := "#/" + section + "/"
-		if len(ref) <= len(prefix) || ref[:len(prefix)] != prefix {
-			continue
-		}
-		defs, ok := root[section].(map[string]any)
-		if !ok {
-			break
-		}
-		target, ok := defs[ref[len(prefix):]].(map[string]any)
-		if !ok {
-			break
-		}
-		return resolveRef(target, root, depth+1)
+	target, ok := resolvePointer(ref, root)
+	if !ok {
+		return nil, fmt.Errorf("cannot resolve schema reference %q", ref)
 	}
-	return nil, fmt.Errorf("cannot resolve schema reference %q", ref)
+	return resolveRef(target, root, depth+1)
+}
+
+// resolvePointer walks a local reference to the schema object it names.
+//
+// The reference must be a fragment ("#" for the document itself, "#/a/b" for
+// a path within it); anything else names another document and cannot be
+// inlined. Path segments are unescaped per RFC 6901, and a numeric segment
+// indexes an array, so a branch such as "#/anyOf/0" resolves too.
+func resolvePointer(ref string, root map[string]any) (map[string]any, bool) {
+	if ref == "#" {
+		return root, true
+	}
+	path, found := strings.CutPrefix(ref, "#/")
+	if !found {
+		return nil, false
+	}
+	var current any = root
+	for _, segment := range strings.Split(path, "/") {
+		token := unescapePointer(segment)
+		switch container := current.(type) {
+		case map[string]any:
+			next, present := container[token]
+			if !present {
+				return nil, false
+			}
+			current = next
+		case []any:
+			index, err := strconv.Atoi(token)
+			if err != nil || index < 0 || index >= len(container) {
+				return nil, false
+			}
+			current = container[index]
+		default:
+			return nil, false
+		}
+	}
+	schema, ok := current.(map[string]any)
+	return schema, ok
+}
+
+// unescapePointer decodes the two escapes RFC 6901 defines, in the order it
+// requires: "~1" is a "/" within a segment, and "~0" a literal "~".
+func unescapePointer(segment string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(segment, "~1", "/"), "~0", "~")
 }
 
 // soleBranch returns the single meaningful branch of a "oneOf", "anyOf", or
@@ -331,19 +370,28 @@ func mergeBranch(out, branch, root map[string]any, depth int) (map[string]any, e
 	return out, nil
 }
 
-// singleType reduces a "type" keyword to one name. JSON Schema allows a list
-// (["string","null"] for a nullable value); the endpoints want a single name,
-// and the non-null one carries the meaning.
+// singleType reduces a "type" keyword to one name, which is what the
+// endpoints accept.
+//
+// JSON Schema allows a list, and the common case is a nullable value
+// (["string","null"]), where the non-null entry carries the whole meaning. A
+// list with two real types is a genuine alternative, and picking one would
+// say the tool rejects the other — so the keyword is dropped instead, leaving
+// the type unconstrained. Narrowing is the one thing the downgrade must never
+// do, even when the wider answer says less.
 func singleType(value any) (string, bool) {
 	switch typed := value.(type) {
 	case string:
 		return typed, true
 	case []any:
+		var real []string
 		for _, item := range typed {
-			name, ok := item.(string)
-			if ok && name != "null" {
-				return name, true
+			if name, ok := item.(string); ok && name != "null" {
+				real = append(real, name)
 			}
+		}
+		if len(real) == 1 {
+			return real[0], true
 		}
 	}
 	return "", false
