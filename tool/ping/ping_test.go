@@ -9,13 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hangxie/chatops/internal/testutils"
+	"github.com/hangxie/chatops/mcpserve"
 )
 
 // newServer registers the ping group on a fresh server.
 func newServer(t *testing.T, opts url.Values) *mcp.Server {
 	t.Helper()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-	require.NoError(t, Register(srv, nil, opts))
+	require.NoError(t, Register(srv, mcpserve.Options{Query: opts}))
 	return srv
 }
 
@@ -32,7 +33,7 @@ func Test_Register_options(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-			err := Register(srv, nil, tc.opts)
+			err := Register(srv, mcpserve.Options{Query: tc.opts})
 			if tc.errMsg != "" {
 				require.ErrorContains(t, err, tc.errMsg)
 				return

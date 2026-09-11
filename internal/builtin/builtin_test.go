@@ -41,7 +41,7 @@ func Test_Servers(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			specs, err := builtin.Servers(tc.selectors, nil)
+			specs, err := builtin.Servers(tc.selectors, nil, nil)
 			require.NoError(t, err)
 			require.Len(t, specs, tc.wantServers)
 			// Built-in tool names are distinct across groups, so no group is
@@ -52,7 +52,7 @@ func Test_Servers(t *testing.T) {
 }
 
 func Test_Servers_each_group_is_its_own_server(t *testing.T) {
-	specs, err := builtin.Servers(nil, nil)
+	specs, err := builtin.Servers(nil, nil, nil)
 	require.NoError(t, err)
 
 	// One server per group is what makes a single group splittable out later
@@ -87,7 +87,7 @@ func Test_Servers_errors(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			specs, err := builtin.Servers(tc.selectors, nil)
+			specs, err := builtin.Servers(tc.selectors, nil, nil)
 			require.ErrorContains(t, err, tc.errMsg)
 			require.Nil(t, specs)
 		})

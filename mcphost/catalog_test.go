@@ -128,6 +128,32 @@ func Test_Allow_always_keeps_reply_callable(t *testing.T) {
 	require.True(t, called.b.Load())
 }
 
+func Test_Allow_warns_about_a_pattern_that_matches_nothing(t *testing.T) {
+	var logs bytes.Buffer
+	host := newHost(t, mcphost.Config{
+		Servers: []mcphost.ServerSpec{mcphost.InProcess("alpha", "", stubServer("alpha", "k8s-list"))},
+		// A typo passes the syntax check and quietly exposes nothing, which
+		// is the mistake validating early is supposed to catch.
+		Allow:  []string{"k8s-lst"},
+		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+
+	require.Empty(t, host.Names())
+	require.Contains(t, logs.String(), "tool pattern matched nothing")
+	require.Contains(t, logs.String(), "k8s-lst")
+}
+
+func Test_Allow_does_not_warn_when_every_pattern_matches(t *testing.T) {
+	var logs bytes.Buffer
+	newHost(t, mcphost.Config{
+		Servers: []mcphost.ServerSpec{mcphost.InProcess("alpha", "", stubServer("alpha", "k8s-list", "ping"))},
+		Allow:   []string{"k8s-*", "ping"},
+		Logger:  slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+
+	require.NotContains(t, logs.String(), "tool pattern matched nothing")
+}
+
 func Test_Allow_hides_tool_from_calls(t *testing.T) {
 	host := newHost(t, mcphost.Config{
 		Servers: []mcphost.ServerSpec{mcphost.InProcess("alpha", "", stubServer("alpha", "ping", "danger"))},

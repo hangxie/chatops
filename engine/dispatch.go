@@ -47,39 +47,56 @@ func (e *Engine) handle(ctx context.Context, msg chat.Message) error {
 	for i, step := range plan.Steps {
 		stepLog := log.With("step", i+1, "tool", step.Tool)
 		stepLog.Info("executing step")
-		text, invokeErr := e.invoke(ctx, stepLog, step)
+		text, failed, invokeErr := e.invoke(ctx, stepLog, step)
 		if invokeErr != nil {
 			return fmt.Errorf("engine: execute step %d (%q): %w", i+1, step.Tool, invokeErr)
 		}
 		if text == "" {
 			stepLog.Debug("step produced no output")
-			continue
-		}
-		if sendErr := e.chat.Send(ctx, chat.Message{ConversationID: msg.ConversationID, Text: text}); sendErr != nil {
+		} else if sendErr := e.chat.Send(ctx, chat.Message{ConversationID: msg.ConversationID, Text: text}); sendErr != nil {
 			return fmt.Errorf("engine: send result for step %d (%q): %w", i+1, step.Tool, sendErr)
+		} else {
+			stepLog.Info("result posted")
 		}
-		stepLog.Info("result posted")
+		if failed {
+			// A later step may well have assumed this one worked, so the rest
+			// of the plan is abandoned rather than run against a state that
+			// did not come about. The requester has already been told what
+			// the tool said.
+			stepLog.Warn("plan abandoned after a failed step", "remaining", len(plan.Steps)-i-1)
+			return nil
+		}
 	}
 	return nil
 }
 
-// invoke calls one tool through the host and renders its result for chat.
+// invoke calls one tool through the host and renders its result for chat. It
+// reports the text to post and whether the tool reported a failure.
 //
 // A tool reporting its own failure (MCP's IsError) is not an engine error:
 // the tool ran and said what went wrong, so its message is relayed to the
 // requester like any other output. Only a call that could not be made at all
 // — an unknown tool, an unreachable server — fails the step.
-func (e *Engine) invoke(ctx context.Context, log *slog.Logger, step planner.Step) (string, error) {
+//
+// A failure with nothing to say falls back to the generic notice. The SDK
+// always fills in content when a handler errors, so a built-in cannot produce
+// one, but an external server may send isError with no content at all — and
+// the requester must not be left in silence.
+func (e *Engine) invoke(ctx context.Context, log *slog.Logger, step planner.Step) (text string, failed bool, err error) {
 	result, err := e.tools.CallTool(ctx, step.Tool, step.Arguments)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	text := mcphost.Render(result)
+	text = mcphost.Render(result)
 	if isToolError(result) {
 		log.Warn("tool reported an error", "output", text)
+		if text == "" {
+			text = failureNotice
+		}
+		return text, true, nil
 	}
 	log.Debug("tool called", "has_output", text != "")
-	return text, nil
+	return text, false, nil
 }
 
 // isToolError reports whether a result carries a tool-reported failure.

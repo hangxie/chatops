@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hangxie/chatops/internal/testutils"
+	"github.com/hangxie/chatops/mcpserve"
 )
 
 // newSession serves the status tools backed by checker and connects a client
@@ -102,7 +103,7 @@ func Test_Register_options(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-			err := Register(srv, nil, tc.opts)
+			err := Register(srv, mcpserve.Options{Query: tc.opts})
 			if tc.errMsg != "" {
 				require.ErrorContains(t, err, tc.errMsg)
 				return
@@ -119,7 +120,7 @@ func Test_Register_rejects_nil_checker(t *testing.T) {
 
 func Test_Register_uses_default_catalog(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-	require.NoError(t, Register(srv, nil, nil))
+	require.NoError(t, Register(srv, mcpserve.Options{}))
 	session := testutils.MCPSession(t, srv)
 
 	require.Equal(t, []string{CheckToolName, ListToolName}, testutils.ToolNames(t, session))

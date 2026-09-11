@@ -42,10 +42,8 @@ import (
 const Version = "v0"
 
 // RegisterFunc adds one group's tools to s. Groups export one for wiring into
-// a Registry. opts carries the group's non-secret instance configuration and
-// is never nil; creds may be nil when no wired group needs credentials, and a
-// group that needs them must report an error.
-type RegisterFunc func(s *mcp.Server, creds cred.Store, opts url.Values) error
+// a Registry.
+type RegisterFunc func(s *mcp.Server, opts Options) error
 
 // Group pairs a group name with the function registering its tools, for
 // wiring into NewRegistry.
@@ -54,16 +52,24 @@ type Group struct {
 	Register RegisterFunc
 }
 
-// Options configures one built-in server.
+// Options configures one built-in server, and is what a group's RegisterFunc
+// receives. Query and Logger may be left nil by the caller; a RegisterFunc is
+// always given usable values.
 type Options struct {
-	// Query is the group's non-secret instance configuration. It may be nil.
+	// Query is the group's non-secret instance configuration.
 	Query url.Values
 
-	// Credentials is passed to the group's RegisterFunc. It may be nil.
+	// Credentials may be nil when no wired group needs credentials; a group
+	// that does need them must report an error.
 	Credentials cred.Store
 
-	// Logger receives a record when a tool panics. A nil Logger discards
-	// them; the panic is contained either way.
+	// Logger receives what must not reach a tool result.
+	//
+	// A tool result is shown to the requester, so anything a group learns
+	// that should not be — a kubeconfig path, an API server address, the
+	// identity an authorization check rejected — belongs here, with the
+	// result carrying a short curated message instead. Panics are reported
+	// here too.
 	Logger *slog.Logger
 }
 
@@ -123,13 +129,16 @@ func (r *Registry) Server(name string, opts Options) (*mcp.Server, error) {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	opts.Query = query
+	opts.Logger = logger
 	srv := mcp.NewServer(&mcp.Implementation{Name: "chatops-" + name, Version: Version}, nil)
-	// Contain a panicking tool before anything else sees the request, so one
-	// misbehaving tool cannot take the process down with it.
-	srv.AddReceivingMiddleware(RecoverMiddleware(name, logger))
-	if err := register(srv, opts.Credentials, query); err != nil {
+	if err := register(srv, opts); err != nil {
 		return nil, fmt.Errorf("mcpserve: build built-in group %q: %w", name, err)
 	}
+	// Added last so it is outermost: the SDK wraps each middleware around
+	// what is already there, so registering the guard after the group means
+	// it contains anything the group installed as well as its handlers.
+	srv.AddReceivingMiddleware(RecoverMiddleware(name, logger))
 	return srv, nil
 }
 

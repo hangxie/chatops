@@ -29,13 +29,28 @@ package k8s
 
 import (
 	"context"
-	"net/url"
+	"errors"
+	"fmt"
+	"log/slog"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/mcpserve"
 )
+
+// invalidCallError marks a failure caused by the call itself — a missing or
+// unusable argument — whose message is safe to show the requester and is the
+// whole point of reporting it to them.
+type invalidCallError struct{ err error }
+
+func (e invalidCallError) Error() string { return e.err.Error() }
+
+func (e invalidCallError) Unwrap() error { return e.err }
+
+// invalidCall marks an error as safe to relay to the requester.
+func invalidCall(format string, args ...any) error {
+	return invalidCallError{err: fmt.Errorf(format, args...)}
+}
 
 // GroupName is the built-in group this package registers into.
 const GroupName = "k8s"
@@ -77,32 +92,59 @@ type GetArgs struct {
 // loaded on first use, so a host without one — or with a broken one — still
 // starts and simply reports the problem when a kubernetes tool is called. See
 // lazyCluster.
-func Register(s *mcp.Server, _ cred.Store, opts url.Values) error {
-	if err := mcpserve.CheckOptions(GroupName, opts, optionContext, optionKubeconfig); err != nil {
+func Register(s *mcp.Server, opts mcpserve.Options) error {
+	if err := mcpserve.CheckOptions(GroupName, opts.Query, optionContext, optionKubeconfig); err != nil {
 		return err
 	}
 	return RegisterClient(s, newLazyCluster(clusterConfig{
-		kubeconfig: opts.Get(optionKubeconfig),
-		context:    opts.Get(optionContext),
-	}))
+		kubeconfig: opts.Query.Get(optionKubeconfig),
+		context:    opts.Query.Get(optionContext),
+	}), opts.Logger)
 }
 
 // RegisterClient adds the kubernetes tools to s backed by client, for
-// explicit wiring and tests.
-func RegisterClient(s *mcp.Server, client resourceClient) error {
+// explicit wiring and tests. A nil logger discards the operational detail the
+// tools keep out of their results.
+func RegisterClient(s *mcp.Server, client resourceClient, logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        ListToolName,
 		Description: "List Kubernetes resources of one type in a namespace or across all namespaces (pods, deployments, CRDs, ...).",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args ListArgs) (*mcp.CallToolResult, any, error) {
-		return listResources(ctx, client, args)
+		result, out, err := listResources(ctx, client, args)
+		return result, out, curate(logger, ListToolName, err)
 	})
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        GetToolName,
 		Description: "Fetch specific Kubernetes resources by name as a describe-style brief, JSON, or YAML. Secret values are masked.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args GetArgs) (*mcp.CallToolResult, any, error) {
-		return getResources(ctx, client, args)
+		result, out, err := getResources(ctx, client, args)
+		return result, out, curate(logger, GetToolName, err)
 	})
 	return nil
+}
+
+// curate keeps cluster-side failures out of the requester's view.
+//
+// A handler's error becomes the text of a tool result, and a tool result is
+// relayed into chat. Errors this group raises about the call itself are safe
+// to show and pass through; everything reaching it from client-go or from
+// loading a kubeconfig is not — those carry kubeconfig paths, API server
+// addresses, and the identity an authorization check rejected. Those are
+// logged and replaced with a short message that says what failed without
+// saying where.
+func curate(logger *slog.Logger, tool string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var invalid invalidCallError
+	if errors.As(err, &invalid) {
+		return err
+	}
+	logger.Error("kubernetes call failed", "group", GroupName, "tool", tool, "error", err.Error())
+	return errors.New("k8s: the cluster could not be reached or the request was rejected; see the server log")
 }
 
 // textResult wraps rendered output as a tool result.

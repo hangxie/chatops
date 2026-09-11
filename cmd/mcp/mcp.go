@@ -11,6 +11,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -53,7 +55,14 @@ func (c *ServeCmd) Run(ctx context.Context) (err error) {
 		}()
 	}
 
-	srv, err := registry.Builtin().Server(name, mcpserve.Options{Query: query, Credentials: credentials})
+	// Stdout carries the protocol, so everything the group reports — a
+	// panic, a failure it keeps out of a tool result — goes to stderr.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	srv, err := registry.Builtin().Server(name, mcpserve.Options{
+		Query:       query,
+		Credentials: credentials,
+		Logger:      logger,
+	})
 	if err != nil {
 		return err
 	}

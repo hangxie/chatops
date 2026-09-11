@@ -279,7 +279,9 @@ Points worth knowing:
 - **The catalog is live.** A server that reports `tools/list_changed` refreshes the session's cache and bumps `Host.Generation()`, so a planner caching function definitions against that value picks the change up without being reopened.
 - **Listing cannot fail.** A server that cannot be listed contributes nothing and says so in the logs; failing the requester's message because one of several servers is unwell would be the wrong response, so `Tools` returns what is available and may simply return less.
 - **Names are qualified and sanitized.** A server's `Alias` prefixes its tools (`github-search_repos`); an empty alias leaves them under their own names, which is what the built-in groups use because their names are already distinct. Names are coerced into the character set LLM tool-use APIs accept and capped at 64 characters, with a hash suffix if one has to be shortened. A name claimed twice is offered once, and the shadowed tool is reported.
-- **Timeouts are hard bounds.** `Client.Connect` and a pending `tools/list` do not honour context cancellation on a transport whose peer has gone quiet, so the host bounds both itself (`ConnectTimeout`, `ListTimeout`). Without them one unresponsive server would hang startup, or wedge a refresh that has no caller to cancel it.
+- **Timeouts are hard bounds, and separate ones.** `Client.Connect` and a pending `tools/list` do not honour context cancellation on a transport whose peer has gone quiet, so the host bounds both itself (`ConnectTimeout`, `ListTimeout`). Without them one unresponsive server would hang startup, or wedge a refresh that has no caller to cancel it. The two budgets are independent: a slow handshake must not eat the time allowed for the listing that follows it, so bringing a server up can take up to the sum.
+- **A failed refresh keeps the tools already known.** Nothing retries a listing — the only thing that starts one is the server reporting another change — so clearing the cache on a single timeout would drop that server from the catalog for as long as it stayed quiet. The initial listing is the exception: there is no previous list to keep, so the session is refused outright.
+- **Startup is strict, running is lenient.** A server that cannot be connected or listed fails `New`, which suits built-in groups but is the opposite of the running rule; and servers connect serially. Both are noted in `TODO.md` to settle before external servers arrive.
 
 ### Host tools
 
@@ -302,14 +304,16 @@ Adding a tool is now a typed input struct and one `mcp.AddTool` call. There is n
     }
     ```
 
-3. Register the tool in the group's `RegisterFunc`, composing the complete human-readable answer as text content. Return an error for a bad argument or a failed operation — the SDK turns it into a tool result with `IsError` set, which is what lets the requester see what went wrong.
+3. Register the tool in the group's `RegisterFunc`, composing the complete human-readable answer as text content. Return an error for a bad argument — the SDK turns it into a tool result with `IsError` set, which is what lets the requester see what they got wrong.
+
+    **A tool result is relayed into chat, so treat it as output, not as a log line.** An error about the call itself is exactly what the requester needs. Anything the tool learns from the system behind it is not: a kubeconfig path, an API server address, the identity an authorization check rejected. Log those through `opts.Logger` and return a short curated message instead — `tool/k8s` does this in `curate`, marking its own argument errors with `invalidCall` and replacing everything reaching it from client-go. Panics are handled for you; they fail as protocol errors and never reach chat.
 
     ```go
     // GroupName is the built-in group this package registers into.
     const GroupName = "k8s"
 
-    func Register(s *mcp.Server, creds cred.Store, opts url.Values) error {
-        if err := mcpserve.CheckOptions(GroupName, opts, optionContext); err != nil {
+    func Register(s *mcp.Server, opts mcpserve.Options) error {
+        if err := mcpserve.CheckOptions(GroupName, opts.Query, optionContext); err != nil {
             return err
         }
         mcp.AddTool(s, &mcp.Tool{

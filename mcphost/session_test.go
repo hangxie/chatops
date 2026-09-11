@@ -104,21 +104,38 @@ func Test_session_refresh_records_listing_failure(t *testing.T) {
 	s := newTestSession(t, srv, slog.New(slog.NewTextHandler(&logs, nil)))
 	require.Len(t, s.snapshot(), 1)
 
-	// A server that stops answering contributes nothing rather than keeping
-	// stale tools in the catalog, and the host stays up.
+	// A failed refresh keeps the tools already known. Nothing retries — only
+	// the server reporting another change starts a refresh — so dropping them
+	// would remove this server from the catalog for as long as it stayed
+	// quiet, which for a stable tool set is forever.
 	failer.failing.Store(true)
 	s.refresh(context.Background())
 
-	require.Empty(t, s.snapshot())
+	require.Len(t, s.snapshot(), 1)
 	require.Error(t, s.listFailure())
 	require.Contains(t, logs.String(), "listing server tools failed")
 	require.Contains(t, logs.String(), "server=alpha")
 
-	// Recovery is automatic: the next refresh restores the tools.
+	// A later successful refresh replaces them.
 	failer.failing.Store(false)
 	s.refresh(context.Background())
 	require.Len(t, s.snapshot(), 1)
 	require.NoError(t, s.listFailure())
+}
+
+func Test_newSession_fails_rather_than_starting_with_no_tools(t *testing.T) {
+	// The initial listing is the exception: there is no previous list to
+	// keep, so a server that cannot describe itself is refused outright
+	// rather than joining the catalog empty.
+	srv := echoServer("alpha", "one")
+	failer := &listFailer{}
+	failer.failing.Store(true)
+	srv.AddReceivingMiddleware(failer.middleware())
+
+	s, err := newSession(context.Background(),
+		testSessionConfig(ServerSpec{Name: "alpha", Transport: serve(t, srv)}, slog.New(slog.DiscardHandler)))
+	require.Error(t, err)
+	require.Nil(t, s)
 }
 
 func Test_session_refresh_bounds_a_silent_server(t *testing.T) {

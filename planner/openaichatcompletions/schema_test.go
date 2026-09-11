@@ -348,9 +348,10 @@ func Test_downgradeSchema_rejects_unencodable(t *testing.T) {
 	require.ErrorContains(t, err, "encode schema")
 }
 
-func Test_downgradeSchema_bounds_recursion(t *testing.T) {
-	// A self-referential schema must not exhaust the stack; an external
-	// server's schema is untrusted input.
+func Test_downgradeSchema_widens_recursive_schemas(t *testing.T) {
+	// A self-referential schema — a tree-shaped filter, say — must not cost
+	// the whole tool. Past the depth bound the subschema is replaced by an
+	// unconstrained one, which only widens what the model may send.
 	schema := map[string]any{
 		"type":       "object",
 		"properties": map[string]any{"self": map[string]any{"$ref": "#/$defs/Node"}},
@@ -362,13 +363,14 @@ func Test_downgradeSchema_bounds_recursion(t *testing.T) {
 		},
 	}
 
-	_, err := downgradeSchema(schema)
-	require.ErrorIs(t, err, errSchemaTooDeep)
+	got := downgraded(t, schema)
+
+	require.Equal(t, "object", got["type"])
+	require.Contains(t, got["properties"].(map[string]any), "self")
+	require.True(t, json.Valid(mustJSON(got)))
 }
 
-func Test_downgradeSchema_bounds_reference_chains(t *testing.T) {
-	// A long chain of references resolves one hop at a time, so the bound
-	// applies to it as well as to nesting.
+func Test_downgradeSchema_widens_long_reference_chains(t *testing.T) {
 	defs := map[string]any{}
 	for i := range 20 {
 		defs[fmt.Sprintf("N%d", i)] = map[string]any{"$ref": fmt.Sprintf("#/$defs/N%d", i+1)}
@@ -380,8 +382,65 @@ func Test_downgradeSchema_bounds_reference_chains(t *testing.T) {
 		"$defs":      defs,
 	}
 
-	_, err := downgradeSchema(schema)
-	require.ErrorIs(t, err, errSchemaTooDeep)
+	got := downgraded(t, schema)
+
+	require.Contains(t, got["properties"].(map[string]any), "a")
+	require.True(t, json.Valid(mustJSON(got)))
+}
+
+func Test_downgradeSchema_collapses_a_lone_allOf_ref(t *testing.T) {
+	// Some generators wrap a single "$ref" in an "allOf"; without collapsing
+	// it the property would lose its type entirely.
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"target": map[string]any{"allOf": []any{map[string]any{"$ref": "#/$defs/Target"}}},
+		},
+		"$defs": map[string]any{"Target": map[string]any{"type": "string", "description": "where"}},
+	}
+
+	props := downgraded(t, schema)["properties"].(map[string]any)
+	require.Equal(t, map[string]any{"type": "string", "description": "where"}, props["target"])
+}
+
+func Test_downgradeSchema_prunes_dangling_required(t *testing.T) {
+	// A property whose subschema could not be converted is left out, and
+	// endpoints reject a "required" entry naming a property that is absent.
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"kept":    map[string]any{"type": "string"},
+			"dropped": "not-a-schema",
+		},
+		"required": []any{"kept", "dropped"},
+	}
+
+	got := downgraded(t, schema)
+
+	props := got["properties"].(map[string]any)
+	require.Contains(t, props, "kept")
+	require.NotContains(t, props, "dropped")
+	require.Equal(t, []any{"kept"}, got["required"])
+}
+
+func Test_downgradeSchema_drops_required_entirely_when_nothing_remains(t *testing.T) {
+	schema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"gone": "not-a-schema"},
+		"required":   []any{"gone"},
+	}
+
+	require.NotContains(t, downgraded(t, schema), "required")
+}
+
+func Test_downgradeSchema_keeps_an_empty_properties_object(t *testing.T) {
+	// A tool declaring an empty object schema and one declaring none should
+	// be offered the same shape; some endpoints are particular about it.
+	declared := downgraded(t, map[string]any{"type": "object", "properties": map[string]any{}})
+	absent := downgraded(t, nil)
+
+	require.Equal(t, absent, declared)
+	require.Equal(t, map[string]any{}, declared["properties"])
 }
 
 func Test_downgradeSchema_reports_a_bad_collapsed_branch(t *testing.T) {
@@ -398,15 +457,17 @@ func Test_downgradeSchema_reports_a_bad_collapsed_branch(t *testing.T) {
 	require.ErrorContains(t, err, "cannot resolve schema reference")
 }
 
-func Test_downgradeSchema_bounds_nesting(t *testing.T) {
-	// Deeply nested properties hit the same bound.
+func Test_downgradeSchema_widens_deep_nesting(t *testing.T) {
 	deepest := map[string]any{"type": "string"}
 	for range 20 {
 		deepest = map[string]any{"type": "object", "properties": map[string]any{"a": deepest}}
 	}
 
-	_, err := downgradeSchema(deepest)
-	require.ErrorIs(t, err, errSchemaTooDeep)
+	got := downgraded(t, deepest)
+
+	// The outer levels survive; only what sits past the bound is unconstrained.
+	require.Equal(t, "object", got["type"])
+	require.True(t, json.Valid(mustJSON(got)))
 }
 
 func Test_downgradeSchema_accepts_raw_json(t *testing.T) {

@@ -1,7 +1,10 @@
 package k8s
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"net/url"
 	"path/filepath"
 	"testing"
@@ -12,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/hangxie/chatops/internal/testutils"
+	"github.com/hangxie/chatops/mcpserve"
 )
 
 func Test_Register_options(t *testing.T) {
@@ -31,7 +35,7 @@ func Test_Register_options(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-			err := Register(srv, nil, tc.opts)
+			err := Register(srv, mcpserve.Options{Query: tc.opts})
 			if tc.errMsg != "" {
 				require.ErrorContains(t, err, tc.errMsg)
 				return
@@ -47,10 +51,10 @@ func Test_Register_options(t *testing.T) {
 // to Kubernetes — must still start; the problem surfaces on the call instead.
 func Test_Register_defers_the_kubeconfig(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-	require.NoError(t, Register(srv, nil, url.Values{
+	require.NoError(t, Register(srv, mcpserve.Options{Query: url.Values{
 		optionKubeconfig: {filepath.Join(t.TempDir(), "missing.yaml")},
 		optionContext:    {"nope"},
-	}))
+	}}))
 	session := testutils.MCPSession(t, srv)
 
 	require.Equal(t, []string{GetToolName, ListToolName}, testutils.ToolNames(t, session))
@@ -61,12 +65,15 @@ func Test_Register_defers_the_kubeconfig(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.True(t, result.IsError)
-	require.Contains(t, testutils.ResultText(t, result), "load kubeconfig")
+	// The kubeconfig path stays out of the requester's view.
+	text := testutils.ResultText(t, result)
+	require.Contains(t, text, "could not be reached")
+	require.NotContains(t, text, "missing.yaml")
 }
 
 func Test_RegisterClient_declares_tools(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-	require.NoError(t, RegisterClient(srv, &fakeClient{}))
+	require.NoError(t, RegisterClient(srv, &fakeClient{}, nil))
 	session := testutils.MCPSession(t, srv)
 
 	require.Equal(t, []string{GetToolName, ListToolName}, testutils.ToolNames(t, session))
@@ -84,7 +91,7 @@ func Test_tools_typed_arguments(t *testing.T) {
 		},
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-	require.NoError(t, RegisterClient(srv, client))
+	require.NoError(t, RegisterClient(srv, client, nil))
 	session := testutils.MCPSession(t, srv)
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -104,6 +111,83 @@ func Test_tools_typed_arguments(t *testing.T) {
 	require.Contains(t, testutils.ResultText(t, result), "all-namespaces")
 }
 
+// Test_cluster_failures_are_curated checks that what reaches the requester
+// says what failed without saying where. A tool result is relayed into chat,
+// and client-go errors carry API server addresses and the identity an
+// authorization check rejected.
+func Test_cluster_failures_are_curated(t *testing.T) {
+	var logs bytes.Buffer
+	leaky := errors.New(`Get "https://10.1.2.3:6443/api/v1/pods": pods is forbidden: User "system:serviceaccount:ops:chatops" cannot list resource`)
+	client := &fakeClient{
+		listFn: func(context.Context, string, string, bool) (*unstructured.UnstructuredList, *meta.RESTMapping, error) {
+			return nil, nil, leaky
+		},
+	}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
+	require.NoError(t, RegisterClient(srv, client, slog.New(slog.NewTextHandler(&logs, nil))))
+	session := testutils.MCPSession(t, srv)
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      ListToolName,
+		Arguments: map[string]any{"kind": "pods"},
+	})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+
+	text := testutils.ResultText(t, result)
+	require.NotContains(t, text, "10.1.2.3")
+	require.NotContains(t, text, "serviceaccount")
+	require.Contains(t, text, "could not be reached")
+
+	// The detail is not lost, it is logged.
+	require.Contains(t, logs.String(), "10.1.2.3")
+	require.Contains(t, logs.String(), "tool=k8s-list")
+}
+
+func Test_invalidCall_preserves_the_wrapped_error(t *testing.T) {
+	// Marking an error as safe to relay must not hide what it wraps, so a
+	// sentinel underneath still matches.
+	sentinel := errors.New("underlying")
+	marked := invalidCall("k8s: bad argument: %w", sentinel)
+
+	require.ErrorIs(t, marked, sentinel)
+	require.Equal(t, "k8s: bad argument: underlying", marked.Error())
+
+	// And it is still recognised as relayable, so curate passes it through.
+	require.Equal(t, marked, curate(slog.New(slog.DiscardHandler), ListToolName, marked))
+}
+
+// Test_invalid_call_errors_reach_the_requester: the argument the caller got
+// wrong is the whole point of reporting it, so those pass through uncurated.
+func Test_invalid_call_errors_reach_the_requester(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
+	require.NoError(t, RegisterClient(srv, &fakeClient{}, slog.New(slog.DiscardHandler)))
+	session := testutils.MCPSession(t, srv)
+
+	testCases := map[string]struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		"missing kind": {tool: ListToolName, args: map[string]any{"kind": " "}, want: "requires a kind"},
+		"missing name": {tool: GetToolName, args: map[string]any{"kind": "pod", "name": " "}, want: "requires a name"},
+		"bad output": {
+			tool: GetToolName,
+			args: map[string]any{"kind": "pod", "name": "api", "output": "toml"},
+			want: "unknown output",
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
+			require.NoError(t, err)
+			require.True(t, result.IsError)
+			require.Contains(t, testutils.ResultText(t, result), tc.want)
+		})
+	}
+}
+
 func Test_get_tool_returns_a_resource(t *testing.T) {
 	client := &fakeClient{
 		getFn: func(_ context.Context, _, _, name string) (*unstructured.Unstructured, *meta.RESTMapping, error) {
@@ -111,7 +195,7 @@ func Test_get_tool_returns_a_resource(t *testing.T) {
 		},
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-	require.NoError(t, RegisterClient(srv, client))
+	require.NoError(t, RegisterClient(srv, client, nil))
 	session := testutils.MCPSession(t, srv)
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -125,7 +209,7 @@ func Test_get_tool_returns_a_resource(t *testing.T) {
 
 func Test_get_tool_requires_kind_and_name(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "v0"}, nil)
-	require.NoError(t, RegisterClient(srv, &fakeClient{}))
+	require.NoError(t, RegisterClient(srv, &fakeClient{}, nil))
 	session := testutils.MCPSession(t, srv)
 
 	// Both are required properties, so the server rejects the call against

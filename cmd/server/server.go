@@ -67,7 +67,7 @@ func (c *Cmd) run(ctx context.Context) (err error) {
 	// Tool configuration is validated before any backend is opened, so an
 	// operator's typo fails immediately rather than after a chat connection
 	// has been established.
-	servers, err := builtin.Servers(c.Builtin, credentials)
+	servers, err := builtin.Servers(c.Builtin, credentials, logger)
 	if err != nil {
 		return fmt.Errorf("server: configure tools: %w", err)
 	}

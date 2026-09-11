@@ -11,11 +11,9 @@ package ping
 import (
 	"context"
 	"fmt"
-	"net/url"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/mcpserve"
 )
 
@@ -28,9 +26,9 @@ const ToolName = "ping"
 // Args is the tool's input schema: the ping tool reads nothing.
 type Args struct{}
 
-// Register adds the ping tool to s. It takes no options and ignores creds.
-func Register(s *mcp.Server, _ cred.Store, opts url.Values) error {
-	if err := mcpserve.CheckOptions(GroupName, opts); err != nil {
+// Register adds the ping tool to s. It takes no options and no credentials.
+func Register(s *mcp.Server, opts mcpserve.Options) error {
+	if err := mcpserve.CheckOptions(GroupName, opts.Query); err != nil {
 		return err
 	}
 	mcp.AddTool(s, &mcp.Tool{

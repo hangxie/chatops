@@ -4,6 +4,7 @@ package builtin
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/internal/registry"
@@ -18,7 +19,12 @@ import (
 // default options. Groups are separate servers so any one of them can later
 // be moved out of process on its own, and they are unaliased because the
 // built-in tool names are already distinct across groups.
-func Servers(selectors []string, creds cred.Store) ([]mcphost.ServerSpec, error) {
+//
+// logger is what the groups report to. It is not optional in spirit: a tool
+// result is relayed to the requester, so the detail a group must keep out of
+// one — a panic, a kubeconfig path, an API server address — has nowhere else
+// to go. A nil logger discards it.
+func Servers(selectors []string, creds cred.Store, logger *slog.Logger) ([]mcphost.ServerSpec, error) {
 	reg := registry.Builtin()
 	if len(selectors) == 0 {
 		selectors = reg.Names()
@@ -34,7 +40,7 @@ func Servers(selectors []string, creds cred.Store) ([]mcphost.ServerSpec, error)
 			return nil, fmt.Errorf("built-in group %q selected more than once", name)
 		}
 		seen[name] = true
-		srv, err := reg.Server(name, mcpserve.Options{Query: query, Credentials: creds})
+		srv, err := reg.Server(name, mcpserve.Options{Query: query, Credentials: creds, Logger: logger})
 		if err != nil {
 			return nil, err
 		}

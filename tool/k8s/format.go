@@ -30,7 +30,7 @@ func validateOutput(output string) error {
 	case outputBrief, outputJSON, outputYAML, "":
 		return nil
 	default:
-		return fmt.Errorf("k8s: unknown output %q; want brief, json, or yaml", output)
+		return invalidCall("k8s: unknown output %q; want brief, json, or yaml", output)
 	}
 }
 

@@ -16,12 +16,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/mcpserve"
 )
 
@@ -67,9 +65,9 @@ type CheckArgs struct {
 type ListArgs struct{}
 
 // Register adds the status tools to s, backed by the default public
-// service-status catalog. It takes no options and ignores creds.
-func Register(s *mcp.Server, _ cred.Store, opts url.Values) error {
-	if err := mcpserve.CheckOptions(GroupName, opts); err != nil {
+// service-status catalog. It takes no options and no credentials.
+func Register(s *mcp.Server, opts mcpserve.Options) error {
+	if err := mcpserve.CheckOptions(GroupName, opts.Query); err != nil {
 		return err
 	}
 	return RegisterChecker(s, sharedDefaultChecker)

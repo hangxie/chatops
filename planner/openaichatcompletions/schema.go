@@ -22,9 +22,6 @@ import (
 // schema from an external server cannot exhaust the stack.
 const maxSchemaDepth = 12
 
-// errSchemaTooDeep reports a schema nested past maxSchemaDepth.
-var errSchemaTooDeep = errors.New("schema nests too deeply")
-
 // keptKeywords are the schema keywords carried through the downgrade. Every
 // other keyword is dropped: either the endpoints reject it, or it only
 // constrains values the server will validate itself.
@@ -72,8 +69,12 @@ func downgradeSchema(raw any) (json.RawMessage, error) {
 // convertSchema downgrades one schema node. root is the document the node
 // came from, so "$ref" can be resolved against its "$defs".
 func convertSchema(node, root map[string]any, depth int) (map[string]any, error) {
+	// Past the bound the subschema is replaced by an unconstrained one rather
+	// than failing. A recursive $ref — a tree-shaped filter, say — would
+	// otherwise cost the whole tool, and dropping a constraint only widens
+	// what the model may send, which the server validates anyway.
 	if depth > maxSchemaDepth {
-		return nil, errSchemaTooDeep
+		return map[string]any{}, nil
 	}
 	resolved, err := resolveRef(node, root, depth)
 	if err != nil {
@@ -92,7 +93,10 @@ func convertSchema(node, root map[string]any, depth int) (map[string]any, error)
 			if err != nil {
 				return nil, err
 			}
-			if len(props) > 0 {
+			// Kept even when empty: a tool that declares an empty object
+			// schema and one that declares none should be offered the same
+			// shape, and some endpoints are particular about it.
+			if props != nil {
 				out[key] = props
 			}
 		case "items":
@@ -121,9 +125,41 @@ func convertSchema(node, root map[string]any, depth int) (map[string]any, error)
 		}
 	}
 	if branch, ok := soleBranch(node); ok {
-		return mergeBranch(out, branch, root, depth)
+		merged, err := mergeBranch(out, branch, root, depth)
+		if err != nil {
+			return nil, err
+		}
+		out = merged
 	}
+	pruneRequired(out)
 	return out, nil
+}
+
+// pruneRequired drops required names with no matching property.
+//
+// A property whose subschema could not be converted is left out, and a
+// "required" entry pointing at a name that is not in "properties" is rejected
+// by some endpoints — so the constraint goes when the thing it constrains
+// does.
+func pruneRequired(schema map[string]any) {
+	required, ok := schema["required"].([]any)
+	if !ok {
+		return
+	}
+	props, _ := schema["properties"].(map[string]any)
+	kept := make([]any, 0, len(required))
+	for _, name := range required {
+		if key, ok := name.(string); ok {
+			if _, declared := props[key]; declared {
+				kept = append(kept, name)
+			}
+		}
+	}
+	if len(kept) == 0 {
+		delete(schema, "required")
+		return
+	}
+	schema["required"] = kept
 }
 
 // convertProperties downgrades each declared property.
@@ -156,7 +192,9 @@ func resolveRef(node, root map[string]any, depth int) (map[string]any, error) {
 		return node, nil
 	}
 	if depth > maxSchemaDepth {
-		return nil, errSchemaTooDeep
+		// As in convertSchema: an unresolvably deep chain widens rather than
+		// costing the tool.
+		return map[string]any{}, nil
 	}
 	for _, section := range []string{"$defs", "definitions"} {
 		prefix := "#/" + section + "/"
@@ -176,12 +214,13 @@ func resolveRef(node, root map[string]any, depth int) (map[string]any, error) {
 	return nil, fmt.Errorf("cannot resolve schema reference %q", ref)
 }
 
-// soleBranch returns the single meaningful branch of a "oneOf"/"anyOf", which
-// is how a nullable or optional value is commonly spelled. Two or more real
-// branches cannot be downgraded without changing meaning, so they are dropped
-// entirely — widening the schema rather than misdescribing it.
+// soleBranch returns the single meaningful branch of a "oneOf", "anyOf", or
+// "allOf", which is how a nullable or optional value is commonly spelled and
+// how some generators wrap a lone "$ref". Two or more real branches cannot be
+// downgraded without changing meaning, so they are dropped entirely —
+// widening the schema rather than misdescribing it.
 func soleBranch(node map[string]any) (map[string]any, bool) {
-	for _, keyword := range []string{"oneOf", "anyOf"} {
+	for _, keyword := range []string{"oneOf", "anyOf", "allOf"} {
 		branches, ok := node[keyword].([]any)
 		if !ok {
 			continue

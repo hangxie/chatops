@@ -2,7 +2,6 @@ package k8s
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -18,11 +17,11 @@ func getResources(ctx context.Context, client resourceClient, args GetArgs) (*mc
 	}
 	kind := strings.TrimSpace(args.Kind)
 	if kind == "" {
-		return nil, nil, errors.New("k8s: get requires a kind")
+		return nil, nil, invalidCall("k8s: get requires a kind")
 	}
 	names := splitNames(args.Name)
 	if len(names) == 0 {
-		return nil, nil, errors.New("k8s: get requires a name")
+		return nil, nil, invalidCall("k8s: get requires a name")
 	}
 	output := strings.ToLower(strings.TrimSpace(args.Output))
 	if err := validateOutput(output); err != nil {

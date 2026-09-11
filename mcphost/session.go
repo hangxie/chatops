@@ -213,6 +213,17 @@ func (s *session) toolsChanged(ctx context.Context, onChange func()) {
 }
 
 // refresh re-fetches the server's tool list into the cache.
+//
+// A failed refresh keeps the tools already known rather than dropping them.
+// Nothing retries: the only thing that starts another refresh is the server
+// reporting its tools changed again, so clearing the cache on one timeout
+// would remove that server from the catalog for as long as it stayed quiet —
+// which, for a server whose tools are stable, is forever. The last known list
+// is the best information available, and a call against a tool that has
+// really gone fails at the server and is reported like any other failure.
+//
+// The initial listing is the exception: newSession has no previous list to
+// keep and refuses to bring the session up at all.
 func (s *session) refresh(ctx context.Context) {
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
@@ -223,8 +234,8 @@ func (s *session) refresh(ctx context.Context) {
 	defer s.mu.Unlock()
 	if err != nil {
 		s.listErr = err
-		s.tools = nil
-		s.logger.Error("listing server tools failed", "server", s.name, "error", err.Error())
+		s.logger.Error("listing server tools failed; keeping the tools already known",
+			"server", s.name, "tools", len(s.tools), "error", err.Error())
 		return
 	}
 	s.listErr = nil

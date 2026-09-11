@@ -26,6 +26,9 @@ type stubTool struct {
 	toolErr  error
 	panics   bool
 	rawError bool
+	// silentError reports a failure with no content, which the SDK's typed
+	// helper never produces but an external server may send.
+	silentError bool
 }
 
 // server builds an MCP server exposing the tool, wired the way a built-in
@@ -35,7 +38,6 @@ type stubTool struct {
 // typed helper would convert into a tool result.
 func (s *stubTool) server() *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: s.name, Version: "v0"}, nil)
-	srv.AddReceivingMiddleware(mcpserve.RecoverMiddleware(s.name, nil))
 	srv.AddTool(&mcp.Tool{
 		Name:        s.name,
 		Description: "stub",
@@ -47,7 +49,7 @@ func (s *stubTool) server() *mcp.Server {
 		}
 		s.mu.Lock()
 		s.calls = append(s.calls, args)
-		panics, text, toolErr, rawError := s.panics, s.text, s.toolErr, s.rawError
+		panics, text, toolErr, rawError, silent := s.panics, s.text, s.toolErr, s.rawError, s.silentError
 		s.mu.Unlock()
 
 		if panics {
@@ -55,6 +57,9 @@ func (s *stubTool) server() *mcp.Server {
 		}
 		if rawError {
 			return nil, toolErr
+		}
+		if silent {
+			return &mcp.CallToolResult{IsError: true}, nil
 		}
 		if toolErr != nil {
 			return &mcp.CallToolResult{
@@ -68,6 +73,8 @@ func (s *stubTool) server() *mcp.Server {
 		}
 		return result, nil
 	})
+	// Added last, as mcpserve does, so the guard is outermost.
+	srv.AddReceivingMiddleware(mcpserve.RecoverMiddleware(s.name, nil))
 	return srv
 }
 

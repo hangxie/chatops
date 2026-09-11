@@ -327,6 +327,52 @@ func Test_Run_survives_panicking_tool(t *testing.T) {
 	require.Equal(t, 1, p.closed)
 }
 
+// Test_Run_abandons_the_plan_after_a_failed_step: a later step may well have
+// assumed an earlier one worked, so the rest of the plan is dropped rather
+// than run against a state that never came about.
+func Test_Run_abandons_the_plan_after_a_failed_step(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
+	failing := &stubTool{name: "failing", toolErr: errors.New("cluster unreachable")}
+	after := &stubTool{name: "after", text: "should not run"}
+	p := &fakePlanner{plans: []planner.Plan{{Steps: []planner.Step{
+		{Tool: "failing"},
+		{Tool: "after"},
+	}}}}
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn, failing, after)})
+	require.NoError(t, err)
+
+	result := make(chan error, 1)
+	go func() { result <- e.Run(ctx) }()
+	require.Eventually(t, func() bool { return sentContains(conn, "cluster unreachable") }, time.Second, time.Millisecond)
+	cancel()
+	require.NoError(t, <-result)
+
+	require.Equal(t, 1, failing.callCount())
+	require.Zero(t, after.callCount(), "the plan continued past a failed step")
+	require.False(t, sentContains(conn, "should not run"))
+}
+
+// Test_Run_notifies_on_a_silent_tool_failure: an external server may report a
+// failure with no content at all, and the requester must not be left hearing
+// nothing.
+func Test_Run_notifies_on_a_silent_tool_failure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
+	silent := &stubTool{name: "silent", silentError: true}
+	p := planStep("silent", nil)
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn, silent)})
+	require.NoError(t, err)
+
+	result := make(chan error, 1)
+	go func() { result <- e.Run(ctx) }()
+	require.Eventually(t, func() bool { return sentContains(conn, failureNotice) }, time.Second, time.Millisecond)
+	cancel()
+	require.NoError(t, <-result)
+}
+
 func Test_Run_chat_closed_mid_burst_is_graceful(t *testing.T) {
 	// A burst keeps the run loop submitting while a worker is failing, so the
 	// stop is observed by whichever of Submit and Done gets there first. Both

@@ -9,7 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// RecoverMiddleware turns a panic in a tool handler into a tool error.
+// RecoverMiddleware contains a panic in a tool handler.
 //
 // The SDK runs each request on its own goroutine and does not recover panics,
 // so an unrecovered one takes down the whole process — which for an
@@ -17,12 +17,16 @@ import (
 // call and nothing more, so the panic is contained here, at the server, where
 // it protects the group whether it runs in process or out of it.
 //
-// The recovered value and its stack go to logger (nil discards them); the
-// caller is told only that the tool failed, so internal detail does not reach
-// chat.
-// It is applied to every built-in group by Registry.Server; it is exported so
-// a server assembled directly — in a test, or by a caller wiring its own —
-// gets the same containment.
+// The call fails as a protocol error rather than as a tool result. That is
+// deliberate: a tool result is relayed to the requester, and a panic has
+// nothing to tell them. The recovered value and its stack go to logger (nil
+// discards them), and the requester gets the caller's generic failure notice.
+//
+// It is applied to every built-in group by Registry.Server, added after the
+// group so that it is outermost: the SDK wraps each middleware around what is
+// already registered, so a guard added first would sit inside anything the
+// group installed. A server assembled directly should add it last for the
+// same reason.
 func RecoverMiddleware(group string, logger *slog.Logger) mcp.Middleware {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
@@ -34,13 +38,25 @@ func RecoverMiddleware(group string, logger *slog.Logger) mcp.Middleware {
 				if recovered == nil {
 					return
 				}
+				name := calledTool(req)
 				logger.Error("tool panicked",
-					"group", group, "method", method,
+					"group", group, "method", method, "tool", name,
 					"panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
 				result = nil
-				err = fmt.Errorf("%s: %s panicked", group, method)
+				err = fmt.Errorf("%s: tool %q panicked", group, name)
 			}()
 			return next(ctx, method, req)
 		}
 	}
+}
+
+// calledTool names the tool a request invokes. Every call the middleware
+// guards is a tools/call, so the method alone would say nothing useful about
+// which tool misbehaved.
+func calledTool(req mcp.Request) string {
+	call, ok := req.(*mcp.CallToolRequest)
+	if !ok || call.Params == nil {
+		return "unknown"
+	}
+	return call.Params.Name
 }

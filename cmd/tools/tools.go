@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -35,7 +37,10 @@ type listing struct {
 // planner would be offered — including the effect of --builtin and --tool,
 // which mean the same here as they do on the server.
 func (c Cmd) Run(ctx context.Context) (err error) {
-	servers, err := builtin.Servers(c.Builtin, nil)
+	// Listing never calls a tool, but a group may still report a problem
+	// while registering; stdout carries the listing, so that goes to stderr.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	servers, err := builtin.Servers(c.Builtin, nil, logger)
 	if err != nil {
 		return fmt.Errorf("tools: %w", err)
 	}

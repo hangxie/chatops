@@ -2,7 +2,6 @@ package k8s
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -18,7 +17,7 @@ func listResources(ctx context.Context, client resourceClient, args ListArgs) (*
 	}
 	kind := strings.TrimSpace(args.Kind)
 	if kind == "" {
-		return nil, nil, errors.New("k8s: list requires a kind")
+		return nil, nil, invalidCall("k8s: list requires a kind")
 	}
 	namespace := strings.TrimSpace(args.Namespace)
 

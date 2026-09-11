@@ -3,23 +3,23 @@ package mcpserve_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/url"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hangxie/chatops/cred"
 	"github.com/hangxie/chatops/internal/testutils"
 	"github.com/hangxie/chatops/mcpserve"
 )
 
 // registerEcho is a RegisterFunc adding one tool that reports the options the
 // group was built with, so tests can see configuration reach the group.
-func registerEcho(s *mcp.Server, _ cred.Store, opts url.Values) error {
+func registerEcho(s *mcp.Server, opts mcpserve.Options) error {
 	mcp.AddTool(s, &mcp.Tool{Name: "echo", Description: "Report the group options."},
 		func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: opts.Encode()}}}, nil, nil
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: opts.Query.Encode()}}}, nil, nil
 		})
 	return nil
 }
@@ -88,6 +88,25 @@ func Test_Server(t *testing.T) {
 	require.Equal(t, "context=prod", testutils.ResultText(t, result))
 }
 
+func Test_Server_gives_a_group_a_usable_logger(t *testing.T) {
+	// A group has nowhere else to put what must stay out of a tool result,
+	// so its logger is always usable even when the caller supplies none.
+	var got *slog.Logger
+	reg := mcpserve.NewRegistry(mcpserve.Group{Name: "probe", Register: func(_ *mcp.Server, opts mcpserve.Options) error {
+		got = opts.Logger
+		return nil
+	}})
+
+	_, err := reg.Server("probe", mcpserve.Options{})
+	require.NoError(t, err)
+	require.NotNil(t, got)
+
+	supplied := slog.New(slog.DiscardHandler)
+	_, err = reg.Server("probe", mcpserve.Options{Logger: supplied})
+	require.NoError(t, err)
+	require.Same(t, supplied, got)
+}
+
 func Test_Server_nil_query(t *testing.T) {
 	reg := mcpserve.NewRegistry(mcpserve.Group{Name: "echo", Register: registerEcho})
 
@@ -103,7 +122,7 @@ func Test_Server_nil_query(t *testing.T) {
 }
 
 func Test_Server_errors(t *testing.T) {
-	failing := func(*mcp.Server, cred.Store, url.Values) error { return errors.New("boom") }
+	failing := func(*mcp.Server, mcpserve.Options) error { return errors.New("boom") }
 	reg := mcpserve.NewRegistry(
 		mcpserve.Group{Name: "echo", Register: registerEcho},
 		mcpserve.Group{Name: "broken", Register: failing},

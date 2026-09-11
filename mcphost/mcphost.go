@@ -16,10 +16,10 @@
 // to what it offers the model.
 //
 //	host, err := mcphost.New(ctx, mcphost.Config{
-//		Servers:   []mcphost.ServerSpec{mcphost.InProcess("", srv)},
+//		Servers:   []mcphost.ServerSpec{mcphost.InProcess("k8s", "", srv)},
 //		HostTools: []mcphost.HostTool{replyTool},
 //	})
-//	tools, err := host.Tools(ctx)
+//	tools := host.Tools(ctx)
 //	result, err := host.CallTool(ctx, "k8s-get", map[string]any{"kind": "pod", "name": "web-0"})
 package mcphost
 
@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -161,6 +162,18 @@ type Host struct {
 
 // New connects every configured server and builds the initial catalog. ctx
 // bounds connecting only; the servers themselves live until Close.
+//
+// A server that cannot be connected, or cannot be listed, fails New. That is
+// right for the built-in groups — the operator asked for them and a failure
+// is a bug or a misconfiguration worth stopping for — but it is the opposite
+// of how a failure is treated once running, where a server that goes quiet
+// costs only its own tools. Serving external servers will want the lenient
+// rule at startup too, alongside reconnection; see TODO.md.
+//
+// Servers are connected one at a time, so the worst case is ConnectTimeout
+// plus ListTimeout per server. That is immaterial for in-process groups,
+// which connect instantly, and is the other thing to revisit when servers
+// live across a network.
 func New(ctx context.Context, cfg Config) (*Host, error) {
 	logger := cfg.Logger
 	if logger == nil {
@@ -208,7 +221,33 @@ func New(ctx context.Context, cfg Config) (*Host, error) {
 		h.mu.Unlock()
 	}
 	h.rebuild()
+	h.warnUnmatchedPatterns()
 	return h, nil
+}
+
+// warnUnmatchedPatterns reports allowlist patterns that matched no tool.
+//
+// A pattern is only checked for syntax when the host is built, so "k8s-lst"
+// is accepted and quietly exposes nothing — leaving a bot whose only tool is
+// reply. That is exactly the typo validating early is meant to catch, so it
+// is called out rather than left for someone to notice in chat.
+func (h *Host) warnUnmatchedPatterns() {
+	if len(h.allow) == 0 {
+		return
+	}
+	names := h.Names()
+	for _, pattern := range h.allow {
+		matched := false
+		for _, name := range names {
+			if ok, err := filepath.Match(pattern, name); err == nil && ok {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			h.logger.Warn("tool pattern matched nothing", "pattern", pattern, "tools", names)
+		}
+	}
 }
 
 // snapshotSessions returns the sessions connected so far.
