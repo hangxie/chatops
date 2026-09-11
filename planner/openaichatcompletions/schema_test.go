@@ -493,6 +493,20 @@ func Test_downgradeSchema_leaves_a_free_form_root_alone(t *testing.T) {
 	}
 }
 
+func Test_downgradeSchema_does_not_narrow_past_the_depth_bound(t *testing.T) {
+	// Conversion replaces what sits past the bound with an unconstrained
+	// schema; adding an empty properties map would narrow it straight back.
+	deep := map[string]any{"type": "object", "additionalProperties": true}
+	for range 20 {
+		deep = map[string]any{"anyOf": []any{deep, map[string]any{"type": "null"}}}
+	}
+
+	got := downgraded(t, deep)
+
+	require.Equal(t, "object", got["type"])
+	require.NotContains(t, got, "properties")
+}
+
 func Test_downgradeSchema_sees_through_a_wrapped_root(t *testing.T) {
 	// A root that is nothing but a "$ref", or a lone branch, describes the
 	// tool through its target. Reading additionalProperties off the wrapper
@@ -630,8 +644,10 @@ func Test_freeForm(t *testing.T) {
 		// answer is the one that changes least, and downgrading has already
 		// rejected such a schema before this is reached.
 		"unresolvable ref": {node: map[string]any{"$ref": "https://example.test/x"}, root: map[string]any{}},
-		// Past the bound the chain is no longer followed.
-		"deeper than the bound": {node: deep, root: map[string]any{}},
+		// Past the bound the chain is no longer followed, and the answer is
+		// the widening one: conversion has already replaced what sits there
+		// with an unconstrained schema.
+		"deeper than the bound": {node: deep, root: map[string]any{}, want: true},
 	}
 
 	for name, tc := range testCases {

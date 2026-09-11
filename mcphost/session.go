@@ -18,9 +18,13 @@ type session struct {
 	alias  string
 	logger *slog.Logger
 
-	// listTimeout bounds one tools/list. A server that accepts the request
-	// and never answers would otherwise block a refresh forever, and a
-	// refresh triggered by a server notification has no caller to cancel it.
+	// listTimeout bounds one tools/list.
+	//
+	// Waiting for a response honours its context, so this is not working
+	// around the SDK: it is there because a refresh triggered by a server
+	// notification arrives with no caller and so no deadline of its own, and
+	// would wait forever on a server that accepted the request and went
+	// quiet.
 	listTimeout time.Duration
 
 	// refreshMu serializes refreshes, so a slow listing cannot finish after a
@@ -108,10 +112,12 @@ var errAbandoned = errors.New("handshake abandoned")
 // handshakeTransport wraps a transport so the connection it opens can be
 // closed from outside the handshake.
 //
-// Client.Connect blocks writing the initialize request until the peer reads
-// it, and cancelling its context does not interrupt that write. Closing the
-// connection does, which is the only way to stop waiting on a peer that
-// accepted the connection and then went quiet.
+// The transport checks the context before writing and then performs a write
+// that cannot be interrupted, so Client.Connect ignores cancellation for as
+// long as that write is stuck — which is until the peer reads. An in-memory
+// transport has no buffer, so a peer that never appears blocks it forever.
+// Closing the connection is what unsticks the write; waiting for the answer
+// that follows honours the context on its own.
 type handshakeTransport struct {
 	inner mcp.Transport
 
@@ -153,9 +159,10 @@ func (t *handshakeTransport) abandon() error {
 //
 // The handshake runs on its own goroutine so ctx can bound the wait, and on
 // timeout the connection is closed so that goroutine finishes rather than
-// blocking on a peer forever. Without the close, both it and the goroutine
-// reaping it would leak for the life of the process — once per attempt, which
-// matters most to a caller that retries.
+// blocking on a peer forever. The close is what matters: a handshake stuck
+// writing to a peer that is not reading ignores cancellation, and without it
+// both that goroutine and the one reaping it would leak for the life of the
+// process — once per attempt, which compounds for a caller that retries.
 func connect(ctx context.Context, client *mcp.Client, transport mcp.Transport) (*mcp.ClientSession, error) {
 	handshake := &handshakeTransport{inner: transport}
 	// Buffered, so the handshake goroutine never blocks on a send nobody is

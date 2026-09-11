@@ -161,8 +161,10 @@ func Test_session_refresh_bounds_a_silent_server(t *testing.T) {
 	s := newTestSession(t, srv, slog.New(slog.NewTextHandler(&logs, nil)))
 	s.listTimeout = 100 * time.Millisecond
 
-	// A refresh triggered by a server notification has no caller to cancel
-	// it, so the listing must bound itself or the catalog would wedge.
+	// A refresh triggered by a server notification has no caller and so no
+	// deadline of its own, and would wait forever on a server that accepted
+	// the request and went quiet. Nothing closes the connection here: waiting
+	// for a response honours its context, so the deadline alone is enough.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

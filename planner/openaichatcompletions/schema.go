@@ -184,10 +184,16 @@ func ensureObjectProperties(schema, source map[string]any) {
 // otherwise look closed however free-form its target was.
 //
 // Any node along the way declaring a non-false additionalProperties settles
-// it, which is the widening answer and so the safe one.
+// it, which is the widening answer and so the safe one. Running out of depth
+// gives the same answer for the same reason: conversion has already replaced
+// whatever sits past the bound with an unconstrained schema, and declaring
+// that it accepts no fields would narrow the very thing that was widened.
 func freeForm(node, root map[string]any, depth int) bool {
-	if node == nil || depth > maxSchemaDepth {
+	if node == nil {
 		return false
+	}
+	if depth > maxSchemaDepth {
+		return true
 	}
 	if additional, present := node["additionalProperties"]; present && additional != false {
 		return true
