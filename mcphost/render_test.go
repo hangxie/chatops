@@ -103,6 +103,72 @@ func Test_Render(t *testing.T) {
 	}
 }
 
+func Test_Render_falls_back_to_structured_content(t *testing.T) {
+	// The SDK fills in content for a tool with structured output, so a
+	// built-in cannot produce this; a server is free to send structured
+	// content alone, and answering with silence would be worse than
+	// answering with JSON.
+	testCases := map[string]struct {
+		result *mcp.CallToolResult
+		want   string
+	}{
+		"object": {
+			result: &mcp.CallToolResult{StructuredContent: map[string]any{"count": 3}},
+			want:   "{\n  \"count\": 3\n}",
+		},
+		"array": {
+			result: &mcp.CallToolResult{StructuredContent: []any{"a", "b"}},
+			want:   "[\n  \"a\",\n  \"b\"\n]",
+		},
+		"scalar": {
+			result: &mcp.CallToolResult{StructuredContent: 42},
+			want:   "42",
+		},
+		"nothing at all": {
+			result: &mcp.CallToolResult{},
+			want:   "",
+		},
+		"explicit null": {
+			result: &mcp.CallToolResult{StructuredContent: nil},
+			want:   "",
+		},
+		"unserializable": {
+			result: &mcp.CallToolResult{StructuredContent: make(chan int)},
+			want:   "",
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, mcphost.Render(tc.result))
+		})
+	}
+}
+
+func Test_Render_prefers_content_over_structured(t *testing.T) {
+	// Text content is the tool's own rendering; the fallback is only for a
+	// result that offers nothing else.
+	result := &mcp.CallToolResult{
+		Content:           []mcp.Content{&mcp.TextContent{Text: "3 pods"}},
+		StructuredContent: map[string]any{"count": 3},
+	}
+
+	require.Equal(t, "3 pods", mcphost.Render(result))
+}
+
+func Test_Render_truncates_structured_content(t *testing.T) {
+	big := make([]any, 0, 4000)
+	for range 4000 {
+		big = append(big, "xxxxxxxxxxxxxxxx")
+	}
+	result := &mcp.CallToolResult{StructuredContent: big}
+
+	rendered := mcphost.Render(result)
+
+	require.LessOrEqual(t, len(rendered), 16<<10)
+	require.True(t, strings.HasSuffix(rendered, "… (truncated)"))
+}
+
 func Test_Render_truncates_oversized_output(t *testing.T) {
 	huge := strings.Repeat("x", 100<<10)
 	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: huge}}}

@@ -92,7 +92,10 @@ func Test_list_tool(t *testing.T) {
 	result := call(t, session, ListToolName, nil)
 	require.False(t, result.IsError)
 	require.Equal(t, "Supported services: github", testutils.ResultText(t, result))
-	require.Equal(t, []any{"github"}, result.StructuredContent)
+	// An object, not the bare array: the field was object-only in earlier
+	// protocol versions, and a client decoding into a struct or a map rejects
+	// an array under any of them.
+	require.Equal(t, map[string]any{"services": []any{"github"}}, result.StructuredContent)
 }
 
 func Test_Register_options(t *testing.T) {

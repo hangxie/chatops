@@ -1,6 +1,7 @@
 package mcphost
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -20,6 +21,11 @@ const truncationNotice = "\n… (truncated)"
 // Text content is the tool's own rendering and is relayed as-is. Content that
 // chat cannot show inline — images, audio, linked or embedded resources — is
 // named rather than dropped, so the requester can tell something came back.
+// A result carrying only machine-readable output falls back to that,
+// serialized: the SDK fills in content for a tool with structured output, but
+// a server is free to send structured content alone, and answering with
+// silence would be worse than answering with JSON.
+//
 // Empty output means the tool has already delivered its outcome itself (the
 // reply tool posts into chat, so its result carries nothing), and callers stay
 // silent rather than posting an empty message.
@@ -33,7 +39,26 @@ func Render(result *mcp.CallToolResult) string {
 			parts = append(parts, rendered)
 		}
 	}
+	if len(parts) == 0 {
+		return truncate(renderStructured(result.StructuredContent))
+	}
 	return truncate(strings.Join(parts, "\n"))
+}
+
+// renderStructured serializes machine-readable output for a human to read.
+//
+// It is indented because the point is that somebody has to read it, and it is
+// only reached when the tool gave them nothing else. A value that cannot be
+// serialized renders as nothing, which leaves the result as silent as it was.
+func renderStructured(structured any) string {
+	if structured == nil {
+		return ""
+	}
+	encoded, err := json.MarshalIndent(structured, "", "  ")
+	if err != nil || string(encoded) == "null" {
+		return ""
+	}
+	return string(encoded)
 }
 
 // renderContent renders one content block.

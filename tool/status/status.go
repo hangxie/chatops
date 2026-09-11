@@ -126,6 +126,13 @@ func checkStatus(ctx context.Context, checker *Checker, args CheckArgs) (*mcp.Ca
 }
 
 // listServices lists the checkable services.
+//
+// The structured result is an object wrapping the list rather than the bare
+// array. Recent protocol versions allow any JSON value there, but the field
+// was object-only in earlier ones and a client decoding into a struct or a
+// map rejects an array either way — and these tools are served to arbitrary
+// hosts through "chatops mcp serve", so the shape every reading accepts is
+// the one to send. It names what it holds, too.
 func listServices(ctx context.Context, checker *Checker) (*mcp.CallToolResult, any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, fmt.Errorf("status: %w", err)
@@ -133,7 +140,7 @@ func listServices(ctx context.Context, checker *Checker) (*mcp.CallToolResult, a
 	names := checker.Names()
 	return &mcp.CallToolResult{
 		Content:           []mcp.Content{&mcp.TextContent{Text: "Supported services: " + strings.Join(names, ", ")}},
-		StructuredContent: names,
+		StructuredContent: map[string]any{"services": names},
 	}, nil, nil
 }
 

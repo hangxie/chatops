@@ -373,6 +373,26 @@ func Test_Run_notifies_on_a_silent_tool_failure(t *testing.T) {
 	require.NoError(t, <-result)
 }
 
+// Test_Run_posts_a_structured_only_result: a server may answer with
+// machine-readable output and nothing else. Reading only the content would
+// leave the step looking like it produced nothing, and the requester would
+// hear silence.
+func Test_Run_posts_a_structured_only_result(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn := &fakeConn{received: []chat.Message{{ConversationID: "c1"}}}
+	counter := &stubTool{name: "counter", structured: map[string]any{"count": 3}}
+	p := planStep("counter", nil)
+	e, err := New(Config{Chat: conn, Planner: p, Tools: newHost(t, conn, counter)})
+	require.NoError(t, err)
+
+	result := make(chan error, 1)
+	go func() { result <- e.Run(ctx) }()
+	require.Eventually(t, func() bool { return sentContains(conn, "{\n  \"count\": 3\n}") }, time.Second, time.Millisecond)
+	cancel()
+	require.NoError(t, <-result)
+}
+
 func Test_Run_chat_closed_mid_burst_is_graceful(t *testing.T) {
 	// A burst keeps the run loop submitting while a worker is failing, so the
 	// stop is observed by whichever of Submit and Done gets there first. Both

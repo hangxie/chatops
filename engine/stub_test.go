@@ -29,6 +29,9 @@ type stubTool struct {
 	// silentError reports a failure with no content, which the SDK's typed
 	// helper never produces but an external server may send.
 	silentError bool
+	// structured returns machine-readable output and nothing else, which a
+	// server may also send.
+	structured any
 }
 
 // server builds an MCP server exposing the tool, wired the way a built-in
@@ -50,6 +53,7 @@ func (s *stubTool) server() *mcp.Server {
 		s.mu.Lock()
 		s.calls = append(s.calls, args)
 		panics, text, toolErr, rawError, silent := s.panics, s.text, s.toolErr, s.rawError, s.silentError
+		structured := s.structured
 		s.mu.Unlock()
 
 		if panics {
@@ -67,7 +71,7 @@ func (s *stubTool) server() *mcp.Server {
 				Content: []mcp.Content{&mcp.TextContent{Text: toolErr.Error()}},
 			}, nil
 		}
-		result := &mcp.CallToolResult{}
+		result := &mcp.CallToolResult{StructuredContent: structured}
 		if text != "" {
 			result.Content = []mcp.Content{&mcp.TextContent{Text: text}}
 		}
