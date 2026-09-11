@@ -162,10 +162,40 @@ func ensureObjectProperties(schema, source map[string]any) {
 	// that is not false, and that keyword has been dropped by now. Declaring
 	// an empty properties in its place would say the tool accepts no fields
 	// at all, which is the same narrowing this avoids for nested nodes.
-	if additional, present := source["additionalProperties"]; present && additional != false {
+	if freeForm(source, source, 0) {
 		return
 	}
 	schema["properties"] = map[string]any{}
+}
+
+// freeForm reports whether a schema accepts fields it does not name.
+//
+// It follows the indirection a schema may wrap its real definition in — a
+// "$ref" into the document's own definitions, or a lone branch — because the
+// answer has to come from the node that describes the tool rather than from
+// the wrapper around it. A schema whose root is nothing but a "$ref" would
+// otherwise look closed however free-form its target was.
+//
+// Any node along the way declaring a non-false additionalProperties settles
+// it, which is the widening answer and so the safe one.
+func freeForm(node, root map[string]any, depth int) bool {
+	if node == nil || depth > maxSchemaDepth {
+		return false
+	}
+	if additional, present := node["additionalProperties"]; present && additional != false {
+		return true
+	}
+	if _, wraps := node["$ref"]; wraps {
+		resolved, err := resolveRef(node, root, depth)
+		if err != nil {
+			return false
+		}
+		return freeForm(resolved, root, depth+1)
+	}
+	if branch, ok := soleBranch(node); ok {
+		return freeForm(branch, root, depth+1)
+	}
+	return false
 }
 
 // pruneRequired drops required names with no matching property.

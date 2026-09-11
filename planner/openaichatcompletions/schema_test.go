@@ -492,6 +492,91 @@ func Test_downgradeSchema_leaves_a_free_form_root_alone(t *testing.T) {
 	}
 }
 
+func Test_downgradeSchema_sees_through_a_wrapped_root(t *testing.T) {
+	// A root that is nothing but a "$ref", or a lone branch, describes the
+	// tool through its target. Reading additionalProperties off the wrapper
+	// would find nothing and call a free-form tool closed.
+	freeFormArgs := map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}
+	closedArgs := map[string]any{"type": "object", "additionalProperties": false}
+
+	testCases := map[string]struct {
+		in         any
+		wantClosed bool
+	}{
+		"ref to free-form": {
+			in: map[string]any{"$ref": "#/$defs/Args", "$defs": map[string]any{"Args": freeFormArgs}},
+		},
+		"ref to closed": {
+			in:         map[string]any{"$ref": "#/$defs/Args", "$defs": map[string]any{"Args": closedArgs}},
+			wantClosed: true,
+		},
+		"allOf around a ref to free-form": {
+			in: map[string]any{
+				"allOf": []any{map[string]any{"$ref": "#/$defs/Args"}},
+				"$defs": map[string]any{"Args": freeFormArgs},
+			},
+		},
+		"anyOf around free-form": {
+			in: map[string]any{"anyOf": []any{freeFormArgs, map[string]any{"type": "null"}}},
+		},
+		"chained refs to free-form": {
+			in: map[string]any{
+				"$ref": "#/$defs/Outer",
+				"$defs": map[string]any{
+					"Outer": map[string]any{"$ref": "#/$defs/Args"},
+					"Args":  freeFormArgs,
+				},
+			},
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			got := downgraded(t, tc.in)
+
+			require.Equal(t, "object", got["type"])
+			if tc.wantClosed {
+				require.Equal(t, map[string]any{}, got["properties"])
+				return
+			}
+			require.NotContains(t, got, "properties", "a free-form tool was narrowed to accepting no fields")
+		})
+	}
+}
+
+func Test_freeForm(t *testing.T) {
+	// Nested wrappers, deeper than the bound allows following.
+	deep := map[string]any{"type": "object", "additionalProperties": true}
+	for range 20 {
+		deep = map[string]any{"anyOf": []any{deep, map[string]any{"type": "null"}}}
+	}
+
+	testCases := map[string]struct {
+		node map[string]any
+		root map[string]any
+		want bool
+	}{
+		"nil node":            {node: nil, root: map[string]any{}},
+		"plain object":        {node: map[string]any{"type": "object"}, root: map[string]any{}},
+		"closed object":       {node: map[string]any{"additionalProperties": false}, root: map[string]any{}},
+		"open object":         {node: map[string]any{"additionalProperties": true}, root: map[string]any{}, want: true},
+		"typed values":        {node: map[string]any{"additionalProperties": map[string]any{"type": "string"}}, root: map[string]any{}, want: true},
+		"outer wins over ref": {node: map[string]any{"additionalProperties": true, "$ref": "#/$defs/Nope"}, root: map[string]any{}, want: true},
+		// An unresolvable reference says nothing either way; the closed
+		// answer is the one that changes least, and downgrading has already
+		// rejected such a schema before this is reached.
+		"unresolvable ref": {node: map[string]any{"$ref": "https://example.test/x"}, root: map[string]any{}},
+		// Past the bound the chain is no longer followed.
+		"deeper than the bound": {node: deep, root: map[string]any{}},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, freeForm(tc.node, tc.root, 0))
+		})
+	}
+}
+
 func Test_downgradeSchema_leaves_a_non_object_root_alone(t *testing.T) {
 	// MCP input schemas are objects, but nothing stops a server sending
 	// something else; it must not be handed a properties map that would make
