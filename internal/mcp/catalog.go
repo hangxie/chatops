@@ -118,8 +118,8 @@ func (c *Catalog) Lookup(name string) (Tool, bool) {
 	return c.tools[i].clone(), true
 }
 
-// buildCatalog skips and reports tools with unresolvable schemas or colliding names.
-func buildCatalog(listed map[string][]*mcpsdk.Tool) (*Catalog, []error) {
+// NewCatalog builds a catalog from tools listed per server ID, skipping and reporting unusable ones.
+func NewCatalog(listed map[string][]*mcpsdk.Tool) (*Catalog, []error) {
 	servers := make([]string, 0, len(listed))
 	for server := range listed {
 		servers = append(servers, server)
