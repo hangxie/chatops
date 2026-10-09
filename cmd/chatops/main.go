@@ -6,11 +6,13 @@ import (
 
 	"github.com/alecthomas/kong"
 
+	"github.com/hangxie/chatops/cmd/chatops/chat"
 	"github.com/hangxie/chatops/internal/command"
 	"github.com/hangxie/chatops/internal/version"
 )
 
 var cli struct {
+	Chat    chat.Cmd    `cmd:"" help:"Chat with the agent in the terminal (development harness)."`
 	Version version.Cmd `cmd:"" help:"Show build version."`
 }
 

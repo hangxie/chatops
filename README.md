@@ -2,7 +2,7 @@
 
 `chatops` connects a chat platform to an OpenAI-compatible language model and to tools served over the [Model Context Protocol](https://modelcontextprotocol.io/specification) (MCP). The model chooses which tools to call, ChatOps enforces authorization and approval, and the answer is posted back to the chat thread.
 
-This project is under early development: `chatops-mcp` serves the `ping` tool, and the `chatops` daemon currently provides only version reporting.
+This project is under early development: `chatops chat` runs the agent in a terminal against a configured model and MCP servers, and `chatops-mcp` serves the `ping` tool. Slack integration, authorization policy, and approvals are not implemented yet.
 
 ## Binaries
 
@@ -22,6 +22,83 @@ make build
 ```
 
 `make all` runs dependency, format, lint, test, and build steps.
+
+## Configuration
+
+`chatops` reads a single YAML file holding exactly one YAML document; a second document (after `---`) is an error rather than silently ignored. Unknown fields are rejected and every invalid field is reported at startup. Secrets never appear in the file: settings ending in `_env` name the environment variable that holds the secret, and a named variable that is unset or empty is an error. A bearer token or API key is only sent over `https`, or plain `http` to a loopback host (`localhost`, `127.0.0.0/8`, `::1`); any other `http` URL combined with `api_key_env` or `bearer_token_env` is rejected.
+
+```yaml
+llm:
+  base_url: http://localhost:8080/v1   # OpenAI-compatible endpoint
+  model: qwen3-0b6
+  # api_key_env: LLM_API_KEY           # omit for keyless local endpoints
+  disable_thinking: true
+
+mcp:
+  servers:
+    builtin:                           # server ID: lowercase letters, digits, "-"
+      transport: stdio
+      command: ./build/chatops-mcp
+      args: [serve, --tools, ping]
+      # env:                           # plain values, stored in this file
+      #   KUBECONFIG: /etc/chatops/kubeconfig
+      # secret_env:                    # child variable: daemon variable holding the value
+      #   VAULT_TOKEN: CHATOPS_VAULT_TOKEN
+    # monitoring:
+    #   transport: streamable-http
+    #   url: https://monitoring.example.internal/mcp
+    #   bearer_token_env: MONITORING_MCP_TOKEN
+
+agent:
+  max_iterations: 8
+  turn_timeout: 120s
+  tool_timeout: 30s
+  max_tool_result_bytes: 65536
+  history_turns: 20
+  history_ttl: 24h
+```
+
+| Setting | Default | Description |
+|---|---|---|
+| `llm.base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions` |
+| `llm.model` | (required) | Model name sent with each request |
+| `llm.api_key_env` | (none) | Environment variable holding the API key, sent as a bearer token; requires an `https` `base_url` unless the host is loopback |
+| `llm.disable_thinking` | `false` | Send `reasoning_effort: "none"` and `chat_template_kwargs: {"enable_thinking": false}`; leave off for endpoints that reject unknown fields |
+| `mcp.servers.<id>.transport` | (required) | `stdio` or `streamable-http` |
+| `mcp.servers.<id>.command`, `args` | | stdio only: the server process to launch |
+| `mcp.servers.<id>.env` | (none) | stdio only: extra environment variables; values are stored in the file, so never put secrets here |
+| `mcp.servers.<id>.secret_env` | (none) | stdio only: maps a variable for the server to the `chatops` environment variable holding its value, for secrets such as tokens; a name may not appear in both `env` and `secret_env` |
+| `mcp.servers.<id>.url`, `bearer_token_env` | | streamable-http only: endpoint and optional bearer token variable; a token requires an `https` URL unless the host is loopback |
+| `agent.max_iterations` | `8` | Maximum model calls per turn |
+| `agent.turn_timeout` | `120s` | Wall-clock limit for one turn; a turn that runs past it fails even if a late model or tool reply arrives |
+| `agent.tool_timeout` | `30s` | Limit for one tool call; a timed-out call is reported to the model, which may continue; must not exceed `turn_timeout` |
+| `agent.max_tool_result_bytes` | `65536` | Tool output beyond this is truncated before it reaches the model; a short truncation marker is appended on top of the limit |
+| `agent.history_turns` | `20` | Earlier turns sent as context |
+| `agent.history_ttl` | `24h` | Reserved for chat backends; the terminal harness ignores it |
+
+Each model-facing tool is named `<server>__<tool>`, for example `builtin__ping`. A stdio server inherits only `PATH` and `HOME` from `chatops`, plus its configured `env` and `secret_env`, so chat and model credentials never reach tool processes unless a `secret_env` entry names them. All servers must be reachable at startup.
+
+## Chat in the terminal
+
+`chatops chat` is a development harness: it runs the same agent loop a chat backend will use, with one conversation kept in memory. Type a message per line; `/quit`, `/exit`, or end of input stops it.
+
+```bash
+make build
+./build/chatops chat --config config.yaml
+```
+
+```text
+> is the builtin server reachable?
+Yes, the builtin server replied pong.
+>
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `-c`, `--config` | (required) | Path to the YAML config file |
+| `--log-level` | `warn` | Minimum level of logs written to stderr: `debug`, `info`, `warn`, or `error`; `info` shows each tool call |
+
+A failed turn (model unreachable, turn timeout) prints `error: ...` and the session continues; the failed turn is not added to history.
 
 ## Built-in MCP server
 
