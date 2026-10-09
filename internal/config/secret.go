@@ -5,10 +5,7 @@ import (
 	"os"
 )
 
-// Secret returns the value of the environment variable named by env. An
-// empty name means the secret is not configured and yields "". A named but
-// unset or empty variable is an error so a misconfigured deployment fails at
-// startup rather than sending unauthenticated requests.
+// Secret reads the variable named env: "" when env is empty, an error when the variable is unset or empty.
 func Secret(env string) (string, error) {
 	if env == "" {
 		return "", nil

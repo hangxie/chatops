@@ -9,9 +9,7 @@ import (
 
 var stdCaptureMutex sync.Mutex
 
-// CaptureStdoutStderr runs f and returns everything it wrote to os.Stdout
-// and os.Stderr. A mutex serializes captures so parallel tests do not
-// interleave output.
+// CaptureStdoutStderr returns what f wrote to stdout and stderr; captures are serialized.
 func CaptureStdoutStderr(f func()) (string, string) {
 	stdCaptureMutex.Lock()
 	defer stdCaptureMutex.Unlock()
