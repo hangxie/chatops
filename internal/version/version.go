@@ -11,9 +11,7 @@ var (
 	version string
 	// build time in ISO-8601 format
 	build string
-	// where the executable came from, can be:
-	// - "source" or "" for build from source
-	// - "github" for from github release
+	// "github" for release builds, "source" or "" for source builds
 	source string
 )
 
@@ -25,8 +23,7 @@ type Cmd struct {
 	Source    bool `short:"s" help:"Output source of the executable." default:"false"`
 }
 
-// String returns the semantic version, or "(devel)" for binaries built
-// without link-time metadata (e.g. go run).
+// String returns the semantic version, or "(devel)" without link-time metadata.
 func String() string {
 	if version == "" {
 		return "(devel)"

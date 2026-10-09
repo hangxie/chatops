@@ -1,5 +1,4 @@
-// Package command runs a kong command line with signal-aware cancellation,
-// shared by every binary under cmd/.
+// Package command runs a kong command line with signal-aware cancellation for every binary.
 package command
 
 import (
@@ -23,8 +22,7 @@ func NewParser(cli any, name, description string) *kong.Kong {
 	)
 }
 
-// Run parses args and runs the selected subcommand, binding ctx so commands
-// can accept a context.Context parameter.
+// Run parses args and runs the selected subcommand with ctx bound for its Run method.
 func Run(ctx context.Context, parser *kong.Kong, args []string) error {
 	kctx, err := parser.Parse(args)
 	if err != nil {
@@ -34,9 +32,7 @@ func Run(ctx context.Context, parser *kong.Kong, args []string) error {
 	return kctx.Run()
 }
 
-// TerminationContext cancels on the first termination signal and restores
-// the default signal behavior before making cancellation visible, allowing a
-// second signal to terminate a process stuck during shutdown.
+// TerminationContext cancels on the first SIGINT/SIGTERM; a second one kills a stuck shutdown.
 func TerminationContext(parent context.Context) (context.Context, context.CancelFunc) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)

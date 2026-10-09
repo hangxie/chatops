@@ -1,5 +1,4 @@
-// Package serve implements `chatops-mcp serve`, which exposes the selected
-// tool groups over stdio or Streamable HTTP.
+// Package serve implements `chatops-mcp serve`: selected tool groups over stdio or Streamable HTTP.
 package serve
 
 import (

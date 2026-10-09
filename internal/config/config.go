@@ -18,8 +18,7 @@ const (
 	TransportStreamableHTTP = "streamable-http"
 )
 
-// Config is the daemon configuration. Secrets are never stored here; fields
-// ending in Env name the environment variable holding the secret.
+// Config is the daemon configuration; secrets live in the environment variables named by *Env fields.
 type Config struct {
 	LLM   LLM   `yaml:"llm"`
 	MCP   MCP   `yaml:"mcp"`
@@ -31,8 +30,7 @@ type LLM struct {
 	BaseURL   string `yaml:"base_url"`
 	Model     string `yaml:"model"`
 	APIKeyEnv string `yaml:"api_key_env"`
-	// DisableThinking asks reasoning models to skip their thinking phase,
-	// which small local models otherwise spend most of the budget on.
+	// DisableThinking stops small reasoning models from spending the budget on thinking.
 	DisableThinking bool `yaml:"disable_thinking"`
 }
 
@@ -49,8 +47,7 @@ type Server struct {
 	Command string            `yaml:"command"`
 	Args    []string          `yaml:"args"`
 	Env     map[string]string `yaml:"env"`
-	// SecretEnv maps a child variable to the daemon variable holding its
-	// value, keeping secrets out of the file; Env values are stored as is.
+	// SecretEnv maps a child variable to the daemon variable holding its secret value.
 	SecretEnv map[string]string `yaml:"secret_env"`
 
 	// streamable-http
@@ -89,8 +86,7 @@ func Load(path string) (*Config, error) {
 	return Parse(data)
 }
 
-// Parse decodes YAML, applies defaults, and validates the result. Unknown
-// fields are rejected so typos do not silently fall back to defaults.
+// Parse decodes, defaults, and validates; unknown fields are rejected so typos are not ignored.
 func Parse(data []byte) (*Config, error) {
 	cfg := Config{Agent: defaultAgent()}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))

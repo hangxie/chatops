@@ -11,8 +11,7 @@ import (
 )
 
 var (
-	// Server IDs prefix model-facing tool names, so they exclude "_" to keep
-	// the "<server>__<tool>" separator unambiguous.
+	// No "_" in server IDs keeps the "<server>__<tool>" separator unambiguous.
 	serverIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 	envNamePattern  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
@@ -157,8 +156,7 @@ func isHTTPURL(raw string) bool {
 	return scheme == "http" || scheme == "https"
 }
 
-// isPlaintextRemote reports whether credentials sent to raw would cross the
-// network unencrypted. Unparseable URLs are reported by the URL check instead.
+// isPlaintextRemote reports whether raw is plain http to a non-loopback host.
 func isPlaintextRemote(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || !strings.EqualFold(u.Scheme, "http") {
