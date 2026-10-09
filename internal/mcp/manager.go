@@ -178,7 +178,7 @@ func (m *Manager) refresh(id string) {
 }
 
 func (m *Manager) rebuildLocked() {
-	catalog, skipped := buildCatalog(m.listed)
+	catalog, skipped := NewCatalog(m.listed)
 	for _, err := range skipped {
 		m.logger.Warn("skip mcp tool", "error", err)
 	}

@@ -17,7 +17,7 @@ var objectSchema = map[string]any{
 	"additionalProperties": false,
 }
 
-func Test_buildCatalog(t *testing.T) {
+func Test_NewCatalog(t *testing.T) {
 	tru, fls := true, false
 	listed := map[string][]*mcpsdk.Tool{
 		"zeta": {{Name: "ping", InputSchema: map[string]any{"type": "object"}}},
@@ -31,7 +31,7 @@ func Test_buildCatalog(t *testing.T) {
 		},
 	}
 
-	catalog, skipped := buildCatalog(listed)
+	catalog, skipped := NewCatalog(listed)
 
 	names := []string{}
 	for _, tool := range catalog.Tools() {
@@ -65,7 +65,7 @@ func Test_buildCatalog(t *testing.T) {
 	require.False(t, ok)
 }
 
-func Test_buildCatalog_name_collision(t *testing.T) {
+func Test_NewCatalog_name_collision(t *testing.T) {
 	// Hash suffixes prevent natural collisions, so list the same tool twice.
 	listed := map[string][]*mcpsdk.Tool{
 		"s": {
@@ -73,14 +73,14 @@ func Test_buildCatalog_name_collision(t *testing.T) {
 			{Name: "dup", InputSchema: map[string]any{"type": "object"}},
 		},
 	}
-	catalog, skipped := buildCatalog(listed)
+	catalog, skipped := NewCatalog(listed)
 	require.Len(t, catalog.Tools(), 1)
 	require.Len(t, skipped, 1)
 	require.Contains(t, skipped[0].Error(), `s/dup: model name "s__dup" already used by s/dup`)
 }
 
 func Test_Tool_Validate(t *testing.T) {
-	catalog, skipped := buildCatalog(map[string][]*mcpsdk.Tool{
+	catalog, skipped := NewCatalog(map[string][]*mcpsdk.Tool{
 		"s": {
 			{Name: "get", InputSchema: objectSchema},
 			{Name: "any", InputSchema: map[string]any{"type": "object"}},
@@ -119,7 +119,7 @@ func Test_Tool_Validate(t *testing.T) {
 }
 
 func Test_Catalog_returns_copies(t *testing.T) {
-	catalog, skipped := buildCatalog(map[string][]*mcpsdk.Tool{"one": {{Name: "get", InputSchema: objectSchema}}})
+	catalog, skipped := NewCatalog(map[string][]*mcpsdk.Tool{"one": {{Name: "get", InputSchema: objectSchema}}})
 	require.Empty(t, skipped)
 	original := string(catalog.Tools()[0].InputSchema)
 

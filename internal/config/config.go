@@ -60,9 +60,10 @@ type Server struct {
 
 // Agent bounds a single conversation turn and its history.
 type Agent struct {
-	MaxIterations      int           `yaml:"max_iterations"`
-	TurnTimeout        time.Duration `yaml:"turn_timeout"`
-	ToolTimeout        time.Duration `yaml:"tool_timeout"`
+	MaxIterations int           `yaml:"max_iterations"`
+	TurnTimeout   time.Duration `yaml:"turn_timeout"`
+	ToolTimeout   time.Duration `yaml:"tool_timeout"`
+	// MaxToolResultBytes bounds tool output; the truncation marker is added on top.
 	MaxToolResultBytes int           `yaml:"max_tool_result_bytes"`
 	HistoryTurns       int           `yaml:"history_turns"`
 	HistoryTTL         time.Duration `yaml:"history_ttl"`
