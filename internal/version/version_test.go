@@ -73,3 +73,23 @@ func Test_Cmd_Run_devel_fallback(t *testing.T) {
 	require.Equal(t, "(devel)\n", stdout)
 	require.Empty(t, stderr)
 }
+
+func Test_String(t *testing.T) {
+	tests := map[string]struct {
+		version string
+		want    string
+	}{
+		"link-time": {version: "v1.2.3", want: "v1.2.3"},
+		"devel":     {version: "", want: "(devel)"},
+	}
+
+	origVersion := version
+	defer func() { version = origVersion }()
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			version = tc.version
+			require.Equal(t, tc.want, String())
+		})
+	}
+}

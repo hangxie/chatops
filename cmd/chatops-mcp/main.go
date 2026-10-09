@@ -6,11 +6,13 @@ import (
 
 	"github.com/alecthomas/kong"
 
+	"github.com/hangxie/chatops/cmd/chatops-mcp/serve"
 	"github.com/hangxie/chatops/internal/command"
 	"github.com/hangxie/chatops/internal/version"
 )
 
 var cli struct {
+	Serve   serve.Cmd   `cmd:"" help:"Serve MCP tools over stdio or Streamable HTTP."`
 	Version version.Cmd `cmd:"" help:"Show build version."`
 }
 

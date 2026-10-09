@@ -25,6 +25,15 @@ type Cmd struct {
 	Source    bool `short:"s" help:"Output source of the executable." default:"false"`
 }
 
+// String returns the semantic version, or "(devel)" for binaries built
+// without link-time metadata (e.g. go run).
+func String() string {
+	if version == "" {
+		return "(devel)"
+	}
+	return version
+}
+
 // Run prints the version details.
 func (c Cmd) Run() error {
 	if c.All {
@@ -32,12 +41,7 @@ func (c Cmd) Run() error {
 		c.Source = true
 	}
 
-	// fall back to a placeholder for binaries built without link-time
-	// metadata (e.g. go run)
-	ver := version
-	if ver == "" {
-		ver = "(devel)"
-	}
+	ver := String()
 
 	if !c.JSON {
 		fmt.Println(ver)
