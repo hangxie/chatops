@@ -1,0 +1,20 @@
+# chatops serve configuration; see https://github.com/hangxie/chatops#configuration
+# Secrets go in /etc/chatops/chatops.env, never in this file.
+
+chat:
+  slack:
+    bot_token_env: SLACK_BOT_TOKEN
+    app_token_env: SLACK_APP_TOKEN
+
+llm:
+  base_url: http://localhost:8080/v1
+  model: CHANGEME   # the model name your endpoint serves
+  # api_key_env: LLM_API_KEY
+  # disable_thinking: true
+
+mcp:
+  servers:
+    builtin:
+      transport: stdio
+      command: /usr/bin/chatops-mcp
+      args: [serve, --tools, ping]

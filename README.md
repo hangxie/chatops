@@ -141,6 +141,23 @@ How it answers:
 - Every message is answered with every configured tool available; per-user permissions come in a later release, and `serve` logs a warning at startup until then. Until that release, configure only read-only tools, and only invite the app where all members may use all of its tools.
 - Stopping the daemon (SIGINT or SIGTERM) cancels turns in progress without replying, and conversation history is lost.
 
+### Run as a service
+
+The deb and rpm packages install both binaries, a `chatops` system user, and a systemd unit that runs `chatops serve` as that user:
+
+| Path | Purpose |
+|---|---|
+| `/etc/chatops/config.yaml` | Config file; set `llm.base_url` and `llm.model` before starting |
+| `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `LLM_API_KEY`) and `LOG_LEVEL`/`LOG_FORMAT`; readable only by root and the `chatops` group |
+| `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml` with JSON logs to the journal; restarts on failure |
+
+Both files are kept across upgrades. The service is not started on install; once both files are filled in:
+
+```bash
+sudo systemctl enable --now chatops
+journalctl -u chatops -f
+```
+
 ## Built-in MCP server
 
 `chatops-mcp serve` exposes tool groups to any MCP client. By default it speaks MCP over stdio, which is how an MCP client normally launches it as a subprocess.

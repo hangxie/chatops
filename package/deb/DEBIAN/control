@@ -4,4 +4,5 @@ Section: admin
 Priority: optional
 Architecture: CHANGEME
 Maintainer: 7977860+hangxie@users.noreply.github.com
+Depends: adduser
 Description: ChatOps daemon and built-in MCP server, for change log visit https://github.com/hangxie/chatops/releases

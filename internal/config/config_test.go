@@ -165,3 +165,10 @@ func Test_Load(t *testing.T) {
 	_, err = Load(filepath.Join(dir, "missing.yaml"))
 	require.ErrorContains(t, err, "read config")
 }
+
+func Test_Load_packaged_sample(t *testing.T) {
+	cfg, err := Load(filepath.Join("..", "..", "package", "systemd", "config.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, &Slack{BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}, cfg.Chat.Slack)
+	require.Equal(t, "/usr/bin/chatops-mcp", cfg.MCP.Servers["builtin"].Command)
+}
