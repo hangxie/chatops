@@ -6,9 +6,9 @@ if ! getent passwd chatops >/dev/null; then
     adduser --system --group --no-create-home --home /nonexistent chatops
 fi
 
-chown root:chatops /etc/chatops /etc/chatops/chatops.env /etc/chatops/config.yaml
+chown root:chatops /etc/chatops /etc/chatops/chatops.env /etc/chatops/config.yaml /etc/chatops/status.yaml
 chmod 0750 /etc/chatops
-chmod 0640 /etc/chatops/chatops.env /etc/chatops/config.yaml
+chmod 0640 /etc/chatops/chatops.env /etc/chatops/config.yaml /etc/chatops/status.yaml
 
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload >/dev/null || true

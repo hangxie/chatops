@@ -27,22 +27,30 @@ func newClient() *mcp.Client {
 	return mcp.NewClient(&mcp.Implementation{Name: "client", Version: "v0"}, nil)
 }
 
+// packagedStatus is the services file the packages install as /etc/chatops/status.yaml.
+const packagedStatus = "../../../package/systemd/status.yaml"
+
 func Test_newServer(t *testing.T) {
 	tests := map[string]struct {
-		groups []string
+		cmd    Cmd
 		tools  []string
 		errMsg string
 	}{
-		"ping":           {groups: []string{"ping"}, tools: []string{"ping"}},
-		"duplicate":      {groups: []string{"ping", "ping"}, errMsg: `tool group "ping" listed more than once`},
-		"unknown":        {groups: []string{"bogus"}, errMsg: `unknown tool group "bogus" (available: ping)`},
-		"none":           {groups: nil, errMsg: "at least one tool group is required"},
-		"blank-is-bogus": {groups: []string{""}, errMsg: `unknown tool group "" (available: ping)`},
+		"ping":                  {cmd: Cmd{Tools: []string{"ping"}}, tools: []string{"ping"}},
+		"status":                {cmd: Cmd{Tools: []string{"status"}, StatusConfig: packagedStatus}, tools: []string{"service_status"}},
+		"both":                  {cmd: Cmd{Tools: []string{"ping", "status"}, StatusConfig: packagedStatus}, tools: []string{"ping", "service_status"}},
+		"duplicate":             {cmd: Cmd{Tools: []string{"ping", "ping"}}, errMsg: `tool group "ping" listed more than once`},
+		"unknown":               {cmd: Cmd{Tools: []string{"bogus"}}, errMsg: `unknown tool group "bogus" (available: ping, status)`},
+		"none":                  {cmd: Cmd{}, errMsg: "at least one tool group is required"},
+		"blank-is-bogus":        {cmd: Cmd{Tools: []string{""}}, errMsg: `unknown tool group "" (available: ping, status)`},
+		"status-without-config": {cmd: Cmd{Tools: []string{"status"}}, errMsg: `tool group "status": --status-config is required`},
+		"status-config-missing": {cmd: Cmd{Tools: []string{"status"}, StatusConfig: "/nonexistent/status.yaml"}, errMsg: `tool group "status": read status config: open /nonexistent/status.yaml: no such file or directory`},
+		"config-without-status": {cmd: Cmd{Tools: []string{"ping"}, StatusConfig: packagedStatus}, errMsg: "--status-config requires --tools status"},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			server, err := newServer(tc.groups)
+			server, err := newServer(tc.cmd)
 			if tc.errMsg != "" {
 				require.EqualError(t, err, tc.errMsg)
 				require.Nil(t, server)

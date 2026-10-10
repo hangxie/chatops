@@ -2,7 +2,7 @@
 
 `chatops` connects a chat platform to an OpenAI-compatible language model and to tools served over the [Model Context Protocol](https://modelcontextprotocol.io/specification) (MCP). The model chooses which tools to call, ChatOps enforces authorization and approval, and the answer is posted back to the chat thread.
 
-This project is under early development: `chatops chat` runs the agent in a terminal against a configured model and MCP servers, and `chatops-mcp` serves the `ping` tool. Slack integration, authorization policy, and approvals are not implemented yet.
+This project is under early development: `chatops serve` answers Slack messages, `chatops chat` runs the same agent in a terminal, and `chatops-mcp` serves the `ping` and `service_status` tools. Authorization policy and approvals are not implemented yet.
 
 ## Binaries
 
@@ -44,7 +44,7 @@ mcp:
     builtin:                           # server ID: lowercase letters, digits, "-"
       transport: stdio
       command: ./build/chatops-mcp
-      args: [serve, --tools, ping]
+      args: [serve, --tools, "ping,status", --status-config, package/systemd/status.yaml]
       # env:                           # plain values, stored in this file
       #   KUBECONFIG: /etc/chatops/kubeconfig
       # secret_env:                    # child variable: daemon variable holding the value
@@ -148,6 +148,7 @@ The deb and rpm packages install both binaries, a `chatops` system user, and a s
 | Path | Purpose |
 |---|---|
 | `/etc/chatops/config.yaml` | Config file; set `llm.base_url` and `llm.model` before starting |
+| `/etc/chatops/status.yaml` | Services the `status` tool group checks; edit to add services or product names |
 | `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `LLM_API_KEY`) and `LOG_LEVEL`/`LOG_FORMAT`; readable only by root and the `chatops` group |
 | `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml` with JSON logs to the journal; restarts on failure |
 
@@ -166,11 +167,41 @@ journalctl -u chatops -f
 |---|---|---|
 | `--tools` | `ping` | Comma-separated tool groups to serve |
 | `--http` | (stdio) | Serve Streamable HTTP at `/mcp` on this address instead of stdio |
+| `--status-config` | (none) | YAML file listing the services the `status` group checks; required with `--tools status` |
 | `--token-env` | (none) | Environment variable holding the bearer token HTTP clients must send; required when `--http` is not a loopback address |
 
 | Tool group | Tools | Description |
 |---|---|---|
 | `ping` | `ping` | Takes no arguments and replies `pong`; read-only, for smoke tests |
+| `status` | `service_status` | Reports the public status and active incidents of the services listed in the `--status-config` file, or of `all` of them; read-only, needs outbound HTTPS and no credentials. A status page that cannot be read is reported as `unknown` |
+
+### Service status config
+
+The `status` group has no built-in services: every service comes from the `--status-config` file. `package/systemd/status.yaml` is the shipped list (GitHub, Anthropic, Cloudflare, OpenAI, Google Gemini, Google Workspace, Slack, and Docker Hub), installed as `/etc/chatops/status.yaml` and kept across upgrades. Services are reported in file order; restart `chatops serve` after editing.
+
+```yaml
+services:
+  - name: openai                   # tool argument; lowercase letters, digits, "-"
+    display: OpenAI                # name shown in results
+    covers: [ChatGPT, Codex, the OpenAI API]   # products users ask about
+    type: statuspage
+    url: https://status.openai.com/api/v2/summary.json
+  - name: google-workspace
+    display: Google Workspace
+    covers: [Gmail, Google Drive, Calendar]
+    type: google
+    feeds:                         # google only; each feed may set products: [<product ID>, ...]
+      - url: https://www.google.com/appsstatus/dashboard/incidents.json
+```
+
+| `type` | Endpoint |
+|---|---|
+| `statuspage` | Atlassian Statuspage `.../api/v2/summary.json`, used by many vendors |
+| `statusio` | Status.io `https://api.status.io/1.0/status/<page id>` |
+| `slack` | `https://slack-status.com/api/v2.0.0/current` |
+| `google` | Google Cloud or Workspace `incidents.json` feeds, combined and optionally narrowed to product IDs |
+
+`covers` is what lets a small model map a question to a service: when the bot answers "is codex down?" from the wrong service or not at all, add the product name to the right service's `covers`. Unknown fields, duplicate names, and URLs that are not absolute `http` or `https` stop `chatops-mcp` at startup.
 
 To exercise it by hand over stdio, send an MCP `initialize` handshake followed by a tool call. The trailing `sleep` keeps stdin open until the replies are written:
 

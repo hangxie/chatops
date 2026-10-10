@@ -1,0 +1,63 @@
+# Services checked by chatops-mcp's service_status tool (serve --tools status --status-config <this file>).
+# Each service:
+#   name:    tool argument value; lowercase letters, digits, and "-"
+#   display: name shown in results
+#   covers:  products users may ask about, so the model can map "is codex down?" to openai
+#   type:    statuspage (Atlassian Statuspage /api/v2/summary.json), statusio, slack, or google
+#   url:     status endpoint, for every type but google
+#   feeds:   google only; incident feeds to combine, each optionally narrowed to product IDs
+# Services are reported in this order. Restart chatops serve after editing.
+
+services:
+  - name: github
+    display: GitHub
+    covers: [GitHub, GitHub Actions, Copilot, Codespaces]
+    type: statuspage
+    url: https://www.githubstatus.com/api/v2/summary.json
+
+  - name: anthropic
+    display: Anthropic
+    covers: [Claude, claude.ai, the Claude API, Claude Code]
+    type: statuspage
+    url: https://status.claude.com/api/v2/summary.json
+
+  - name: cloudflare
+    display: Cloudflare
+    covers: [Cloudflare CDN, DNS, Workers]
+    type: statuspage
+    url: https://www.cloudflarestatus.com/api/v2/summary.json
+
+  - name: openai
+    display: OpenAI
+    covers: [ChatGPT, Codex, the OpenAI API]
+    type: statuspage
+    url: https://status.openai.com/api/v2/summary.json
+
+  - name: gemini
+    display: Google Gemini
+    covers: [Gemini, Vertex AI Gemini, Gemini in Google Workspace]
+    type: google
+    feeds:
+      - url: https://status.cloud.google.com/incidents.json
+        products: [Z0FZJAMvEB4j3NbCJs6B]   # Vertex Gemini API
+      - url: https://www.google.com/appsstatus/dashboard/incidents.json
+        products: [npdyhgECDJ6tB66MxXyo]   # Gemini in Workspace
+
+  - name: google-workspace
+    display: Google Workspace
+    covers: [Gmail, Google Drive, Docs, Sheets, Calendar, Meet, Chat, other Workspace apps]
+    type: google
+    feeds:
+      - url: https://www.google.com/appsstatus/dashboard/incidents.json
+
+  - name: slack
+    display: Slack
+    covers: [Slack]
+    type: slack
+    url: https://slack-status.com/api/v2.0.0/current
+
+  - name: docker-hub
+    display: Docker Hub
+    covers: [Docker Hub image pulls and pushes]
+    type: statusio
+    url: https://api.status.io/1.0/status/533c6539221ae15e3f000031
