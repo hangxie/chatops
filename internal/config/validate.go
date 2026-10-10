@@ -136,6 +136,8 @@ func validateAgent(agent Agent, add addFunc) {
 		{"agent.max_tool_result_bytes", agent.MaxToolResultBytes > 0},
 		{"agent.history_turns", agent.HistoryTurns > 0},
 		{"agent.history_ttl", agent.HistoryTTL > 0},
+		{"agent.max_concurrent_turns", agent.MaxConcurrentTurns > 0},
+		{"agent.max_pending_messages", agent.MaxPendingMessages > 0},
 	}
 	for _, p := range positive {
 		if !p.ok {

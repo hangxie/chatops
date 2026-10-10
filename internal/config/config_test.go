@@ -36,6 +36,8 @@ agent:
   max_tool_result_bytes: 1024
   history_turns: 5
   history_ttl: 1h
+  max_concurrent_turns: 2
+  max_pending_messages: 16
 `
 
 func Test_Parse_full(t *testing.T) {
@@ -69,6 +71,8 @@ func Test_Parse_full(t *testing.T) {
 			MaxToolResultBytes: 1024,
 			HistoryTurns:       5,
 			HistoryTTL:         time.Hour,
+			MaxConcurrentTurns: 2,
+			MaxPendingMessages: 16,
 		},
 	}, cfg)
 }
@@ -83,6 +87,8 @@ func Test_Parse_defaults(t *testing.T) {
 		MaxToolResultBytes: 65536,
 		HistoryTurns:       20,
 		HistoryTTL:         24 * time.Hour,
+		MaxConcurrentTurns: 4,
+		MaxPendingMessages: 64,
 	}, cfg.Agent)
 	require.Empty(t, cfg.MCP.Servers)
 }
