@@ -110,6 +110,37 @@ Yes, the builtin server replied pong.
 
 A failed turn (model unreachable, turn timeout) prints `error: ...` and the session continues; the failed turn is not added to history.
 
+## Serve Slack
+
+`chatops serve` answers Slack messages over Socket Mode, so it needs no public endpoint. It requires the `chat.slack` config section.
+
+1. At https://api.slack.com/apps, choose "Create New App", then "From an app manifest", and paste `scripts/slack-app-manifest.json`; edit the name first if you want a different bot name.
+2. Install the app to the workspace and export its `xoxb-` bot token; generate an app-level `xapp-` token with the `connections:write` scope and export it too. The variable names are whatever `chat.slack.bot_token_env` and `chat.slack.app_token_env` say.
+3. Start the daemon:
+
+```bash
+export SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-...
+./build/chatops serve --config config.yaml
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `-c`, `--config` | (required) | Path to the YAML config file |
+| `--log-level` | `info` | Minimum level of logs written to stderr: `debug`, `info`, `warn`, or `error` |
+| `--log-format` | `text` | Log format on stderr: `text` or `json` |
+
+How it answers:
+
+- In a channel the app has been invited to, a message must start with a mention of the bot, such as `@chatops is the builtin server up?`; a mention later in the message is ignored. Follow-ups in the thread need the mention too.
+- In a direct message to the app, every message is answered; no mention is needed.
+- Replies go into the message's thread. Each thread is a separate conversation with its own history, so context never crosses threads; a direct message that is not in a thread starts a new conversation.
+- Messages in one thread are answered one at a time, in order; different threads are answered concurrently up to `agent.max_concurrent_turns`. When `agent.max_pending_messages` is reached, new messages get a short "try again shortly" reply; at most four such replies are posted at a time, and further refused messages are only logged.
+- Slack retries and duplicate deliveries of an accepted message are answered once; a message refused as busy may be accepted if Slack delivers it again.
+- A failed turn gets a short apology in the thread; the details, which may include internal endpoints, go only to the log.
+- Replies are posted as plain text with Slack link previews turned off, so model output cannot mention `@channel` or users, or make Slack fetch a URL.
+- Every message is answered with every configured tool available; per-user permissions come in a later release, and `serve` logs a warning at startup until then. Until that release, configure only read-only tools, and only invite the app where all members may use all of its tools.
+- Stopping the daemon (SIGINT or SIGTERM) cancels turns in progress without replying, and conversation history is lost.
+
 ## Built-in MCP server
 
 `chatops-mcp serve` exposes tool groups to any MCP client. By default it speaks MCP over stdio, which is how an MCP client normally launches it as a subprocess.
