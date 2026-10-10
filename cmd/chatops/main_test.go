@@ -16,14 +16,16 @@ func Test_cli_parse(t *testing.T) {
 		errMsg  string
 		command string
 	}{
-		"chat":           {args: []string{"chat", "--config", "c.yaml"}, command: "chat"},
-		"chat-short":     {args: []string{"chat", "-c", "c.yaml", "--log-level", "debug"}, command: "chat"},
-		"chat-no-config": {args: []string{"chat"}, errMsg: "missing flags: --config=FILE"},
-		"version":        {args: []string{"version"}, command: "version"},
-		"version-json":   {args: []string{"version", "--json"}, command: "version"},
-		"no-args":        {args: nil, errMsg: "expected"},
-		"unknown":        {args: []string{"bogus"}, errMsg: "unexpected argument bogus"},
-		"too-many-args":  {args: []string{"version", "extra"}, errMsg: "unexpected argument extra"},
+		"chat":            {args: []string{"chat", "--config", "c.yaml"}, command: "chat"},
+		"chat-short":      {args: []string{"chat", "-c", "c.yaml", "--log-level", "debug"}, command: "chat"},
+		"chat-no-config":  {args: []string{"chat"}, errMsg: "missing flags: --config=FILE"},
+		"serve":           {args: []string{"serve", "-c", "c.yaml", "--log-format", "json"}, command: "serve"},
+		"serve-no-config": {args: []string{"serve"}, errMsg: "missing flags: --config=FILE"},
+		"version":         {args: []string{"version"}, command: "version"},
+		"version-json":    {args: []string{"version", "--json"}, command: "version"},
+		"no-args":         {args: nil, errMsg: "expected"},
+		"unknown":         {args: []string{"bogus"}, errMsg: "unexpected argument bogus"},
+		"too-many-args":   {args: []string{"version", "extra"}, errMsg: "unexpected argument extra"},
 	}
 
 	for name, tc := range tests {
