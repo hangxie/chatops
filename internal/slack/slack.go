@@ -182,11 +182,11 @@ func (a *Adapter) replyBusy(ctx context.Context, log *slog.Logger, reply func(co
 	})
 }
 
-// replier posts escaped text without link previews, so model output cannot ping, link, or unfurl.
+// replier posts escaped text as Slack mrkdwn without link previews, so model output cannot ping, link, or unfurl.
 func (a *Adapter) replier(channel, thread string) func(context.Context, string) error {
 	return func(ctx context.Context, text string) error {
 		_, _, err := a.api.PostMessageContext(ctx, channel,
-			slackapi.MsgOptionText(limitReply(text), true),
+			slackapi.MsgOptionText(limitReply(toMrkdwn(text)), true),
 			slackapi.MsgOptionTS(thread),
 			slackapi.MsgOptionDisableLinkUnfurl(),
 			slackapi.MsgOptionDisableMediaUnfurl())
