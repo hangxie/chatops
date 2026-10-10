@@ -64,6 +64,8 @@ func writeConfig(t *testing.T, llmURL string, slack bool) string {
 	content := fmt.Sprintf(`%sllm:
   base_url: %s/v1
   model: test-model
+agent:
+  system_prompt: test prompt
 mcp:
   servers:
     builtin:
@@ -150,9 +152,9 @@ func Test_Cmd_Run_dependency_errors(t *testing.T) {
 		config string
 		errMsg string
 	}{
-		"bad-llm": {config: slackSection + "llm:\n  base_url: http://localhost/v1?x=1\n  model: m\n", errMsg: "must not carry query"},
+		"bad-llm": {config: slackSection + "llm:\n  base_url: http://localhost/v1?x=1\n  model: m\nagent:\n  system_prompt: p\n", errMsg: "must not carry query"},
 		"bad-mcp": {
-			config: slackSection + "llm:\n  base_url: http://localhost/v1\n  model: m\nmcp:\n  servers:\n    x:\n      transport: stdio\n      command: /nonexistent/mcp\n",
+			config: slackSection + "llm:\n  base_url: http://localhost/v1\n  model: m\nagent:\n  system_prompt: p\nmcp:\n  servers:\n    x:\n      transport: stdio\n      command: /nonexistent/mcp\n",
 			errMsg: `mcp server "x": connect`,
 		},
 	}

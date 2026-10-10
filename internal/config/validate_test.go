@@ -14,7 +14,7 @@ func validConfig() Config {
 			"builtin": {Transport: TransportStdio, Command: "chatops-mcp"},
 			"remote":  {Transport: TransportStreamableHTTP, URL: "https://example.internal/mcp"},
 		}},
-		Agent: defaultAgent(),
+		Agent: func() Agent { a := defaultAgent(); a.SystemPrompt = "You are ChatOps."; return a }(),
 	}
 }
 
@@ -113,6 +113,7 @@ func Test_Config_Validate(t *testing.T) {
 				c.Agent = Agent{MaxIterations: -1, MaxToolResultBytes: -1, HistoryTurns: -1, TurnTimeout: -time.Second, ToolTimeout: -time.Second, HistoryTTL: -time.Second, MaxConcurrentTurns: -1, MaxPendingMessages: -1}
 			},
 			errs: []string{
+				"agent.system_prompt: required",
 				"agent.max_iterations: must be positive",
 				"agent.turn_timeout: must be positive",
 				"agent.tool_timeout: must be positive",
@@ -123,6 +124,7 @@ func Test_Config_Validate(t *testing.T) {
 				"agent.history_turns: must not be negative",
 			},
 		},
+		"agent-empty-prompt":     {mutate: func(c *Config) { c.Agent.SystemPrompt = "   " }, errs: []string{"agent.system_prompt: required"}},
 		"history-turns-zero":     {mutate: func(c *Config) { c.Agent.HistoryTurns = 0 }},
 		"history-turns-positive": {mutate: func(c *Config) { c.Agent.HistoryTurns = 5 }},
 		"tool-timeout-exceeds-turn": {

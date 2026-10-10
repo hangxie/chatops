@@ -77,6 +77,8 @@ func writeConfig(t *testing.T, llmURL string) string {
 	content := fmt.Sprintf(`llm:
   base_url: %s/v1
   model: test-model
+agent:
+  system_prompt: test prompt
 mcp:
   servers:
     builtin:
@@ -110,9 +112,9 @@ func Test_Cmd_Run_end_to_end(t *testing.T) {
 func Test_Cmd_Run_errors(t *testing.T) {
 	dir := t.TempDir()
 	badLLM := filepath.Join(dir, "bad-llm.yaml")
-	require.NoError(t, os.WriteFile(badLLM, []byte("llm:\n  base_url: http://h/v1?x=1\n  model: m\n"), 0o600))
+	require.NoError(t, os.WriteFile(badLLM, []byte("llm:\n  base_url: http://h/v1?x=1\n  model: m\nagent:\n  system_prompt: p\n"), 0o600))
 	badMCP := filepath.Join(dir, "bad-mcp.yaml")
-	require.NoError(t, os.WriteFile(badMCP, []byte("llm:\n  base_url: http://h/v1\n  model: m\nmcp:\n  servers:\n    x:\n      transport: stdio\n      command: /nonexistent/mcp\n"), 0o600))
+	require.NoError(t, os.WriteFile(badMCP, []byte("llm:\n  base_url: http://h/v1\n  model: m\nagent:\n  system_prompt: p\nmcp:\n  servers:\n    x:\n      transport: stdio\n      command: /nonexistent/mcp\n"), 0o600))
 
 	tests := map[string]struct {
 		config string

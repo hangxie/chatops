@@ -69,12 +69,14 @@ type Server struct {
 
 // Agent bounds a single conversation turn, its history, and how many turns run at once.
 type Agent struct {
+	// SystemPrompt is the agent's instructions; required, so startup fails if it is empty.
+	SystemPrompt  string        `yaml:"system_prompt"`
 	MaxIterations int           `yaml:"max_iterations"`
 	TurnTimeout   time.Duration `yaml:"turn_timeout"`
 	ToolTimeout   time.Duration `yaml:"tool_timeout"`
 	// MaxToolResultBytes bounds tool output; the truncation marker is added on top.
 	MaxToolResultBytes int `yaml:"max_tool_result_bytes"`
-	// HistoryTurns is how many earlier user messages to replay as context; 0 makes each request stateless.
+	// HistoryTurns is how many earlier user messages to replay as context; 0 (the default) makes each request stateless.
 	HistoryTurns int           `yaml:"history_turns"`
 	HistoryTTL   time.Duration `yaml:"history_ttl"`
 	// MaxConcurrentTurns bounds turns running at once across all conversations.
@@ -89,7 +91,7 @@ func defaultAgent() Agent {
 		TurnTimeout:        120 * time.Second,
 		ToolTimeout:        30 * time.Second,
 		MaxToolResultBytes: 64 * 1024,
-		HistoryTurns:       3,
+		HistoryTurns:       0,
 		HistoryTTL:         24 * time.Hour,
 		MaxConcurrentTurns: 4,
 		MaxPendingMessages: 64,
