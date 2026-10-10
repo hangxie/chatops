@@ -55,7 +55,7 @@ type Server struct {
 	BearerTokenEnv string `yaml:"bearer_token_env"`
 }
 
-// Agent bounds a single conversation turn and its history.
+// Agent bounds a single conversation turn, its history, and how many turns run at once.
 type Agent struct {
 	MaxIterations int           `yaml:"max_iterations"`
 	TurnTimeout   time.Duration `yaml:"turn_timeout"`
@@ -64,6 +64,10 @@ type Agent struct {
 	MaxToolResultBytes int           `yaml:"max_tool_result_bytes"`
 	HistoryTurns       int           `yaml:"history_turns"`
 	HistoryTTL         time.Duration `yaml:"history_ttl"`
+	// MaxConcurrentTurns bounds turns running at once across all conversations.
+	MaxConcurrentTurns int `yaml:"max_concurrent_turns"`
+	// MaxPendingMessages bounds accepted but unfinished messages; more are refused as busy.
+	MaxPendingMessages int `yaml:"max_pending_messages"`
 }
 
 func defaultAgent() Agent {
@@ -74,6 +78,8 @@ func defaultAgent() Agent {
 		MaxToolResultBytes: 64 * 1024,
 		HistoryTurns:       20,
 		HistoryTTL:         24 * time.Hour,
+		MaxConcurrentTurns: 4,
+		MaxPendingMessages: 64,
 	}
 }
 

@@ -104,7 +104,7 @@ func Test_Config_Validate(t *testing.T) {
 		}, errs: []string{"mcp.servers.x.secret_env: not allowed for streamable-http"}},
 		"agent-non-positive": {
 			mutate: func(c *Config) {
-				c.Agent = Agent{MaxIterations: -1, MaxToolResultBytes: -1, HistoryTurns: -1, TurnTimeout: -time.Second, ToolTimeout: -time.Second, HistoryTTL: -time.Second}
+				c.Agent = Agent{MaxIterations: -1, MaxToolResultBytes: -1, HistoryTurns: -1, TurnTimeout: -time.Second, ToolTimeout: -time.Second, HistoryTTL: -time.Second, MaxConcurrentTurns: -1, MaxPendingMessages: -1}
 			},
 			errs: []string{
 				"agent.max_iterations: must be positive",
@@ -113,6 +113,8 @@ func Test_Config_Validate(t *testing.T) {
 				"agent.max_tool_result_bytes: must be positive",
 				"agent.history_turns: must be positive",
 				"agent.history_ttl: must be positive",
+				"agent.max_concurrent_turns: must be positive",
+				"agent.max_pending_messages: must be positive",
 			},
 		},
 		"tool-timeout-exceeds-turn": {
