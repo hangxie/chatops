@@ -20,9 +20,21 @@ const (
 
 // Config is the daemon configuration; secrets live in the environment variables named by *Env fields.
 type Config struct {
+	Chat  Chat  `yaml:"chat"`
 	LLM   LLM   `yaml:"llm"`
 	MCP   MCP   `yaml:"mcp"`
 	Agent Agent `yaml:"agent"`
+}
+
+// Chat configures chat backends; `chatops serve` requires Slack, the terminal harness needs none.
+type Chat struct {
+	Slack *Slack `yaml:"slack"`
+}
+
+// Slack names the environment variables holding the bot (xoxb) and app-level (xapp) tokens.
+type Slack struct {
+	BotTokenEnv string `yaml:"bot_token_env"`
+	AppTokenEnv string `yaml:"app_token_env"`
 }
 
 // LLM configures the OpenAI-compatible model endpoint.

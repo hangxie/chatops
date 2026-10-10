@@ -24,6 +24,12 @@ func Test_Config_Validate(t *testing.T) {
 		errs   []string
 	}{
 		"valid":             {mutate: func(*Config) {}},
+		"slack":             {mutate: func(c *Config) { c.Chat.Slack = &Slack{BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"} }},
+		"slack-missing-env": {mutate: func(c *Config) { c.Chat.Slack = &Slack{} }, errs: []string{"chat.slack.bot_token_env: required", "chat.slack.app_token_env: required"}},
+		"slack-bad-env": {mutate: func(c *Config) { c.Chat.Slack = &Slack{BotTokenEnv: "1BOT", AppTokenEnv: "A-B"} }, errs: []string{
+			`chat.slack.bot_token_env: invalid environment variable name "1BOT"`,
+			`chat.slack.app_token_env: invalid environment variable name "A-B"`,
+		}},
 		"no-servers":        {mutate: func(c *Config) { c.MCP.Servers = nil }},
 		"missing-base-url":  {mutate: func(c *Config) { c.LLM.BaseURL = "" }, errs: []string{"llm.base_url: required"}},
 		"relative-base-url": {mutate: func(c *Config) { c.LLM.BaseURL = "localhost/v1" }, errs: []string{`llm.base_url: must be an absolute http or https URL, got "localhost/v1"`}},

@@ -10,6 +10,10 @@ import (
 )
 
 const fullConfig = `
+chat:
+  slack:
+    bot_token_env: SLACK_BOT_TOKEN
+    app_token_env: SLACK_APP_TOKEN
 llm:
   base_url: https://llama-cpp.homelab/v1
   model: qwen3-0b6
@@ -44,6 +48,7 @@ func Test_Parse_full(t *testing.T) {
 	cfg, err := Parse([]byte(fullConfig))
 	require.NoError(t, err)
 	require.Equal(t, &Config{
+		Chat: Chat{Slack: &Slack{BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}},
 		LLM: LLM{
 			BaseURL:         "https://llama-cpp.homelab/v1",
 			Model:           "qwen3-0b6",
@@ -91,6 +96,7 @@ func Test_Parse_defaults(t *testing.T) {
 		MaxPendingMessages: 64,
 	}, cfg.Agent)
 	require.Empty(t, cfg.MCP.Servers)
+	require.Nil(t, cfg.Chat.Slack)
 }
 
 func Test_Parse_single_document_marker(t *testing.T) {
