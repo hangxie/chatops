@@ -34,6 +34,7 @@ mcp:
       url: https://monitoring.example.internal/mcp
       bearer_token_env: MONITORING_MCP_TOKEN
 agent:
+  system_prompt: "Answer tersely."
   max_iterations: 4
   turn_timeout: 1m
   tool_timeout: 10s
@@ -70,6 +71,7 @@ func Test_Parse_full(t *testing.T) {
 			},
 		}},
 		Agent: Agent{
+			SystemPrompt:       "Answer tersely.",
 			MaxIterations:      4,
 			TurnTimeout:        time.Minute,
 			ToolTimeout:        10 * time.Second,
@@ -83,14 +85,15 @@ func Test_Parse_full(t *testing.T) {
 }
 
 func Test_Parse_defaults(t *testing.T) {
-	cfg, err := Parse([]byte("llm:\n  base_url: http://localhost:8080/v1\n  model: m\n"))
+	cfg, err := Parse([]byte("llm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
 	require.Equal(t, Agent{
+		SystemPrompt:       "p",
 		MaxIterations:      8,
 		TurnTimeout:        120 * time.Second,
 		ToolTimeout:        30 * time.Second,
 		MaxToolResultBytes: 65536,
-		HistoryTurns:       3,
+		HistoryTurns:       0,
 		HistoryTTL:         24 * time.Hour,
 		MaxConcurrentTurns: 4,
 		MaxPendingMessages: 64,
@@ -100,7 +103,7 @@ func Test_Parse_defaults(t *testing.T) {
 }
 
 func Test_Parse_single_document_marker(t *testing.T) {
-	cfg, err := Parse([]byte("---\nllm:\n  base_url: http://localhost:8080/v1\n  model: m\n"))
+	cfg, err := Parse([]byte("---\nllm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
 	require.Equal(t, "m", cfg.LLM.Model)
 }
@@ -171,4 +174,8 @@ func Test_Load_packaged_sample(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, &Slack{BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}, cfg.Chat.Slack)
 	require.Equal(t, "/usr/bin/chatops-mcp", cfg.MCP.Servers["builtin"].Command)
+	// The shipped prompt must carry the behavioral guard and the Qwen3 thinking switch.
+	require.Contains(t, cfg.Agent.SystemPrompt, "Answer only the latest user request")
+	require.Contains(t, cfg.Agent.SystemPrompt, "/no_think")
+	require.Equal(t, 0, cfg.Agent.HistoryTurns)
 }

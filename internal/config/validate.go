@@ -139,6 +139,9 @@ func validateSecretEnv(prefix string, server Server, add addFunc) {
 }
 
 func validateAgent(agent Agent, add addFunc) {
+	if strings.TrimSpace(agent.SystemPrompt) == "" {
+		add("agent.system_prompt", "required")
+	}
 	positive := []struct {
 		field string
 		ok    bool
