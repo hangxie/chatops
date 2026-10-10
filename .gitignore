@@ -38,3 +38,7 @@ build/
 .claude/
 .vscode/
 .idea/
+
+# vim swap files
+.*.sw[a-p]
+.sw[a-p]
