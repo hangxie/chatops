@@ -23,6 +23,10 @@ func (c Config) Validate() error {
 		errs = append(errs, fmt.Errorf("%s: %s", field, fmt.Sprintf(format, args...)))
 	}
 
+	if c.Chat.Slack != nil {
+		requireEnvName("chat.slack.bot_token_env", c.Chat.Slack.BotTokenEnv, add)
+		requireEnvName("chat.slack.app_token_env", c.Chat.Slack.AppTokenEnv, add)
+	}
 	validateLLM(c.LLM, add)
 	ids := make([]string, 0, len(c.MCP.Servers))
 	for id := range c.MCP.Servers {
@@ -37,6 +41,15 @@ func (c Config) Validate() error {
 }
 
 type addFunc func(field, format string, args ...any)
+
+func requireEnvName(field, name string, add addFunc) {
+	switch {
+	case name == "":
+		add(field, "required")
+	case !envNamePattern.MatchString(name):
+		add(field, "invalid environment variable name %q", name)
+	}
+}
 
 func validateLLM(llm LLM, add addFunc) {
 	if llm.BaseURL == "" {

@@ -28,6 +28,11 @@ make build
 `chatops` reads a single YAML file holding exactly one YAML document; a second document (after `---`) is an error rather than silently ignored. Unknown fields are rejected and every invalid field is reported at startup. Secrets never appear in the file: settings ending in `_env` name the environment variable that holds the secret, and a named variable that is unset or empty is an error. A bearer token or API key is only sent over `https`, or plain `http` to a loopback host (`localhost`, `127.0.0.0/8`, `::1`); any other `http` URL combined with `api_key_env` or `bearer_token_env` is rejected.
 
 ```yaml
+chat:
+  slack:                               # Socket Mode app; the terminal harness ignores this
+    bot_token_env: SLACK_BOT_TOKEN     # xoxb- bot token
+    app_token_env: SLACK_APP_TOKEN     # xapp- app-level token with connections:write
+
 llm:
   base_url: http://localhost:8080/v1   # OpenAI-compatible endpoint
   model: qwen3-0b6
@@ -62,6 +67,7 @@ agent:
 
 | Setting | Default | Description |
 |---|---|---|
+| `chat.slack.bot_token_env`, `app_token_env` | (none) | Environment variables holding the Slack bot (`xoxb-`) and app-level (`xapp-`) tokens; both are required when `chat.slack` is present |
 | `llm.base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions` |
 | `llm.model` | (required) | Model name sent with each request |
 | `llm.api_key_env` | (none) | Environment variable holding the API key, sent as a bearer token; requires an `https` `base_url` unless the host is loopback |
