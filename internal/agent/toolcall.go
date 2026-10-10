@@ -11,8 +11,13 @@ import (
 	"github.com/hangxie/chatops/internal/mcp"
 )
 
+// maxLoggedArgumentBytes caps the arguments a debug log line repeats.
+const maxLoggedArgumentBytes = 1024
+
 // runTool runs one call and returns text for the model; failures become "error: ..." text.
 func (a *Agent) runTool(ctx context.Context, catalog *mcp.Catalog, call llm.ToolCall) string {
+	// Arguments are model output that may echo user text, so they are logged only at debug level.
+	a.logger.Debug("tool call requested", "tool", call.Name, "arguments", truncate(call.Arguments, maxLoggedArgumentBytes))
 	tool, ok := catalog.Lookup(call.Name)
 	if !ok {
 		return fmt.Sprintf("error: unknown tool %q", call.Name)
