@@ -59,7 +59,7 @@ agent:
   turn_timeout: 120s
   tool_timeout: 30s
   max_tool_result_bytes: 65536
-  history_turns: 20
+  history_turns: 3
   history_ttl: 24h
   max_concurrent_turns: 4
   max_pending_messages: 64
@@ -81,8 +81,8 @@ agent:
 | `agent.turn_timeout` | `120s` | Wall-clock limit for one turn; a turn that runs past it fails even if a late model or tool reply arrives |
 | `agent.tool_timeout` | `30s` | Limit for one tool call; a timed-out call is reported to the model, which may continue; must not exceed `turn_timeout` |
 | `agent.max_tool_result_bytes` | `65536` | Tool output beyond this is truncated before it reaches the model; a short truncation marker is appended on top of the limit |
-| `agent.history_turns` | `20` | Earlier turns sent as context |
-| `agent.history_ttl` | `24h` | A conversation idle this long (since its last answered message, failed or not) starts over with no history; the terminal harness ignores it |
+| `agent.history_turns` | `3` | Earlier user messages replayed as context, so a follow-up such as "check it again" can resolve. Only user messages are replayed — never assistant answers, tool calls, or tool results — so an earlier reply cannot bias a later turn. `0` makes every request stateless |
+| `agent.history_ttl` | `24h` | When `history_turns` is positive, a conversation idle this long (since its last answered message, failed or not) starts over with no history; the terminal harness ignores it |
 | `agent.max_concurrent_turns` | `4` | Agent turns (model and tool calls) running at once across all conversations; posting a reply does not count; turns within one conversation always run one at a time, each after the previous reply is posted; the terminal harness ignores it |
 | `agent.max_pending_messages` | `64` | Accepted but unfinished messages across all conversations; more are refused as busy; the terminal harness ignores it |
 
