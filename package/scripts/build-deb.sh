@@ -33,6 +33,7 @@ function build() {
     docker cp ${SOURCE_DIR}/package/systemd/chatops.service ${DOCKER_NAME}:/tmp/deb/lib/systemd/system/chatops.service
     docker cp ${SOURCE_DIR}/package/systemd/chatops.env ${DOCKER_NAME}:/tmp/deb/etc/chatops/chatops.env
     docker cp ${SOURCE_DIR}/package/systemd/config.yaml ${DOCKER_NAME}:/tmp/deb/etc/chatops/config.yaml
+    docker cp ${SOURCE_DIR}/package/systemd/status.yaml ${DOCKER_NAME}:/tmp/deb/etc/chatops/status.yaml
     for BIN in ${BINARIES}; do
         docker cp ${SOURCE_DIR}/build/release/${BIN}-${VERSION}-linux-${BIN_ARCH}.gz ${DOCKER_NAME}:/tmp/${BIN}.gz
     done
@@ -48,7 +49,7 @@ function build() {
             install -m 0755 /tmp/\${BIN} /tmp/deb/usr/bin/\${BIN};
         done;
         chmod 0644 /tmp/deb/lib/systemd/system/chatops.service;
-        chmod 0640 /tmp/deb/etc/chatops/chatops.env /tmp/deb/etc/chatops/config.yaml;
+        chmod 0640 /tmp/deb/etc/chatops/chatops.env /tmp/deb/etc/chatops/config.yaml /tmp/deb/etc/chatops/status.yaml;
         cd /tmp;
         dpkg-deb --build /tmp/deb;
     "

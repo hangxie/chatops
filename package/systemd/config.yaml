@@ -17,4 +17,4 @@ mcp:
     builtin:
       transport: stdio
       command: /usr/bin/chatops-mcp
-      args: [serve, --tools, ping]
+      args: [serve, --tools, "ping,status", --status-config, /etc/chatops/status.yaml]

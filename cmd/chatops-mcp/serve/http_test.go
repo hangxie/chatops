@@ -103,7 +103,7 @@ func Test_httpHandler(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			server, err := newServer([]string{"ping"})
+			server, err := newServer(Cmd{Tools: []string{"ping"}})
 			require.NoError(t, err)
 			httpServer := httptest.NewServer(httpHandler(server, tc.serverToken))
 			defer httpServer.Close()
@@ -123,7 +123,7 @@ func Test_httpHandler(t *testing.T) {
 func Test_serveHTTP(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	server, err := newServer([]string{"ping"})
+	server, err := newServer(Cmd{Tools: []string{"ping"}})
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

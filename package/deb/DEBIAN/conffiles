@@ -1,2 +1,3 @@
 /etc/chatops/chatops.env
 /etc/chatops/config.yaml
+/etc/chatops/status.yaml
