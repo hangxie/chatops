@@ -147,7 +147,6 @@ func validateAgent(agent Agent, add addFunc) {
 		{"agent.turn_timeout", agent.TurnTimeout > 0},
 		{"agent.tool_timeout", agent.ToolTimeout > 0},
 		{"agent.max_tool_result_bytes", agent.MaxToolResultBytes > 0},
-		{"agent.history_turns", agent.HistoryTurns > 0},
 		{"agent.history_ttl", agent.HistoryTTL > 0},
 		{"agent.max_concurrent_turns", agent.MaxConcurrentTurns > 0},
 		{"agent.max_pending_messages", agent.MaxPendingMessages > 0},
@@ -156,6 +155,9 @@ func validateAgent(agent Agent, add addFunc) {
 		if !p.ok {
 			add(p.field, "must be positive")
 		}
+	}
+	if agent.HistoryTurns < 0 {
+		add("agent.history_turns", "must not be negative")
 	}
 	if agent.TurnTimeout > 0 && agent.ToolTimeout > agent.TurnTimeout {
 		add("agent.tool_timeout", "must not exceed agent.turn_timeout")

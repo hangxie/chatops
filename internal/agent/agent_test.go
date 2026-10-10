@@ -117,10 +117,8 @@ func Test_Agent_Run_plain_reply(t *testing.T) {
 	turn, err := New(model, tools, testLimits(), nil).Run(context.Background(), history, "hi")
 	require.NoError(t, err)
 	require.Equal(t, "hello there", turn.Reply)
-	require.Equal(t, []llm.Message{
-		{Role: llm.RoleUser, Content: "hi"},
-		{Role: llm.RoleAssistant, Content: "hello there"},
-	}, turn.Messages)
+	// History keeps only the user message, never the assistant answer.
+	require.Equal(t, []llm.Message{{Role: llm.RoleUser, Content: "hi"}}, turn.Messages)
 
 	require.Len(t, model.requests, 1)
 	req := model.requests[0]
@@ -214,16 +212,17 @@ func Test_Agent_Run_tool_rounds(t *testing.T) {
 			require.Equal(t, "done", turn.Reply)
 			require.Equal(t, tc.called, tools.calls)
 
-			want := []llm.Message{
+			// History keeps only the user message, no assistant answer or tool messages.
+			require.Equal(t, []llm.Message{{Role: llm.RoleUser, Content: "do it"}}, turn.Messages)
+
+			// The within-turn loop still sends the full transcript to the model.
+			transcript := []llm.Message{
 				{Role: llm.RoleUser, Content: "do it"},
 				{Role: llm.RoleAssistant, ToolCalls: tc.toolCalls},
 			}
-			want = append(want, tc.results...)
-			want = append(want, llm.Message{Role: llm.RoleAssistant, Content: "done"})
-			require.Equal(t, want, turn.Messages)
-
+			transcript = append(transcript, tc.results...)
 			require.Len(t, model.requests, 2)
-			require.Equal(t, want[:len(want)-1], model.requests[1].Messages[1:])
+			require.Equal(t, transcript, model.requests[1].Messages[1:])
 		})
 	}
 }
@@ -240,12 +239,7 @@ func Test_Agent_Run_iteration_limit(t *testing.T) {
 	require.Equal(t, "I stopped after 2 steps without reaching an answer. Try a narrower request.", turn.Reply)
 	// Tools requested on the last iteration are not run: no model call would read them.
 	require.Len(t, tools.calls, 1)
-	require.Equal(t, []llm.Message{
-		{Role: llm.RoleUser, Content: "loop"},
-		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{ping}},
-		toolMessage("c1", "pong"),
-		{Role: llm.RoleAssistant, Content: turn.Reply},
-	}, turn.Messages)
+	require.Equal(t, []llm.Message{{Role: llm.RoleUser, Content: "loop"}}, turn.Messages)
 }
 
 func Test_Agent_Run_errors(t *testing.T) {

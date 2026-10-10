@@ -73,9 +73,10 @@ type Agent struct {
 	TurnTimeout   time.Duration `yaml:"turn_timeout"`
 	ToolTimeout   time.Duration `yaml:"tool_timeout"`
 	// MaxToolResultBytes bounds tool output; the truncation marker is added on top.
-	MaxToolResultBytes int           `yaml:"max_tool_result_bytes"`
-	HistoryTurns       int           `yaml:"history_turns"`
-	HistoryTTL         time.Duration `yaml:"history_ttl"`
+	MaxToolResultBytes int `yaml:"max_tool_result_bytes"`
+	// HistoryTurns is how many earlier user messages to replay as context; 0 makes each request stateless.
+	HistoryTurns int           `yaml:"history_turns"`
+	HistoryTTL   time.Duration `yaml:"history_ttl"`
 	// MaxConcurrentTurns bounds turns running at once across all conversations.
 	MaxConcurrentTurns int `yaml:"max_concurrent_turns"`
 	// MaxPendingMessages bounds accepted but unfinished messages; more are refused as busy.
@@ -88,7 +89,7 @@ func defaultAgent() Agent {
 		TurnTimeout:        120 * time.Second,
 		ToolTimeout:        30 * time.Second,
 		MaxToolResultBytes: 64 * 1024,
-		HistoryTurns:       20,
+		HistoryTurns:       3,
 		HistoryTTL:         24 * time.Hour,
 		MaxConcurrentTurns: 4,
 		MaxPendingMessages: 64,

@@ -43,7 +43,8 @@ type Agent struct {
 type Turn struct {
 	// Reply is the text to post back to the user.
 	Reply string
-	// Messages are the turn's messages to append to history.
+	// Messages are this turn's cross-turn history: the user message only. Assistant answers,
+	// tool calls, and tool results are never replayed, so an earlier reply cannot bias later turns.
 	Messages []llm.Message
 }
 
@@ -68,8 +69,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, input string) (T
 	messages := make([]llm.Message, 0, len(history)+2)
 	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: systemPrompt})
 	messages = append(messages, history...)
-	turnStart := len(messages)
-	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: input})
+	userMessage := llm.Message{Role: llm.RoleUser, Content: input}
+	messages = append(messages, userMessage)
 
 	for iteration := 1; ; iteration++ {
 		resp, err := a.model.Complete(ctx, llm.Request{Messages: messages, Tools: specs})
@@ -81,15 +82,12 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, input string) (T
 			return Turn{}, fmt.Errorf("model: %w", err)
 		}
 		if len(resp.Message.ToolCalls) == 0 {
-			messages = append(messages, resp.Message)
-			return Turn{Reply: resp.Message.Content, Messages: messages[turnStart:]}, nil
+			return Turn{Reply: resp.Message.Content, Messages: []llm.Message{userMessage}}, nil
 		}
 		if iteration >= a.limits.MaxIterations {
-			// Drop the unanswered tool calls so history stays a valid request sequence.
 			reply := fmt.Sprintf("I stopped after %d steps without reaching an answer. Try a narrower request.", iteration)
 			a.logger.Warn("agent iteration limit reached", "iterations", iteration)
-			messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: reply})
-			return Turn{Reply: reply, Messages: messages[turnStart:]}, nil
+			return Turn{Reply: reply, Messages: []llm.Message{userMessage}}, nil
 		}
 
 		messages = append(messages, resp.Message)

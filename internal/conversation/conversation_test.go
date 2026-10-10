@@ -251,6 +251,21 @@ func Test_Manager_history_bounds(t *testing.T) {
 	}
 }
 
+func Test_Manager_history_disabled(t *testing.T) {
+	runner, out := newFakeRunner(), newReplies()
+	limits := testLimits()
+	limits.HistoryTurns = 0
+	m, _ := start(t, runner, limits)
+
+	for _, input := range []string{"t1", "t2", "t3"} {
+		require.NoError(t, m.Submit(out.message("a", input)))
+		c := runner.next(t)
+		require.Nil(t, c.history, "earlier turns are never replayed when history is disabled")
+		c.release <- nil
+		out.wait(t)
+	}
+}
+
 func Test_Manager_failed_turn_counts_as_activity(t *testing.T) {
 	runner, out := newFakeRunner(), newReplies()
 	m, _ := start(t, runner, testLimits())

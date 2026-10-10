@@ -125,7 +125,10 @@ func (m *Manager) drain(t *thread) {
 		}
 		msg := t.queue[0]
 		t.queue = t.queue[1:]
-		history := t.history(m.now(), m.limits.HistoryTTL)
+		var history []llm.Message
+		if m.limits.HistoryTurns > 0 {
+			history = t.history(m.now(), m.limits.HistoryTTL)
+		}
 		m.mu.Unlock()
 
 		m.answer(t, msg, history)
@@ -145,7 +148,7 @@ func (m *Manager) answer(t *thread, msg Message, history []llm.Message) {
 	}
 	m.mu.Lock()
 	t.updated = m.now()
-	if err == nil {
+	if err == nil && m.limits.HistoryTurns > 0 {
 		t.record(turn.Messages, m.limits.HistoryTurns)
 	}
 	m.mu.Unlock()

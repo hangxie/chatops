@@ -90,7 +90,7 @@ func Test_Parse_defaults(t *testing.T) {
 		TurnTimeout:        120 * time.Second,
 		ToolTimeout:        30 * time.Second,
 		MaxToolResultBytes: 65536,
-		HistoryTurns:       20,
+		HistoryTurns:       3,
 		HistoryTTL:         24 * time.Hour,
 		MaxConcurrentTurns: 4,
 		MaxPendingMessages: 64,
