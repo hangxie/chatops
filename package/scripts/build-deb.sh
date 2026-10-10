@@ -29,7 +29,10 @@ function build() {
 
     # CCI does not support volume mount, so use docker cp instead
     docker cp ${SOURCE_DIR}/package/deb ${DOCKER_NAME}:/tmp/
-    docker exec ${DOCKER_NAME} mkdir -p /tmp/deb/usr/bin
+    docker exec ${DOCKER_NAME} mkdir -p /tmp/deb/usr/bin /tmp/deb/lib/systemd/system /tmp/deb/etc/chatops
+    docker cp ${SOURCE_DIR}/package/systemd/chatops.service ${DOCKER_NAME}:/tmp/deb/lib/systemd/system/chatops.service
+    docker cp ${SOURCE_DIR}/package/systemd/chatops.env ${DOCKER_NAME}:/tmp/deb/etc/chatops/chatops.env
+    docker cp ${SOURCE_DIR}/package/systemd/config.yaml ${DOCKER_NAME}:/tmp/deb/etc/chatops/config.yaml
     for BIN in ${BINARIES}; do
         docker cp ${SOURCE_DIR}/build/release/${BIN}-${VERSION}-linux-${BIN_ARCH}.gz ${DOCKER_NAME}:/tmp/${BIN}.gz
     done
@@ -44,6 +47,8 @@ function build() {
             gunzip /tmp/\${BIN}.gz;
             install -m 0755 /tmp/\${BIN} /tmp/deb/usr/bin/\${BIN};
         done;
+        chmod 0644 /tmp/deb/lib/systemd/system/chatops.service;
+        chmod 0640 /tmp/deb/etc/chatops/chatops.env /tmp/deb/etc/chatops/config.yaml;
         cd /tmp;
         dpkg-deb --build /tmp/deb;
     "

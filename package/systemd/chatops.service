@@ -1,0 +1,27 @@
+[Unit]
+Description=ChatOps Slack daemon
+Documentation=https://github.com/hangxie/chatops
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chatops
+Group=chatops
+Environment=LOG_LEVEL=info LOG_FORMAT=json
+EnvironmentFile=-/etc/chatops/chatops.env
+ExecStart=/usr/bin/chatops serve --config /etc/chatops/config.yaml --log-level ${LOG_LEVEL} --log-format ${LOG_FORMAT}
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
