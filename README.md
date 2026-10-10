@@ -106,7 +106,7 @@ Yes, the builtin server replied pong.
 | Flag | Default | Description |
 |---|---|---|
 | `-c`, `--config` | (required) | Path to the YAML config file |
-| `--log-level` | `warn` | Minimum level of logs written to stderr: `debug`, `info`, `warn`, or `error`; `info` shows each tool call |
+| `--log-level` | `warn` | Minimum level of logs written to stderr: `debug`, `info`, `warn`, or `error`; `info` shows each tool call, and `debug` adds the arguments the model passed; see [Debug logs](#debug-logs) |
 
 A failed turn (model unreachable, turn timeout) prints `error: ...` and the session continues; the failed turn is not added to history.
 
@@ -126,8 +126,18 @@ export SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-...
 | Flag | Default | Description |
 |---|---|---|
 | `-c`, `--config` | (required) | Path to the YAML config file |
-| `--log-level` | `info` | Minimum level of logs written to stderr: `debug`, `info`, `warn`, or `error` |
+| `--log-level` | `info` | Minimum level of logs written to stderr: `debug`, `info`, `warn`, or `error`; `debug` adds each tool call's arguments; see [Debug logs](#debug-logs) |
 | `--log-format` | `text` | Log format on stderr: `text` or `json` |
+
+### Debug logs
+
+At `--log-level debug`, both `chat` and `serve` log a `tool call requested` line with the arguments the model passed to each tool, up to 1 KiB, which shows which tool and inputs the model chose:
+
+```text
+level=DEBUG msg="tool call requested" tool=builtin__service_status arguments="{\"service\": \"openai\"}"
+```
+
+Turn it on only while troubleshooting. Credentials never appear there: Slack tokens, the LLM API key, and MCP tokens and `secret_env` values are read by the processes themselves and never reach the model. The arguments can, however, repeat anything the model has seen, including what users typed (such as a password pasted into a question) and earlier tool results. At `info` and above, `serve` logs Slack user and conversation IDs but never message text. Under systemd, logs go to the journal, which is usually readable by the `adm` and `systemd-journal` groups, a wider audience than `/etc/chatops/chatops.env`.
 
 How it answers:
 
