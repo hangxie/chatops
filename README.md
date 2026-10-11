@@ -2,7 +2,7 @@
 
 `chatops` connects a chat platform to an OpenAI-compatible language model and to tools served over the [Model Context Protocol](https://modelcontextprotocol.io/specification) (MCP). The model chooses which tools to call, ChatOps enforces authorization and approval, and the answer is posted back to the chat thread.
 
-This project is under early development: `chatops serve` answers Slack messages, `chatops chat` runs the same agent in a terminal, and `chatops-mcp` serves the `ping`, `service_status`, and read-only Kubernetes node tools (`node_list`, `node_status`, `node_resources`). Authorization policy and approvals are not implemented yet.
+This project is under early development: `chatops serve --chat <names>` answers messages from the selected chat backends (Slack, or a local terminal), and `chatops-mcp` serves the `ping`, `service_status`, and read-only Kubernetes node tools (`node_list`, `node_status`, `node_resources`). Authorization policy and approvals are not implemented yet.
 
 ## Binaries
 
@@ -31,7 +31,8 @@ The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.y
 
 | Setting | Default | Description |
 |---|---|---|
-| `chat.slack.bot_token_env`, `app_token_env` | (none) | Environment variables holding the Slack bot (`xoxb-`) and app-level (`xapp-`) tokens; both are required when `chat.slack` is present |
+| `chat.<name>.type` | (required) | Chat backend kind: `slack` or `stdio`; `<name>` is a free-form id selected on the command line with `--chat` |
+| `chat.<name>.bot_token_env`, `app_token_env` | (none) | slack only: environment variables holding the Slack bot (`xoxb-`) and app-level (`xapp-`) tokens; both required |
 | `llm.base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions` |
 | `llm.model` | (required) | Model name sent with each request |
 | `llm.api_key_env` | (none) | Environment variable holding the API key, sent as a bearer token; requires an `https` `base_url` unless the host is loopback |
@@ -48,9 +49,9 @@ The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.y
 | `agent.tool_timeout` | `30s` | Limit for one tool call; a timed-out call is reported to the model, which may continue; must not exceed `turn_timeout` |
 | `agent.max_tool_result_bytes` | `65536` | Tool output beyond this is truncated before it reaches the model; a short truncation marker is appended on top of the limit |
 | `agent.history_turns` | `0` | Earlier user messages replayed as context so a follow-up such as "check it again" can resolve. `0` (the default) sends no history, so every request is stateless. See [Conversation history](#conversation-history) for the trade-off |
-| `agent.history_ttl` | `24h` | When `history_turns` is positive, a conversation idle this long (since its last answered message, failed or not) starts over with no history; the terminal harness ignores it |
-| `agent.max_concurrent_turns` | `4` | Agent turns (model and tool calls) running at once across all conversations; posting a reply does not count; turns within one conversation always run one at a time, each after the previous reply is posted; the terminal harness ignores it |
-| `agent.max_pending_messages` | `64` | Accepted but unfinished messages across all conversations; more are refused as busy; the terminal harness ignores it |
+| `agent.history_ttl` | `24h` | When `history_turns` is positive, a conversation idle this long (since its last answered message, failed or not) starts over with no history |
+| `agent.max_concurrent_turns` | `4` | Agent turns (model and tool calls) running at once across all conversations; posting a reply does not count; turns within one conversation always run one at a time, each after the previous reply is posted |
+| `agent.max_pending_messages` | `64` | Accepted but unfinished messages across all conversations; more are refused as busy |
 
 Each model-facing tool is named `<server>__<tool>`, for example `builtin__ping`. A stdio server inherits only `PATH` and `HOME` from `chatops`, plus its configured `env` and `secret_env`, so chat and model credentials never reach tool processes unless a `secret_env` entry names them. All servers must be reachable at startup.
 
@@ -68,13 +69,36 @@ Higher values (`3`, `5`, …) feel the most conversational and let references re
 
 Whatever the value, a strong `system_prompt` helps — the packaged prompt makes the model decide first whether a message is an operational request its tools can cover, decline anything else (greetings and small talk included) with a fixed sentence rather than engaging, and otherwise answer only the latest request, resolving implicit references from history. History older than `agent.history_ttl` is dropped, so an idle conversation starts fresh.
 
-## Chat in the terminal
+## Chat backends
 
-`chatops chat` is a development harness: it runs the same agent loop a chat backend will use, with one conversation kept in memory. Type a message per line; `/quit`, `/exit`, or end of input stops it.
+`chatops serve` runs the daemon against one or more named chat backends. Backends are declared in the `chat:` map, each with a `type` and a free-form name, and `--chat` selects which ones to run (comma-separated, required, no default). Several can run at once, all sharing one agent and conversation manager. See [`docs/chat.md`](docs/chat.md) for the design.
+
+```yaml
+chat:
+  eng-slack:
+    type: slack
+    bot_token_env: SLACK_BOT_TOKEN
+    app_token_env: SLACK_APP_TOKEN
+  console:
+    type: stdio
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `-c`, `--config` | (required) | Path to the YAML config file |
+| `--chat` | (required) | Comma-separated backend names from the `chat:` map (e.g. `--chat eng-slack` or `--chat eng-slack,console`) |
+| `--log-level` | `info` | Minimum level of logs written to stderr: `debug`, `info`, `warn`, or `error`; `debug` adds each tool call's arguments; see [Debug logs](#debug-logs) |
+| `--log-format` | `text` | Log format on stderr: `text` or `json` |
+
+Startup aborts if a selected backend is absent from the config or invalid. On shutdown, in-flight turns and their replies are given a short grace period to finish before the daemon exits.
+
+### `stdio` — interactive terminal
+
+The `stdio` backend is an interactive development harness: one conversation on stdin/stdout, so it needs a terminal and is not for an unattended daemon (under systemd it reads immediate EOF and exits). Type a message per line; `/quit`, `/exit`, or end of input stops it. A failed turn (model unreachable, turn timeout) prints `error: ...` and the session continues.
 
 ```bash
 make build
-./build/chatops chat --config config.yaml
+./build/chatops serve --config config.yaml --chat console
 ```
 
 ```text
@@ -83,35 +107,22 @@ Yes, the builtin server replied pong.
 >
 ```
 
-| Flag | Default | Description |
-|---|---|---|
-| `-c`, `--config` | (required) | Path to the YAML config file |
-| `--log-level` | `warn` | Minimum level of logs written to stderr: `debug`, `info`, `warn`, or `error`; `info` shows each tool call, and `debug` adds the arguments the model passed; see [Debug logs](#debug-logs) |
+### `slack` — Socket Mode
 
-A failed turn (model unreachable, turn timeout) prints `error: ...` and the session continues; the failed turn is not added to history.
-
-## Serve Slack
-
-`chatops serve` answers Slack messages over Socket Mode, so it needs no public endpoint. It requires the `chat.slack` config section.
+The `slack` backend answers Slack messages over Socket Mode, so it needs no public endpoint.
 
 1. At https://api.slack.com/apps, choose "Create New App", then "From an app manifest", and paste `scripts/slack-app-manifest.json`; edit the name first if you want a different bot name.
-2. Install the app to the workspace and export its `xoxb-` bot token; generate an app-level `xapp-` token with the `connections:write` scope and export it too. The variable names are whatever `chat.slack.bot_token_env` and `chat.slack.app_token_env` say.
+2. Install the app to the workspace and export its `xoxb-` bot token; generate an app-level `xapp-` token with the `connections:write` scope and export it too. The variable names are whatever the backend's `bot_token_env` and `app_token_env` say.
 3. Start the daemon:
 
 ```bash
 export SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-...
-./build/chatops serve --config config.yaml
+./build/chatops serve --config config.yaml --chat eng-slack
 ```
-
-| Flag | Default | Description |
-|---|---|---|
-| `-c`, `--config` | (required) | Path to the YAML config file |
-| `--log-level` | `info` | Minimum level of logs written to stderr: `debug`, `info`, `warn`, or `error`; `debug` adds each tool call's arguments; see [Debug logs](#debug-logs) |
-| `--log-format` | `text` | Log format on stderr: `text` or `json` |
 
 ### Debug logs
 
-At `--log-level debug`, both `chat` and `serve` log a `tool call requested` line with the arguments the model passed to each tool, up to 1 KiB, which shows which tool and inputs the model chose:
+At `--log-level debug`, `serve` logs a `tool call requested` line with the arguments the model passed to each tool, up to 1 KiB, which shows which tool and inputs the model chose:
 
 ```text
 level=DEBUG msg="tool call requested" tool=builtin__service_status arguments="{\"service\": \"openai\"}"
@@ -129,7 +140,7 @@ How it answers:
 - A failed turn gets a short apology in the thread; the details, which may include internal endpoints, go only to the log.
 - Replies are posted as plain text with Slack link previews turned off, so model output cannot mention `@channel` or users, or make Slack fetch a URL.
 - Every message is answered with every configured tool available; per-user permissions come in a later release, and `serve` logs a warning at startup until then. Until that release, configure only read-only tools, and only invite the app where all members may use all of its tools.
-- Stopping the daemon (SIGINT or SIGTERM) cancels turns in progress without replying, and conversation history is lost.
+- Stopping the daemon (SIGINT or SIGTERM) stops accepting new messages and gives in-flight turns and their replies a short grace period to finish before exiting; anything still running past it is cancelled, and conversation history is lost.
 
 ### Run as a service
 
@@ -140,7 +151,7 @@ The deb and rpm packages install both binaries, a `chatops` system user, and a s
 | `/etc/chatops/config.yaml` | Config file; set `llm.base_url` and `llm.model` before starting |
 | `/etc/chatops/status.yaml` | Services the `status` tool group checks; edit to add services or product names |
 | `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `LLM_API_KEY`) and `LOG_LEVEL`/`LOG_FORMAT`; readable only by root and the `chatops` group |
-| `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml` with JSON logs to the journal; restarts on failure |
+| `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml --chat ${CHAT}` (default `homelab`, the backend named in the sample config) with JSON logs to the journal; restarts on failure |
 
 Both files are kept across upgrades. The service is not started on install; once both files are filled in:
 

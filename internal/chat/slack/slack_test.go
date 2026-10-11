@@ -336,10 +336,10 @@ func Test_New(t *testing.T) {
 	t.Setenv("CHATOPS_TEST_SLACK_BOT", "xoxb-1")
 	t.Setenv("CHATOPS_TEST_SLACK_APP", "xapp-1")
 
-	_, err := New(config.Slack{BotTokenEnv: "CHATOPS_TEST_SLACK_BOT", AppTokenEnv: "CHATOPS_TEST_SLACK_APP"}, nil)
+	_, err := New(config.ChatBackend{BotTokenEnv: "CHATOPS_TEST_SLACK_BOT", AppTokenEnv: "CHATOPS_TEST_SLACK_APP"}, nil)
 	require.NoError(t, err)
-	_, err = New(config.Slack{BotTokenEnv: "CHATOPS_TEST_SLACK_MISSING", AppTokenEnv: "CHATOPS_TEST_SLACK_APP"}, nil)
+	_, err = New(config.ChatBackend{BotTokenEnv: "CHATOPS_TEST_SLACK_MISSING", AppTokenEnv: "CHATOPS_TEST_SLACK_APP"}, nil)
 	require.EqualError(t, err, "slack bot token: environment variable CHATOPS_TEST_SLACK_MISSING is not set")
-	_, err = New(config.Slack{BotTokenEnv: "CHATOPS_TEST_SLACK_BOT", AppTokenEnv: "CHATOPS_TEST_SLACK_MISSING"}, nil)
+	_, err = New(config.ChatBackend{BotTokenEnv: "CHATOPS_TEST_SLACK_BOT", AppTokenEnv: "CHATOPS_TEST_SLACK_MISSING"}, nil)
 	require.EqualError(t, err, "slack app token: environment variable CHATOPS_TEST_SLACK_MISSING is not set")
 }

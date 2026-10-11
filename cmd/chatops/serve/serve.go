@@ -1,39 +1,38 @@
-// Package serve implements `chatops serve`, the Slack daemon.
+// Package serve implements `chatops serve`, the chat-backend daemon.
 package serve
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/hangxie/chatops/internal/agent"
+	"github.com/hangxie/chatops/internal/chat"
 	"github.com/hangxie/chatops/internal/config"
 	"github.com/hangxie/chatops/internal/conversation"
 	"github.com/hangxie/chatops/internal/llm"
 	"github.com/hangxie/chatops/internal/mcp"
-	"github.com/hangxie/chatops/internal/slack"
 )
 
-// receiver delivers chat messages until ctx ends; *slack.Adapter satisfies it.
-type receiver interface {
-	Run(ctx context.Context, submit func(conversation.Message) error) error
-}
+// shutdownGrace bounds how long in-flight turns and their replies may finish after a shutdown signal.
+const shutdownGrace = 30 * time.Second
 
 // Cmd is the kong command for serve.
 type Cmd struct {
-	Config    string `short:"c" required:"" placeholder:"FILE" help:"Path to the YAML config file."`
-	LogLevel  string `default:"info" help:"Minimum level of logs written to stderr: debug, info, warn, or error."`
-	LogFormat string `default:"text" help:"Log format on stderr: text or json."`
+	Config    string   `short:"c" required:"" placeholder:"FILE" help:"Path to the YAML config file."`
+	Chat      []string `required:"" sep:"," placeholder:"NAME" help:"Comma-separated chat backend names to run, from the config's chat: map."`
+	LogLevel  string   `default:"info" help:"Minimum level of logs written to stderr: debug, info, warn, or error."`
+	LogFormat string   `default:"text" help:"Log format on stderr: text or json."`
 
-	// errOut and newReceiver override stderr and the Slack adapter in tests.
-	errOut      io.Writer
-	newReceiver func(config.Slack, *slog.Logger) (receiver, error)
+	// errOut and selectBackends override stderr and backend construction in tests.
+	errOut         io.Writer
+	selectBackends func(config.Chat, []string, *slog.Logger) ([]chat.Named, error)
 }
 
-// Run connects to Slack, the model, and MCP servers, then answers messages until cancelled.
+// Run connects to the chat backends, the model, and the MCP servers, then answers messages until cancelled.
 func (c Cmd) Run(ctx context.Context) error {
 	logger, err := c.logger()
 	if err != nil {
@@ -43,10 +42,7 @@ func (c Cmd) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Chat.Slack == nil {
-		return errors.New("serve requires chat.slack in the config")
-	}
-	chat, err := c.receiverFactory()(*cfg.Chat.Slack, logger)
+	backends, err := c.selector()(cfg.Chat, c.Chat, logger)
 	if err != nil {
 		return err
 	}
@@ -64,16 +60,22 @@ func (c Cmd) Run(ctx context.Context) error {
 		}
 	}()
 
-	turnCtx, cancelTurns := context.WithCancel(ctx)
-	conversations := conversation.New(turnCtx, agent.New(model, tools, cfg.Agent, logger), cfg.Agent, logger)
-	defer func() {
-		cancelTurns()
-		conversations.Wait()
-	}()
-	logger.Info("chatops serving", "servers", len(cfg.MCP.Servers), "tools", len(tools.Catalog().Tools()))
-	// Remove when per-user policy lands; until then deploy only read-only tools or trusted channels.
+	// The manager's lifetime is independent of the backend contexts so that, once chat.Run returns (clean
+	// shutdown or a fatal backend error), Shutdown can still drain accepted turns and deliver their replies.
+	conversations := conversation.New(context.Background(), agent.New(model, tools, cfg.Agent, logger), cfg.Agent, logger)
+	defer conversations.Shutdown(shutdownGrace)
+
+	logger.Info("chatops serving", "backends", len(backends), "servers", len(cfg.MCP.Servers), "tools", len(tools.Catalog().Tools()))
+	// Remove when per-user policy lands; until then deploy only read-only tools or trusted backends.
 	logger.Warn("authorization is not enabled: every user who can message the bot can call every tool")
-	return chat.Run(ctx, conversations.Submit)
+	return chat.Run(ctx, backends, conversations.Submit)
+}
+
+func (c Cmd) selector() func(config.Chat, []string, *slog.Logger) ([]chat.Named, error) {
+	if c.selectBackends != nil {
+		return c.selectBackends
+	}
+	return chat.Select
 }
 
 func (c Cmd) logger() (*slog.Logger, error) {
@@ -96,13 +98,4 @@ func (c Cmd) logOutput() io.Writer {
 		return c.errOut
 	}
 	return os.Stderr
-}
-
-func (c Cmd) receiverFactory() func(config.Slack, *slog.Logger) (receiver, error) {
-	if c.newReceiver != nil {
-		return c.newReceiver
-	}
-	return func(cfg config.Slack, logger *slog.Logger) (receiver, error) {
-		return slack.New(cfg, logger)
-	}
 }

@@ -12,6 +12,7 @@ import (
 const fullConfig = `
 chat:
   slack:
+    type: slack
     bot_token_env: SLACK_BOT_TOKEN
     app_token_env: SLACK_APP_TOKEN
 llm:
@@ -49,7 +50,7 @@ func Test_Parse_full(t *testing.T) {
 	cfg, err := Parse([]byte(fullConfig))
 	require.NoError(t, err)
 	require.Equal(t, &Config{
-		Chat: Chat{Slack: &Slack{BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}},
+		Chat: Chat{"slack": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}},
 		LLM: LLM{
 			BaseURL:         "https://llama-cpp.homelab/v1",
 			Model:           "qwen3-0b6",
@@ -99,7 +100,7 @@ func Test_Parse_defaults(t *testing.T) {
 		MaxPendingMessages: 64,
 	}, cfg.Agent)
 	require.Empty(t, cfg.MCP.Servers)
-	require.Nil(t, cfg.Chat.Slack)
+	require.Empty(t, cfg.Chat)
 }
 
 func Test_Parse_sampling(t *testing.T) {
@@ -183,7 +184,7 @@ func Test_Load(t *testing.T) {
 func Test_Load_packaged_sample(t *testing.T) {
 	cfg, err := Load(filepath.Join("..", "..", "package", "systemd", "config.yaml"))
 	require.NoError(t, err)
-	require.Equal(t, &Slack{BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}, cfg.Chat.Slack)
+	require.Equal(t, Chat{"homelab": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}}, cfg.Chat)
 	require.Equal(t, "/usr/bin/chatops-mcp", cfg.MCP.Servers["builtin"].Command)
 	// The shipped prompt must carry the behavioral guard and the Qwen3 thinking switch.
 	require.Contains(t, cfg.Agent.SystemPrompt, "Answer only the latest user request")

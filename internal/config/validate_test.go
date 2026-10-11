@@ -25,13 +25,19 @@ func Test_Config_Validate(t *testing.T) {
 		mutate func(*Config)
 		errs   []string
 	}{
-		"valid":             {mutate: func(*Config) {}},
-		"slack":             {mutate: func(c *Config) { c.Chat.Slack = &Slack{BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"} }},
-		"slack-missing-env": {mutate: func(c *Config) { c.Chat.Slack = &Slack{} }, errs: []string{"chat.slack.bot_token_env: required", "chat.slack.app_token_env: required"}},
-		"slack-bad-env": {mutate: func(c *Config) { c.Chat.Slack = &Slack{BotTokenEnv: "1BOT", AppTokenEnv: "A-B"} }, errs: []string{
+		"valid": {mutate: func(*Config) {}},
+		"slack": {mutate: func(c *Config) {
+			c.Chat = Chat{"slack": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}}
+		}},
+		"stdio":             {mutate: func(c *Config) { c.Chat = Chat{"console": {Type: ChatStdio}} }},
+		"slack-missing-env": {mutate: func(c *Config) { c.Chat = Chat{"slack": {Type: ChatSlack}} }, errs: []string{"chat.slack.bot_token_env: required", "chat.slack.app_token_env: required"}},
+		"slack-bad-env": {mutate: func(c *Config) { c.Chat = Chat{"slack": {Type: ChatSlack, BotTokenEnv: "1BOT", AppTokenEnv: "A-B"}} }, errs: []string{
 			`chat.slack.bot_token_env: invalid environment variable name "1BOT"`,
 			`chat.slack.app_token_env: invalid environment variable name "A-B"`,
 		}},
+		"chat-bad-type":     {mutate: func(c *Config) { c.Chat = Chat{"x": {Type: "irc"}} }, errs: []string{`chat.x.type: must be "slack" or "stdio", got "irc"`}},
+		"chat-bad-name":     {mutate: func(c *Config) { c.Chat = Chat{"Bad_Name": {Type: ChatStdio}} }, errs: []string{`chat.Bad_Name: name must match ^[a-z][a-z0-9-]{0,31}$`}},
+		"stdio-with-env":    {mutate: func(c *Config) { c.Chat = Chat{"console": {Type: ChatStdio, BotTokenEnv: "X"}} }, errs: []string{"chat.console: bot_token_env and app_token_env are not allowed for a stdio backend"}},
 		"no-servers":        {mutate: func(c *Config) { c.MCP.Servers = nil }},
 		"missing-base-url":  {mutate: func(c *Config) { c.LLM.BaseURL = "" }, errs: []string{"llm.base_url: required"}},
 		"relative-base-url": {mutate: func(c *Config) { c.LLM.BaseURL = "localhost/v1" }, errs: []string{`llm.base_url: must be an absolute http or https URL, got "localhost/v1"`}},

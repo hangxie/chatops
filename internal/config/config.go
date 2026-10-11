@@ -26,13 +26,20 @@ type Config struct {
 	Agent Agent `yaml:"agent"`
 }
 
-// Chat configures chat backends; `chatops serve` requires Slack, the terminal harness needs none.
-type Chat struct {
-	Slack *Slack `yaml:"slack"`
-}
+// Chat backend types.
+const (
+	ChatSlack = "slack"
+	ChatStdio = "stdio"
+)
 
-// Slack names the environment variables holding the bot (xoxb) and app-level (xapp) tokens.
-type Slack struct {
+// Chat maps a backend name to its definition; `chatops serve --chat` selects which ones run.
+type Chat map[string]ChatBackend
+
+// ChatBackend configures one chat backend; Type selects the implementation and the fields it reads.
+type ChatBackend struct {
+	Type string `yaml:"type"`
+
+	// slack: environment variables holding the bot (xoxb) and app-level (xapp) tokens.
 	BotTokenEnv string `yaml:"bot_token_env"`
 	AppTokenEnv string `yaml:"app_token_env"`
 }
