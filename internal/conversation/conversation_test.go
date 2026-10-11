@@ -382,6 +382,14 @@ func Test_Manager_sweeps_idle_conversations(t *testing.T) {
 	require.NoError(t, m.Submit(out.message("old", "x")))
 	runner.next(t).release <- nil
 	out.wait(t)
+	// The reply is delivered before drain marks the thread idle, so wait for
+	// "old" to finish; otherwise the next Submit's sweep may still see it running.
+	require.Eventually(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		th, ok := m.threads["old"]
+		return ok && !th.running
+	}, time.Second, time.Millisecond)
 	now = now.Add(time.Hour)
 	require.NoError(t, m.Submit(out.message("new", "y")))
 	running := runner.next(t)
