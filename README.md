@@ -160,27 +160,20 @@ journalctl -u chatops -f
 | `--status-config` | (none) | YAML file listing the services the `status` group checks; required with `--tools status` |
 | `--token-env` | (none) | Environment variable holding the bearer token HTTP clients must send; required when `--http` is not a loopback address |
 
-| Tool group | Tools | Description |
-|---|---|---|
-| `ping` | `ping` | Takes no arguments and replies `pong`; read-only, for smoke tests |
-| `status` | `service_status` | Reports the public status and active incidents of the services listed in the `--status-config` file, or of `all` of them; read-only, needs outbound HTTPS and no credentials. A status page that cannot be read is reported as `unknown` |
+### Built-in MCPs
 
-### Service status config
+Each tool group has a design doc under [`docs/`](docs/); the overall architecture is [`docs/DESIGN.md`](docs/DESIGN.md).
 
-The `status` group has no built-in services: every service comes from the `--status-config` file. `package/systemd/status.yaml` is the shipped list (GitHub, Anthropic, Cloudflare, OpenAI, Google Gemini, Google Workspace, Slack, and Docker Hub), installed as `/etc/chatops/status.yaml` and kept across upgrades. Services are reported in file order; restart `chatops serve` after editing.
+| Tool group | Tools | Purpose | Design |
+|---|---|---|---|
+| `ping` | `ping` | Connectivity smoke test; replies `pong` | [`docs/mcp-ping.md`](docs/mcp-ping.md) |
+| `status` | `service_status` | Public status and active incidents of external services, from their status pages | [`docs/mcp-status.md`](docs/mcp-status.md) |
 
-See [`package/systemd/status.yaml`](package/systemd/status.yaml) for the shipped list to copy from. Each entry has a `name` (the tool argument: lowercase letters, digits, `-`), a `display` name shown in results, a `covers` list of the products users ask about, and a `type` with its endpoint `url` (see the table below). A `google` entry instead lists `feeds`, each a `url` and an optional `products` filter.
+A read-only Kubernetes group is in design and not yet selectable with `--tools`; see [`docs/mcp-k8s.md`](docs/mcp-k8s.md).
 
-| `type` | Endpoint |
-|---|---|
-| `statuspage` | Atlassian Statuspage `.../api/v2/summary.json`, used by many vendors |
-| `statusio` | Status.io `https://api.status.io/1.0/status/<page id>` |
-| `slack` | `https://slack-status.com/api/v2.0.0/current` |
-| `google` | Google Cloud or Workspace `incidents.json` feeds, combined and optionally narrowed to product IDs |
+The `status` group has no built-in services: every service comes from the `--status-config` file. `package/systemd/status.yaml` is the shipped list, installed as `/etc/chatops/status.yaml` and kept across upgrades; edit it to add services or product names and restart the server. See [`docs/mcp-status.md`](docs/mcp-status.md) for the entry schema and supported page types.
 
-`covers` is what lets a small model map a question to a service: when the bot answers "is codex down?" from the wrong service or not at all, add the product name to the right service's `covers`. Unknown fields, duplicate names, and URLs that are not absolute `http` or `https` stop `chatops-mcp` at startup.
-
-To exercise it by hand over stdio, send an MCP `initialize` handshake followed by a tool call. The trailing `sleep` keeps stdin open until the replies are written:
+To exercise the server by hand over stdio, send an MCP `initialize` handshake followed by a tool call. The trailing `sleep` keeps stdin open until the replies are written:
 
 ```bash
 (printf '%s\n' \
