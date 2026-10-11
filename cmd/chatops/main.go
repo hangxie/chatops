@@ -6,15 +6,13 @@ import (
 
 	"github.com/alecthomas/kong"
 
-	"github.com/hangxie/chatops/cmd/chatops/chat"
 	"github.com/hangxie/chatops/cmd/chatops/serve"
 	"github.com/hangxie/chatops/internal/command"
 	"github.com/hangxie/chatops/internal/version"
 )
 
 var cli struct {
-	Serve   serve.Cmd   `cmd:"" help:"Answer Slack messages with the agent."`
-	Chat    chat.Cmd    `cmd:"" help:"Chat with the agent in the terminal (development harness)."`
+	Serve   serve.Cmd   `cmd:"" help:"Answer messages from the selected chat backends with the agent."`
 	Version version.Cmd `cmd:"" help:"Show build version."`
 }
 

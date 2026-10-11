@@ -373,6 +373,43 @@ func Test_Manager_shutdown(t *testing.T) {
 	require.ErrorIs(t, m.Submit(out.message("a", "late")), ErrClosed)
 }
 
+func Test_Manager_Shutdown_drains(t *testing.T) {
+	runner, out := newFakeRunner(), newReplies()
+	m := New(context.Background(), runner, testLimits(), nil)
+
+	require.NoError(t, m.Submit(out.message("a", "hi")))
+	call := runner.next(t)
+
+	done := make(chan struct{})
+	go func() { m.Shutdown(5 * time.Second); close(done) }()
+
+	call.release <- nil
+	require.Equal(t, "re: hi", out.wait(t)) // reply delivered within the grace period
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("graceful shutdown did not return")
+	}
+}
+
+func Test_Manager_Shutdown_refuses_new(t *testing.T) {
+	m := New(context.Background(), newFakeRunner(), testLimits(), nil)
+	m.Shutdown(time.Second) // no work in flight, returns at once
+	require.ErrorIs(t, m.Submit(newReplies().message("a", "late")), ErrClosed)
+}
+
+func Test_Manager_Shutdown_grace_timeout(t *testing.T) {
+	runner, out := newFakeRunner(), newReplies()
+	m := New(context.Background(), runner, testLimits(), nil)
+
+	require.NoError(t, m.Submit(out.message("a", "stuck")))
+	call := runner.next(t)
+	m.Shutdown(0) // grace elapses immediately, cancelling the in-flight turn
+
+	require.ErrorIs(t, call.ctx.Err(), context.Canceled)
+	require.Empty(t, out.got, "a turn cut short by the grace timeout posts no reply")
+}
+
 func Test_Manager_sweeps_idle_conversations(t *testing.T) {
 	runner, out := newFakeRunner(), newReplies()
 	m, _ := start(t, runner, testLimits())

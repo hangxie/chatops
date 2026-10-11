@@ -1,8 +1,10 @@
 # chatops serve configuration; see https://github.com/hangxie/chatops#configuration
 # Secrets go in /etc/chatops/chatops.env, never in this file.
 
+# Each entry is a named chat backend; "chatops serve --chat <names>" picks which ones to run.
 chat:
-  slack:
+  homelab:
+    type: slack
     bot_token_env: SLACK_BOT_TOKEN
     app_token_env: SLACK_APP_TOKEN
 

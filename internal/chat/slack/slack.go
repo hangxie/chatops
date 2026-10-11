@@ -56,7 +56,7 @@ type Adapter struct {
 }
 
 // New builds an adapter from the bot and app-level tokens named in cfg.
-func New(cfg config.Slack, logger *slog.Logger) (*Adapter, error) {
+func New(cfg config.ChatBackend, logger *slog.Logger) (*Adapter, error) {
 	botToken, err := config.Secret(cfg.BotTokenEnv)
 	if err != nil {
 		return nil, fmt.Errorf("slack bot token: %w", err)

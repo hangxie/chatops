@@ -42,6 +42,7 @@ type Runner interface {
 // Manager queues messages per conversation and keeps each conversation's recent history.
 type Manager struct {
 	ctx    context.Context
+	cancel context.CancelFunc
 	runner Runner
 	limits config.Agent
 	logger *slog.Logger
@@ -50,6 +51,7 @@ type Manager struct {
 	turns  sync.WaitGroup
 
 	mu        sync.Mutex
+	closing   bool
 	pending   int
 	threads   map[string]*thread
 	lastSweep time.Time
@@ -64,13 +66,15 @@ type thread struct {
 	updated time.Time
 }
 
-// New builds a manager whose turns run under ctx; cancel ctx, then call Wait, to shut down.
+// New builds a manager whose turns run under ctx; call Shutdown to stop it (or cancel ctx for a hard stop).
 func New(ctx context.Context, runner Runner, limits config.Agent, logger *slog.Logger) *Manager {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	return &Manager{
 		ctx:     ctx,
+		cancel:  cancel,
 		runner:  runner,
 		limits:  limits,
 		logger:  logger,
@@ -84,7 +88,7 @@ func New(ctx context.Context, runner Runner, limits config.Agent, logger *slog.L
 func (m *Manager) Submit(msg Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.ctx.Err() != nil {
+	if m.closing || m.ctx.Err() != nil {
 		return ErrClosed
 	}
 	if m.pending >= m.limits.MaxPendingMessages {
@@ -110,6 +114,26 @@ func (m *Manager) Submit(msg Message) error {
 // Wait blocks until every turn has finished; call it after cancelling the manager's context.
 func (m *Manager) Wait() {
 	m.turns.Wait()
+}
+
+// Shutdown stops accepting messages (Submit then returns ErrClosed) and lets in-flight turns and their
+// replies finish within grace; if that elapses it cancels the manager's context to abort what remains.
+func (m *Manager) Shutdown(grace time.Duration) {
+	m.mu.Lock()
+	m.closing = true
+	m.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() { m.turns.Wait(); close(done) }()
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		m.cancel()
+		<-done
+	}
+	m.cancel()
 }
 
 // drain answers t's queued messages in order, then exits until the next Submit.

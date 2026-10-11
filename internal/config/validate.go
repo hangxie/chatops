@@ -23,9 +23,8 @@ func (c Config) Validate() error {
 		errs = append(errs, fmt.Errorf("%s: %s", field, fmt.Sprintf(format, args...)))
 	}
 
-	if c.Chat.Slack != nil {
-		requireEnvName("chat.slack.bot_token_env", c.Chat.Slack.BotTokenEnv, add)
-		requireEnvName("chat.slack.app_token_env", c.Chat.Slack.AppTokenEnv, add)
+	for _, name := range sortedChat(c.Chat) {
+		validateChatBackend(name, c.Chat[name], add)
 	}
 	validateLLM(c.LLM, add)
 	ids := make([]string, 0, len(c.MCP.Servers))
@@ -48,6 +47,25 @@ func requireEnvName(field, name string, add addFunc) {
 		add(field, "required")
 	case !envNamePattern.MatchString(name):
 		add(field, "invalid environment variable name %q", name)
+	}
+}
+
+func validateChatBackend(name string, b ChatBackend, add addFunc) {
+	prefix := "chat." + name
+	if !serverIDPattern.MatchString(name) {
+		add(prefix, "name must match %s", serverIDPattern)
+		return
+	}
+	switch b.Type {
+	case ChatSlack:
+		requireEnvName(prefix+".bot_token_env", b.BotTokenEnv, add)
+		requireEnvName(prefix+".app_token_env", b.AppTokenEnv, add)
+	case ChatStdio:
+		if b.BotTokenEnv != "" || b.AppTokenEnv != "" {
+			add(prefix, "%s and %s are not allowed for a stdio backend", "bot_token_env", "app_token_env")
+		}
+	default:
+		add(prefix+".type", "must be %q or %q, got %q", ChatSlack, ChatStdio, b.Type)
 	}
 }
 
@@ -222,6 +240,15 @@ func isPlaintextRemote(raw string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip == nil || !ip.IsLoopback()
+}
+
+func sortedChat(c Chat) []string {
+	names := make([]string, 0, len(c))
+	for name := range c {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 func sortedKeys(m map[string]string) []string {

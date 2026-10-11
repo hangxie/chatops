@@ -8,9 +8,9 @@ Wants=network-online.target
 Type=simple
 User=chatops
 Group=chatops
-Environment=LOG_LEVEL=info LOG_FORMAT=json
+Environment=LOG_LEVEL=info LOG_FORMAT=json CHAT=homelab
 EnvironmentFile=-/etc/chatops/chatops.env
-ExecStart=/usr/bin/chatops serve --config /etc/chatops/config.yaml --log-level ${LOG_LEVEL} --log-format ${LOG_FORMAT}
+ExecStart=/usr/bin/chatops serve --config /etc/chatops/config.yaml --chat ${CHAT} --log-level ${LOG_LEVEL} --log-format ${LOG_FORMAT}
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true
