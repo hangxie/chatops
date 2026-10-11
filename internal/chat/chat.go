@@ -8,6 +8,7 @@ import (
 
 	"github.com/hangxie/chatops/internal/chat/slack"
 	"github.com/hangxie/chatops/internal/chat/stdio"
+	"github.com/hangxie/chatops/internal/chat/unix"
 	"github.com/hangxie/chatops/internal/config"
 	"github.com/hangxie/chatops/internal/conversation"
 )
@@ -31,6 +32,8 @@ func New(name string, cfg config.ChatBackend, logger *slog.Logger) (Backend, err
 		return slack.New(cfg, logger)
 	case config.ChatStdio:
 		return stdio.New(cfg, logger), nil
+	case config.ChatUnix:
+		return unix.New(cfg, logger)
 	default:
 		return nil, fmt.Errorf("chat backend %q: unknown type %q", name, cfg.Type)
 	}

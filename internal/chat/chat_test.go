@@ -21,6 +21,13 @@ func Test_New(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, fmt.Sprintf("%T", stdioBackend), "*stdio.")
 
+	unixBackend, err := New("ops", config.ChatBackend{Type: config.ChatUnix, Path: "/run/chatops.sock"}, nil)
+	require.NoError(t, err)
+	require.Contains(t, fmt.Sprintf("%T", unixBackend), "*unix.")
+
+	_, err = New("bad-unix", config.ChatBackend{Type: config.ChatUnix, Path: "/run/x.sock", Mode: "nope"}, nil)
+	require.ErrorContains(t, err, "unix socket mode")
+
 	_, err = New("x", config.ChatBackend{Type: "irc"}, nil)
 	require.EqualError(t, err, `chat backend "x": unknown type "irc"`)
 }

@@ -31,8 +31,9 @@ The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.y
 
 | Setting | Default | Description |
 |---|---|---|
-| `chat.<name>.type` | (required) | Chat backend kind: `slack` or `stdio`; `<name>` is a free-form id selected on the command line with `--chat` |
+| `chat.<name>.type` | (required) | Chat backend kind: `slack`, `stdio`, or `unix`; `<name>` is a free-form id selected on the command line with `--chat` |
 | `chat.<name>.bot_token_env`, `app_token_env` | (none) | slack only: environment variables holding the Slack bot (`xoxb-`) and app-level (`xapp-`) tokens; both required |
+| `chat.<name>.path`, `mode` | (none) | unix only: filesystem path of the socket to create (required) and optional octal permission bits (e.g. `0600`, the default owner-only) |
 | `llm.base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions` |
 | `llm.model` | (required) | Model name sent with each request |
 | `llm.api_key_env` | (none) | Environment variable holding the API key, sent as a bearer token; requires an `https` `base_url` unless the host is loopback |
@@ -118,6 +119,15 @@ The `slack` backend answers Slack messages over Socket Mode, so it needs no publ
 ```bash
 export SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-...
 ./build/chatops serve --config config.yaml --chat eng-slack
+```
+
+### `unix` — local socket
+
+The `unix` backend lets a client on the same host reach a running daemon over a Unix domain socket: one conversation per connection, a message per line. Access control is the socket file's permissions (`mode`, default owner-only), so it needs no token; it is the right way to drive a daemon locally, unlike `stdio`. A live socket refuses a second daemon's startup, and an exclusive lock file (`<path>.lock`) held for the daemon's lifetime keeps two instances from racing on the same path. For example, with a backend named `ops` of `type: unix` and `path: /run/chatops/ops.sock`:
+
+```bash
+./build/chatops serve --config config.yaml --chat homelab,ops   # Slack plus the local socket
+nc -U /run/chatops/ops.sock                                      # then talk to it, one message per line
 ```
 
 ### Debug logs

@@ -30,6 +30,7 @@ type Config struct {
 const (
 	ChatSlack = "slack"
 	ChatStdio = "stdio"
+	ChatUnix  = "unix"
 )
 
 // Chat maps a backend name to its definition; `chatops serve --chat` selects which ones run.
@@ -42,6 +43,10 @@ type ChatBackend struct {
 	// slack: environment variables holding the bot (xoxb) and app-level (xapp) tokens.
 	BotTokenEnv string `yaml:"bot_token_env"`
 	AppTokenEnv string `yaml:"app_token_env"`
+
+	// unix: filesystem path of the socket to create, and optional octal permission bits (e.g. "0600").
+	Path string `yaml:"path"`
+	Mode string `yaml:"mode"`
 }
 
 // LLM configures the OpenAI-compatible model endpoint.

@@ -1,6 +1,6 @@
 # chat backends
 
-Status: accepted design; `slack` and `stdio` implemented, others planned ([`DESIGN.md`](DESIGN.md) chat adapter).
+Status: accepted design; `slack`, `stdio`, and `unix` implemented, others planned ([`DESIGN.md`](DESIGN.md) chat adapter).
 
 A chat backend is one way users reach the agent. An interactive terminal, Slack, a Unix socket, a TCP socket, and an HTTP endpoint are all backends: each delivers inbound messages and posts replies, and the agent, conversation, and tool layers are backend-agnostic. The daemon runs one or more named backends at once, all feeding a single conversation manager; a new platform is a new backend, not a new code path.
 
@@ -48,7 +48,7 @@ Implementation status, updated as the work merges:
 |---|---|
 | `stdio` | implemented |
 | `slack` | implemented |
-| `unix` | planned |
+| `unix` | implemented |
 | `http` | planned |
 | `tcp` | planned |
 | `udp` | deferred |
@@ -73,7 +73,7 @@ Slack Socket Mode. One conversation per Slack thread; replies post into the thre
 
 ### `unix`
 
-A Unix domain socket for a client on the same host (`nc -U`, `socat`) to reach a running daemon: one conversation per connection, a message per line, replies written back to the connection. The socket file's filesystem permissions control which local processes may connect — restrict its owner/group — so there is no in-band token. Those permissions gate access but do not identify the individual caller (several users in one group may be allowed), so per-user authorization in Phase 4 needs peer-credential inspection (Linux `SO_PEERCRED`) to populate `User`; until then the sender is the connection. Each connection is a fresh conversation keyed by a unique per-connection ID; writes per connection are serialized, and a disconnect cancels the in-flight turn.
+A Unix domain socket for a client on the same host (`nc -U`, `socat`) to reach a running daemon: one conversation per connection, a message per line, replies written back to the connection. The socket file's filesystem permissions control which local processes may connect — restrict its owner/group — so there is no in-band token. Those permissions gate access but do not identify the individual caller (several users in one group may be allowed), so per-user authorization in Phase 4 needs peer-credential inspection (Linux `SO_PEERCRED`) to populate `User`; until then the sender is the connection. Each connection is a fresh conversation keyed by a unique per-connection ID; one message is answered at a time per connection, and a disconnect ends that connection (a reply still in flight is dropped when its write fails). Replies are written under a deadline so a client that stops reading cannot stall the connection or shutdown. On startup a stale socket from an earlier run is cleared only after a connect probe shows nothing is listening — a live socket refuses startup rather than being unlinked — and closing the listener removes the socket on exit. An exclusive lock file next to the socket (`<path>.lock`), held for the listener's lifetime, serializes the probe/remove/bind sequence, so two daemons cannot race on the same path: the second fails fast. The reply protocol is one line of text, intended for interactive clients (`nc -U`); programmatic framing for multi-line replies (length-prefix or JSON Lines) is future work.
 
 | Parameter | Required | Meaning |
 |---|---|---|
