@@ -102,6 +102,17 @@ func Test_Parse_defaults(t *testing.T) {
 	require.Nil(t, cfg.Chat.Slack)
 }
 
+func Test_Parse_sampling(t *testing.T) {
+	cfg, err := Parse([]byte("llm:\n  base_url: http://localhost:8080/v1\n  model: m\n  sampling:\n    temperature: 0\n    top_p: 0.9\n    seed: 7\n    stop: [\"</s>\"]\nagent:\n  system_prompt: p\n"))
+	require.NoError(t, err)
+	require.Equal(t, Sampling{Temperature: pval(0.0), TopP: pval(0.9), Seed: pval(7), Stop: []string{"</s>"}}, cfg.LLM.Sampling)
+
+	// Omitting the sampling block leaves every parameter unset, so none is sent.
+	bare, err := Parse([]byte("llm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
+	require.NoError(t, err)
+	require.Equal(t, Sampling{}, bare.LLM.Sampling)
+}
+
 func Test_Parse_single_document_marker(t *testing.T) {
 	cfg, err := Parse([]byte("---\nllm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
@@ -178,4 +189,6 @@ func Test_Load_packaged_sample(t *testing.T) {
 	require.Contains(t, cfg.Agent.SystemPrompt, "Answer only the latest user request")
 	require.Contains(t, cfg.Agent.SystemPrompt, "/no_think")
 	require.Equal(t, 0, cfg.Agent.HistoryTurns)
+	require.NotNil(t, cfg.LLM.Sampling.Temperature)
+	require.Equal(t, 0.0, *cfg.LLM.Sampling.Temperature)
 }

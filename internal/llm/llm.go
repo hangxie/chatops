@@ -71,6 +71,7 @@ type Client struct {
 	apiKey          string
 	model           string
 	disableThinking bool
+	sampling        config.Sampling
 }
 
 // New builds a client from config; a nil httpClient uses a default, and deadlines come from ctx.
@@ -97,12 +98,13 @@ func New(cfg config.LLM, httpClient *http.Client) (*Client, error) {
 		apiKey:          apiKey,
 		model:           cfg.Model,
 		disableThinking: cfg.DisableThinking,
+		sampling:        cfg.Sampling,
 	}, nil
 }
 
 // Complete sends req and returns the model's assistant message.
 func (c *Client) Complete(ctx context.Context, req Request) (_ Response, err error) {
-	body, err := json.Marshal(toWireRequest(c.model, c.disableThinking, req))
+	body, err := json.Marshal(toWireRequest(c.model, c.disableThinking, c.sampling, req))
 	if err != nil {
 		return Response{}, fmt.Errorf("llm: encode request: %w", err)
 	}

@@ -43,7 +43,23 @@ type LLM struct {
 	Model     string `yaml:"model"`
 	APIKeyEnv string `yaml:"api_key_env"`
 	// DisableThinking stops small reasoning models from spending the budget on thinking.
-	DisableThinking bool `yaml:"disable_thinking"`
+	DisableThinking bool     `yaml:"disable_thinking"`
+	Sampling        Sampling `yaml:"sampling"`
+}
+
+// Sampling holds optional generation parameters; a nil field is omitted so the endpoint default applies.
+// top_k, min_p, and repetition_penalty are vLLM/llama.cpp extensions that strict OpenAI endpoints reject.
+type Sampling struct {
+	Temperature       *float64 `yaml:"temperature"`
+	TopP              *float64 `yaml:"top_p"`
+	TopK              *int     `yaml:"top_k"`
+	MinP              *float64 `yaml:"min_p"`
+	MaxTokens         *int     `yaml:"max_tokens"`
+	FrequencyPenalty  *float64 `yaml:"frequency_penalty"`
+	PresencePenalty   *float64 `yaml:"presence_penalty"`
+	RepetitionPenalty *float64 `yaml:"repetition_penalty"`
+	Seed              *int     `yaml:"seed"`
+	Stop              []string `yaml:"stop"`
 }
 
 // MCP lists the administrator-configured MCP servers, keyed by server ID.

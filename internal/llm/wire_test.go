@@ -5,7 +5,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hangxie/chatops/internal/config"
 )
+
+func ptr[T any](v T) *T { return &v }
 
 func Test_toWireRequest(t *testing.T) {
 	req := Request{
@@ -21,6 +25,7 @@ func Test_toWireRequest(t *testing.T) {
 
 	tests := map[string]struct {
 		disableThinking bool
+		sampling        config.Sampling
 		want            string
 	}{
 		"plain": {
@@ -52,11 +57,39 @@ func Test_toWireRequest(t *testing.T) {
 				"chat_template_kwargs": {"enable_thinking": false}
 			}`,
 		},
+		"sampling": {
+			sampling: config.Sampling{
+				Temperature:       ptr(0.0),
+				TopP:              ptr(0.9),
+				TopK:              ptr(40),
+				MinP:              ptr(0.05),
+				MaxTokens:         ptr(512),
+				FrequencyPenalty:  ptr(0.1),
+				PresencePenalty:   ptr(-0.1),
+				RepetitionPenalty: ptr(1.1),
+				Seed:              ptr(7),
+				Stop:              []string{"\n\n"},
+			},
+			want: `{
+				"model": "m",
+				"messages": [
+					{"role":"system","content":"be brief"},
+					{"role":"user","content":"ping it"},
+					{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"builtin__ping","arguments":"{}"}}]},
+					{"role":"tool","content":"pong","tool_call_id":"c1"},
+					{"role":"assistant","content":"It replied pong."}
+				],
+				"tools": [{"type":"function","function":{"name":"builtin__ping","description":"Ping.","parameters":{"type":"object"}}}],
+				"temperature": 0, "top_p": 0.9, "top_k": 40, "min_p": 0.05, "max_tokens": 512,
+				"frequency_penalty": 0.1, "presence_penalty": -0.1, "repetition_penalty": 1.1,
+				"seed": 7, "stop": ["\n\n"]
+			}`,
+		},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			encoded, err := json.Marshal(toWireRequest("m", tc.disableThinking, req))
+			encoded, err := json.Marshal(toWireRequest("m", tc.disableThinking, tc.sampling, req))
 			require.NoError(t, err)
 			require.JSONEq(t, tc.want, string(encoded))
 		})
@@ -64,7 +97,7 @@ func Test_toWireRequest(t *testing.T) {
 }
 
 func Test_toWireRequest_no_tools(t *testing.T) {
-	encoded, err := json.Marshal(toWireRequest("m", false, Request{Messages: []Message{{Role: RoleUser, Content: "hi"}}}))
+	encoded, err := json.Marshal(toWireRequest("m", false, config.Sampling{}, Request{Messages: []Message{{Role: RoleUser, Content: "hi"}}}))
 	require.NoError(t, err)
 	require.JSONEq(t, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, string(encoded))
 }

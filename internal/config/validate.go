@@ -67,6 +67,40 @@ func validateLLM(llm LLM, add addFunc) {
 			add("llm.api_key_env", "requires an https base_url unless the host is loopback, got %q", llm.BaseURL)
 		}
 	}
+	validateSampling(llm.Sampling, add)
+}
+
+func validateSampling(s Sampling, add addFunc) {
+	inRange := []struct {
+		field  string
+		value  *float64
+		lo, hi float64
+	}{
+		{"llm.sampling.temperature", s.Temperature, 0, 2},
+		{"llm.sampling.top_p", s.TopP, 0, 1},
+		{"llm.sampling.min_p", s.MinP, 0, 1},
+		{"llm.sampling.frequency_penalty", s.FrequencyPenalty, -2, 2},
+		{"llm.sampling.presence_penalty", s.PresencePenalty, -2, 2},
+	}
+	for _, r := range inRange {
+		if r.value != nil && (*r.value < r.lo || *r.value > r.hi) {
+			add(r.field, "must be between %g and %g, got %g", r.lo, r.hi, *r.value)
+		}
+	}
+	if s.RepetitionPenalty != nil && *s.RepetitionPenalty <= 0 {
+		add("llm.sampling.repetition_penalty", "must be positive")
+	}
+	if s.TopK != nil && *s.TopK < 0 {
+		add("llm.sampling.top_k", "must not be negative")
+	}
+	if s.MaxTokens != nil && *s.MaxTokens <= 0 {
+		add("llm.sampling.max_tokens", "must be positive")
+	}
+	for i, stop := range s.Stop {
+		if stop == "" {
+			add("llm.sampling.stop", "entry %d is empty", i)
+		}
+	}
 }
 
 func validateServer(id string, server Server, add addFunc) {

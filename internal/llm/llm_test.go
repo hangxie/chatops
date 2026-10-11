@@ -78,6 +78,32 @@ func Test_Client_Complete(t *testing.T) {
 	require.Equal(t, "none", gotBody["reasoning_effort"])
 }
 
+func Test_Client_Complete_sends_sampling(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(data, &gotBody)
+		_, _ = io.WriteString(w, textResponse)
+	}))
+	defer server.Close()
+
+	temp := 0.0
+	client, err := New(config.LLM{BaseURL: server.URL, Model: "m", Sampling: config.Sampling{Temperature: &temp}}, server.Client())
+	require.NoError(t, err)
+	_, err = client.Complete(context.Background(), Request{Messages: []Message{{Role: RoleUser, Content: "x"}}})
+	require.NoError(t, err)
+	require.Equal(t, float64(0), gotBody["temperature"])
+
+	// A client without sampling must omit the field entirely.
+	gotBody = nil
+	plain, err := New(config.LLM{BaseURL: server.URL, Model: "m"}, server.Client())
+	require.NoError(t, err)
+	_, err = plain.Complete(context.Background(), Request{Messages: []Message{{Role: RoleUser, Content: "x"}}})
+	require.NoError(t, err)
+	_, ok := gotBody["temperature"]
+	require.False(t, ok)
+}
+
 func Test_Client_Complete_keyless_sends_no_auth(t *testing.T) {
 	sawAuth := "unset"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
