@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -64,8 +65,17 @@ func validateChatBackend(name string, b ChatBackend, add addFunc) {
 		if b.BotTokenEnv != "" || b.AppTokenEnv != "" {
 			add(prefix, "%s and %s are not allowed for a stdio backend", "bot_token_env", "app_token_env")
 		}
+	case ChatUnix:
+		if b.Path == "" {
+			add(prefix+".path", "required for a unix backend")
+		}
+		if b.Mode != "" {
+			if _, err := strconv.ParseUint(b.Mode, 8, 32); err != nil {
+				add(prefix+".mode", "must be octal permission bits (e.g. 0600), got %q", b.Mode)
+			}
+		}
 	default:
-		add(prefix+".type", "must be %q or %q, got %q", ChatSlack, ChatStdio, b.Type)
+		add(prefix+".type", "must be one of %q, %q, %q; got %q", ChatSlack, ChatStdio, ChatUnix, b.Type)
 	}
 }
 
