@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/hangxie/chatops/internal/config"
 )
 
 // Chat Completions wire types, limited to the fields chatops uses.
@@ -18,6 +20,17 @@ type wireRequest struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// ChatTemplateKwargs carries enable_thinking for vLLM, SGLang, and llama.cpp.
 	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
+	// Sampling parameters; a nil pointer is omitted so the endpoint default applies.
+	Temperature       *float64 `json:"temperature,omitempty"`
+	TopP              *float64 `json:"top_p,omitempty"`
+	TopK              *int     `json:"top_k,omitempty"`
+	MinP              *float64 `json:"min_p,omitempty"`
+	MaxTokens         *int     `json:"max_tokens,omitempty"`
+	FrequencyPenalty  *float64 `json:"frequency_penalty,omitempty"`
+	PresencePenalty   *float64 `json:"presence_penalty,omitempty"`
+	RepetitionPenalty *float64 `json:"repetition_penalty,omitempty"`
+	Seed              *int     `json:"seed,omitempty"`
+	Stop              []string `json:"stop,omitempty"`
 }
 
 type wireMessage struct {
@@ -62,7 +75,7 @@ type wireResponse struct {
 // thinkBlock matches a leading reasoning block some servers leave even with thinking disabled.
 var thinkBlock = regexp.MustCompile(`(?s)^\s*<think>.*?</think>`)
 
-func toWireRequest(model string, disableThinking bool, req Request) wireRequest {
+func toWireRequest(model string, disableThinking bool, sampling config.Sampling, req Request) wireRequest {
 	wire := wireRequest{Model: model, Messages: make([]wireMessage, 0, len(req.Messages))}
 	for _, msg := range req.Messages {
 		wire.Messages = append(wire.Messages, toWireMessage(msg))
@@ -78,6 +91,16 @@ func toWireRequest(model string, disableThinking bool, req Request) wireRequest 
 		wire.ReasoningEffort = "none"
 		wire.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
 	}
+	wire.Temperature = sampling.Temperature
+	wire.TopP = sampling.TopP
+	wire.TopK = sampling.TopK
+	wire.MinP = sampling.MinP
+	wire.MaxTokens = sampling.MaxTokens
+	wire.FrequencyPenalty = sampling.FrequencyPenalty
+	wire.PresencePenalty = sampling.PresencePenalty
+	wire.RepetitionPenalty = sampling.RepetitionPenalty
+	wire.Seed = sampling.Seed
+	wire.Stop = sampling.Stop
 	return wire
 }
 

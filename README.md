@@ -38,6 +38,17 @@ llm:
   model: qwen3-0b6
   # api_key_env: LLM_API_KEY           # omit for keyless local endpoints
   disable_thinking: true
+  sampling:                            # all optional; omit one to use the endpoint default
+    temperature: 0                     # 0 is greedy/deterministic, best for ops
+    # top_p: 0.9
+    # top_k: 40                        # vLLM/llama.cpp extension
+    # min_p: 0.0                       # vLLM/llama.cpp extension
+    # max_tokens: 1024
+    # frequency_penalty: 0
+    # presence_penalty: 0
+    # repetition_penalty: 1.0          # vLLM/llama.cpp extension
+    # seed: 42
+    # stop: ["</s>"]
 
 mcp:
   servers:
@@ -85,6 +96,7 @@ agent:
 | `llm.model` | (required) | Model name sent with each request |
 | `llm.api_key_env` | (none) | Environment variable holding the API key, sent as a bearer token; requires an `https` `base_url` unless the host is loopback |
 | `llm.disable_thinking` | `false` | Send `reasoning_effort: "none"` and `chat_template_kwargs: {"enable_thinking": false}`; leave off for endpoints that reject unknown fields |
+| `llm.sampling.*` | (unset) | Optional generation parameters, each sent only when set so an unset one keeps the endpoint default: `temperature` (0–2), `top_p` (0–1), `max_tokens` (>0), `frequency_penalty`/`presence_penalty` (−2–2), `seed`, and `stop` (list of strings). `top_k` (≥0), `min_p` (0–1), and `repetition_penalty` (>0) are vLLM/llama.cpp extensions that strict OpenAI endpoints reject. `temperature: 0` is greedy and deterministic, the most reliable choice for an ops assistant |
 | `mcp.servers.<id>.transport` | (required) | `stdio` or `streamable-http` |
 | `mcp.servers.<id>.command`, `args` | | stdio only: the server process to launch |
 | `mcp.servers.<id>.env` | (none) | stdio only: extra environment variables; values are stored in the file, so never put secrets here |
