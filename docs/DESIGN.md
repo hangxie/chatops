@@ -2,7 +2,7 @@
 
 Status: accepted design. Repository: https://github.com/hangxie/chatops.
 
-This is the conclusions-only design of record. It describes the accepted target architecture, not only what is built today; features not yet implemented are identified in the Status section (§11). Per-MCP designs live beside it: [`mcp-ping.md`](mcp-ping.md), [`mcp-status.md`](mcp-status.md), [`mcp-k8s.md`](mcp-k8s.md). Usage lives in [`../README.md`](../README.md).
+This is the conclusions-only design of record. It describes the accepted target architecture, not only what is built today; features not yet implemented are identified in the Status section (§11). Per-MCP designs live beside it: [`mcp-ping.md`](mcp-ping.md), [`mcp-status.md`](mcp-status.md), [`mcp-k8s.md`](mcp-k8s.md); the chat backend design is [`chat.md`](chat.md). Usage lives in [`../README.md`](../README.md).
 
 ## 1. Summary
 
