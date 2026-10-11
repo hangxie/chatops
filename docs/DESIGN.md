@@ -101,7 +101,7 @@ Tool descriptions, schemas, annotations, and outputs from any server are untrust
 
 `chatops-mcp` is a standalone MCP server built with the same SDK. It serves stdio by default and Streamable HTTP when asked. Over HTTP, `--token-env NAME` requires a static bearer token and `serve` refuses a non-loopback bind without one; TLS is left to a fronting proxy. Tool groups live under `pkg/mcpserver/<group>` as public packages, wired explicitly in `cmd/chatops-mcp` (no `init()` or blank-import registration). Each group declares honest `readOnlyHint`/`destructiveHint` annotations even though the daemon does not trust them for granting access.
 
-Implemented groups: [`ping`](mcp-ping.md) and [`status`](mcp-status.md). Planned: [`kubernetes`](mcp-k8s.md) (Phase 3, in progress).
+Implemented groups: [`ping`](mcp-ping.md), [`status`](mcp-status.md), and [`kubernetes`](mcp-k8s.md) (read-only node tools; Phase 3 node slice).
 
 ## 7. LLM and conversation
 
@@ -158,7 +158,7 @@ There is no top-level `main.go`; `main` packages live under `cmd/<binary>/`, and
 - **Phase 1 — local vertical slice:** done. `chatops-mcp serve` + `ping`, `internal/config`, `internal/mcp`, `internal/llm`, `internal/agent`, `chatops chat`. Verified live against `http://media.xiehang.com:8080/v1` with `qwen3-1.7b-q8`.
 - **Phase 2 — Slack:** done. Socket Mode, threading, retry deduplication, per-thread serialization.
 - **Phase 2.5 — service status:** done. The `status` group.
-- **Phase 3 — Kubernetes:** in progress. Read-only inspection, starting with the node slice; see [`mcp-k8s.md`](mcp-k8s.md).
+- **Phase 3 — Kubernetes:** node slice done (`node_list`, `node_status`, `node_resources`, read-only); deployment and pod tools next. See [`mcp-k8s.md`](mcp-k8s.md).
 - **Phase 4 — policy and approval:** not started. Roles, rules, execution-time checks, suspended turns, Slack approval buttons; a startup warning is logged until policy exists, so until then deploy only read-only tools or fully trusted channels.
 - **Phase 5 — hardening:** not started. Reconnect handling, structured audit events, metrics, integration tests.
 
