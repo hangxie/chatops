@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -36,16 +37,19 @@ func Test_newServer(t *testing.T) {
 		tools  []string
 		errMsg string
 	}{
-		"ping":                  {cmd: Cmd{Tools: []string{"ping"}}, tools: []string{"ping"}},
-		"status":                {cmd: Cmd{Tools: []string{"status"}, StatusConfig: packagedStatus}, tools: []string{"service_status"}},
-		"both":                  {cmd: Cmd{Tools: []string{"ping", "status"}, StatusConfig: packagedStatus}, tools: []string{"ping", "service_status"}},
-		"duplicate":             {cmd: Cmd{Tools: []string{"ping", "ping"}}, errMsg: `tool group "ping" listed more than once`},
-		"unknown":               {cmd: Cmd{Tools: []string{"bogus"}}, errMsg: `unknown tool group "bogus" (available: ping, status)`},
-		"none":                  {cmd: Cmd{}, errMsg: "at least one tool group is required"},
-		"blank-is-bogus":        {cmd: Cmd{Tools: []string{""}}, errMsg: `unknown tool group "" (available: ping, status)`},
-		"status-without-config": {cmd: Cmd{Tools: []string{"status"}}, errMsg: `tool group "status": --status-config is required`},
-		"status-config-missing": {cmd: Cmd{Tools: []string{"status"}, StatusConfig: "/nonexistent/status.yaml"}, errMsg: `tool group "status": read status config: open /nonexistent/status.yaml: no such file or directory`},
-		"config-without-status": {cmd: Cmd{Tools: []string{"ping"}, StatusConfig: packagedStatus}, errMsg: "--status-config requires --tools status"},
+		"ping":                       {cmd: Cmd{Tools: []string{"ping"}}, tools: []string{"ping"}},
+		"status":                     {cmd: Cmd{Tools: []string{"status"}, StatusConfig: packagedStatus}, tools: []string{"service_status"}},
+		"both":                       {cmd: Cmd{Tools: []string{"ping", "status"}, StatusConfig: packagedStatus}, tools: []string{"ping", "service_status"}},
+		"duplicate":                  {cmd: Cmd{Tools: []string{"ping", "ping"}}, errMsg: `tool group "ping" listed more than once`},
+		"unknown":                    {cmd: Cmd{Tools: []string{"bogus"}}, errMsg: `unknown tool group "bogus" (available: kubernetes, ping, status)`},
+		"none":                       {cmd: Cmd{}, errMsg: "at least one tool group is required"},
+		"blank-is-bogus":             {cmd: Cmd{Tools: []string{""}}, errMsg: `unknown tool group "" (available: kubernetes, ping, status)`},
+		"status-without-config":      {cmd: Cmd{Tools: []string{"status"}}, errMsg: `tool group "status": --status-config is required`},
+		"status-config-missing":      {cmd: Cmd{Tools: []string{"status"}, StatusConfig: "/nonexistent/status.yaml"}, errMsg: `tool group "status": read status config: open /nonexistent/status.yaml: no such file or directory`},
+		"config-without-status":      {cmd: Cmd{Tools: []string{"ping"}, StatusConfig: packagedStatus}, errMsg: "--status-config requires --tools status"},
+		"kube-flag-without-group":    {cmd: Cmd{Tools: []string{"ping"}, Kubeconfig: "/tmp/kubeconfig"}, errMsg: "--kubeconfig, --kube-context, and --node-disk-usage require --tools kubernetes"},
+		"kube-context-without-group": {cmd: Cmd{Tools: []string{"ping"}, KubeContext: "ctx"}, errMsg: "--kubeconfig, --kube-context, and --node-disk-usage require --tools kubernetes"},
+		"disk-usage-without-group":   {cmd: Cmd{Tools: []string{"ping"}, NodeDiskUsage: true}, errMsg: "--kubeconfig, --kube-context, and --node-disk-usage require --tools kubernetes"},
 	}
 
 	for name, tc := range tests {
@@ -70,6 +74,25 @@ func Test_newServer(t *testing.T) {
 			require.Equal(t, tc.tools, toolNames(t, session))
 		})
 	}
+}
+
+func Test_newServer_kubernetes(t *testing.T) {
+	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig")
+	content := "apiVersion: v1\nkind: Config\nclusters:\n- cluster: {server: https://cluster.example:6443}\n  name: c\ncontexts:\n- context: {cluster: c, user: u}\n  name: ctx\ncurrent-context: ctx\nusers:\n- name: u\n  user: {token: t}\n"
+	require.NoError(t, os.WriteFile(kubeconfig, []byte(content), 0o600))
+
+	server, err := newServer(Cmd{Tools: []string{"kubernetes"}, Kubeconfig: kubeconfig})
+	require.NoError(t, err)
+
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+	require.NoError(t, err)
+	defer func() { _ = serverSession.Close() }()
+	session, err := newClient().Connect(context.Background(), clientTransport, nil)
+	require.NoError(t, err)
+	defer func() { _ = session.Close() }()
+
+	require.ElementsMatch(t, []string{"node_list", "node_status", "node_resources"}, toolNames(t, session))
 }
 
 func Test_Cmd_Run_transport(t *testing.T) {

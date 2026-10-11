@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hangxie/chatops/internal/version"
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes"
 	"github.com/hangxie/chatops/pkg/mcpserver/ping"
 	"github.com/hangxie/chatops/pkg/mcpserver/status"
 )
@@ -22,16 +23,21 @@ var groups = map[string]func(*mcp.Server, Cmd) error{
 		ping.Register(server)
 		return nil
 	},
-	"status": registerStatus,
+	"status":     registerStatus,
+	"kubernetes": registerKubernetes,
 }
 
 // Cmd is the kong command for serve.
 type Cmd struct {
-	Tools    []string `help:"Comma-separated tool groups to serve (available: ping, status)." default:"ping" sep:","`
+	Tools    []string `help:"Comma-separated tool groups to serve (available: kubernetes, ping, status)." default:"ping" sep:","`
 	HTTP     string   `help:"Serve Streamable HTTP at /mcp on this address (e.g. 127.0.0.1:8080) instead of stdio." placeholder:"ADDR"`
 	TokenEnv string   `help:"Environment variable holding the bearer token HTTP clients must send; required when --http is not a loopback address." placeholder:"NAME"`
 	// StatusConfig lists the services the status group checks; nothing is built in.
 	StatusConfig string `help:"YAML file listing the services the status tool group checks; required with --tools status." placeholder:"FILE" type:"path"`
+	// Kubeconfig, KubeContext, and NodeDiskUsage configure the kubernetes group; all require --tools kubernetes.
+	Kubeconfig    string `name:"kubeconfig" help:"Path to the kubeconfig for the kubernetes tool group; honored exactly with no fallback." placeholder:"FILE" type:"path"`
+	KubeContext   string `name:"kube-context" help:"Kubeconfig context for the kubernetes tool group; forces kubeconfig-based resolution." placeholder:"NAME"`
+	NodeDiskUsage bool   `name:"node-disk-usage" help:"Collect node disk utilization via the kubelet Summary API in node_resources; needs nodes/proxy RBAC."`
 
 	// transport overrides stdio and listener overrides --http listening in tests.
 	transport mcp.Transport
@@ -100,6 +106,9 @@ func newServer(c Cmd) (*mcp.Server, error) {
 	if c.StatusConfig != "" && !seen["status"] {
 		return nil, errors.New("--status-config requires --tools status")
 	}
+	if (c.Kubeconfig != "" || c.KubeContext != "" || c.NodeDiskUsage) && !seen["kubernetes"] {
+		return nil, errors.New("--kubeconfig, --kube-context, and --node-disk-usage require --tools kubernetes")
+	}
 	return server, nil
 }
 
@@ -112,6 +121,14 @@ func registerStatus(server *mcp.Server, c Cmd) error {
 		return err
 	}
 	return status.Register(server, cfg)
+}
+
+func registerKubernetes(server *mcp.Server, c Cmd) error {
+	return kubernetes.Register(server, kubernetes.Config{
+		Kubeconfig:    c.Kubeconfig,
+		Context:       c.KubeContext,
+		NodeDiskUsage: c.NodeDiskUsage,
+	})
 }
 
 func availableGroups() string {

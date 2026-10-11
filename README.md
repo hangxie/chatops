@@ -2,7 +2,7 @@
 
 `chatops` connects a chat platform to an OpenAI-compatible language model and to tools served over the [Model Context Protocol](https://modelcontextprotocol.io/specification) (MCP). The model chooses which tools to call, ChatOps enforces authorization and approval, and the answer is posted back to the chat thread.
 
-This project is under early development: `chatops serve` answers Slack messages, `chatops chat` runs the same agent in a terminal, and `chatops-mcp` serves the `ping` and `service_status` tools. Authorization policy and approvals are not implemented yet.
+This project is under early development: `chatops serve` answers Slack messages, `chatops chat` runs the same agent in a terminal, and `chatops-mcp` serves the `ping`, `service_status`, and read-only Kubernetes node tools (`node_list`, `node_status`, `node_resources`). Authorization policy and approvals are not implemented yet.
 
 ## Binaries
 
@@ -158,6 +158,9 @@ journalctl -u chatops -f
 | `--tools` | `ping` | Comma-separated tool groups to serve |
 | `--http` | (stdio) | Serve Streamable HTTP at `/mcp` on this address instead of stdio |
 | `--status-config` | (none) | YAML file listing the services the `status` group checks; required with `--tools status` |
+| `--kubeconfig` | (none) | Path to the kubeconfig for the `kubernetes` group, honored exactly with no fallback; requires `--tools kubernetes` |
+| `--kube-context` | (none) | Kubeconfig context for the `kubernetes` group; forces kubeconfig-based resolution; requires `--tools kubernetes` |
+| `--node-disk-usage` | `false` | Collect node disk utilization in `node_resources` via the kubelet Summary API; needs `nodes/proxy` RBAC; requires `--tools kubernetes` |
 | `--token-env` | (none) | Environment variable holding the bearer token HTTP clients must send; required when `--http` is not a loopback address |
 
 ### Built-in MCPs
@@ -168,8 +171,35 @@ Each tool group has a design doc under [`docs/`](docs/); the overall architectur
 |---|---|---|---|
 | `ping` | `ping` | Connectivity smoke test; replies `pong` | [`docs/mcp-ping.md`](docs/mcp-ping.md) |
 | `status` | `service_status` | Public status and active incidents of external services, from their status pages | [`docs/mcp-status.md`](docs/mcp-status.md) |
+| `kubernetes` | `node_list`, `node_status`, `node_resources` | Read-only Kubernetes node inspection: roster, health, and resource capacity/utilization | [`docs/mcp-k8s.md`](docs/mcp-k8s.md) |
 
-A read-only Kubernetes group is in design and not yet selectable with `--tools`; see [`docs/mcp-k8s.md`](docs/mcp-k8s.md).
+The `kubernetes` group connects with `--kubeconfig`/`--kube-context`, else in-cluster credentials when running as a pod, else the default local kubeconfig. See [`docs/mcp-k8s.md`](docs/mcp-k8s.md) for the connection model. Node utilization needs metrics-server; without it, capacity and allocatable are still reported. The group needs only read-only RBAC:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: chatops-node-reader
+rules:
+- apiGroups: [""]
+  resources: [nodes, pods]
+  verbs: [get, list]
+- apiGroups: ["metrics.k8s.io"]
+  resources: [nodes]
+  verbs: [get, list]
+```
+
+This role is read-only, but note that `list` on `pods` is cluster-wide: the `node_resources` pod count lists pods in all namespaces, so the credentials can read pod metadata across the whole cluster. Scope the binding or namespaces accordingly if that is broader than intended.
+
+`node_resources` reports CPU/memory/disk/pod capacity and allocatable from the node API, CPU and memory utilization from the metrics API, and the pod count from the pod API. Node disk utilization is opt-in: pass `--node-disk-usage` to read it from the kubelet Summary API, which additionally requires `get` on `nodes/proxy`:
+
+```yaml
+- apiGroups: [""]
+  resources: [nodes/proxy]
+  verbs: [get]
+```
+
+`nodes/proxy` is a powerful permission that reaches every kubelet endpoint, not just the Summary API, so grant it only when node disk reporting is wanted. The Summary API reports the kubelet's own filesystem usage, not arbitrary host-mounted disks (a separate data disk or Ceph OSD will not appear); use Prometheus with node-exporter for comprehensive host disk monitoring.
 
 The `status` group has no built-in services: every service comes from the `--status-config` file. `package/systemd/status.yaml` is the shipped list, installed as `/etc/chatops/status.yaml` and kept across upgrades; edit it to add services or product names and restart the server. See [`docs/mcp-status.md`](docs/mcp-status.md) for the entry schema and supported page types.
 
