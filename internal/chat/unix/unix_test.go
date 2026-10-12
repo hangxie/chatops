@@ -3,10 +3,10 @@ package unix
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -70,10 +70,11 @@ func Test_Run(t *testing.T) {
 }
 
 func Test_Run_listen_error(t *testing.T) {
-	// A path past the sun_path limit binds-fails after the lock and stale checks succeed.
-	long := filepath.Join(socketDir(t), strings.Repeat("x", 60)+".sock")
-	a, err := New(config.ChatBackend{Type: config.ChatUnix, Path: long}, nil)
+	// Bind failure is reached only after the lock and stale checks succeed, so use a real path.
+	path := filepath.Join(socketDir(t), "s.sock")
+	a, err := New(config.ChatBackend{Type: config.ChatUnix, Path: path}, nil)
 	require.NoError(t, err)
+	a.listen = func(string) (net.Listener, error) { return nil, errors.New("bind refused") }
 	require.ErrorContains(t, a.Run(context.Background(), echoSubmit), "listen unix")
 }
 
