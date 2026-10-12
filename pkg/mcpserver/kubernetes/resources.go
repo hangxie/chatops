@@ -73,7 +73,7 @@ func getNodeResources(ctx context.Context, c clients, name string) (NodeResource
 	// Disk utilization is an opt-in capability via the kubelet Summary API (needs nodes/proxy RBAC).
 	// Its denominator is the kubelet filesystem capacity, not the ephemeral-storage allocatable above.
 	if c.diskUsage == nil {
-		notes = append(notes, "disk utilization not collected (kubelet Summary API disabled; enable --node-disk-usage, which needs nodes/proxy RBAC)")
+		notes = append(notes, "disk utilization not collected: collection is disabled in chatops-mcp; add --node-disk-usage to chatops-mcp serve (requires get on nodes/proxy); kubelet Summary API availability was not checked")
 	} else if used, total, ok, err := c.diskUsage(ctx, name); err != nil {
 		notes = append(notes, "disk utilization unavailable: "+err.Error())
 	} else if ok {

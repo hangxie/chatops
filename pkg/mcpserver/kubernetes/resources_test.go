@@ -118,7 +118,11 @@ func Test_getNodeResources_disk_disabled(t *testing.T) {
 	out, err := getNodeResources(context.Background(), c, "worker-0")
 	require.NoError(t, err)
 	require.Empty(t, out.Usage.Disk)
-	require.Contains(t, out.UsageNote, "disk utilization not collected")
+	require.Equal(t, "disk utilization not collected: collection is disabled in chatops-mcp; add --node-disk-usage to chatops-mcp serve (requires get on nodes/proxy); kubelet Summary API availability was not checked", out.UsageNote)
+	require.Empty(t, out.DiskTotal)
+	require.Equal(t, "4", out.Usage.CPU)
+	require.Equal(t, "8Gi", out.Usage.Memory)
+	require.Equal(t, "1", out.Usage.Pods)
 }
 
 func Test_getNodeResources_disk_error(t *testing.T) {
