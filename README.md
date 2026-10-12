@@ -29,6 +29,8 @@ make build
 
 The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.yaml) is the canonical, runnable reference: it carries every setting with inline comments and is verified by the test suite. Copy it as a starting point; the table below is the authoritative explanation of each setting.
 
+The packaged MCP server enables `ping`, `status`, and `kubernetes`, including node disk collection. Provide `/etc/chatops/kubeconfig`, readable by the `chatops` service user, with the Kubernetes permissions described below.
+
 | Setting | Default | Description |
 |---|---|---|
 | `chat.<name>.type` | (required) | Chat backend kind: `slack`, `stdio`, or `unix`; `<name>` is a free-form id selected on the command line with `--chat` |
@@ -219,6 +221,19 @@ This role is read-only, but note that `list` on `pods` is cluster-wide: the `nod
   resources: [nodes/proxy]
   verbs: [get]
 ```
+
+Set this flag on `chatops-mcp serve`, or add it to that server's `mcp.servers.<name>.args` in the ChatOps configuration, then restart ChatOps to relaunch the stdio server. For example, a Kubernetes-only stdio server can use:
+
+```yaml
+mcp:
+  servers:
+    kubernetes:
+      transport: stdio
+      command: /usr/bin/chatops-mcp
+      args: [serve, --tools, kubernetes, --node-disk-usage]
+```
+
+When collection is disabled in chatops-mcp, `usage_note` reports that no Summary API request was attempted; it does not indicate whether the kubelet API is available. A successful `kubectl get --raw "/api/v1/nodes/<node>/proxy/stats/summary"` with the same credentials confirms access, but collection still needs this flag. It is a chatops-mcp option, not a kubelet or worker-node option. For an HTTP MCP server, set the flag on that server's launch command and restart that server.
 
 `nodes/proxy` is a powerful permission that reaches every kubelet endpoint, not just the Summary API, so grant it only when node disk reporting is wanted. The Summary API reports the kubelet's own filesystem usage, not arbitrary host-mounted disks (a separate data disk or Ceph OSD will not appear); use Prometheus with node-exporter for comprehensive host disk monitoring.
 
