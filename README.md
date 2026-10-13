@@ -37,14 +37,14 @@ The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.y
 | `llm.base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions` |
 | `llm.model` | (required) | Model name sent with each request |
 | `llm.api_key_env` | (none) | Environment variable holding the API key, sent as a bearer token; requires an `https` `base_url` unless the host is loopback |
-| `llm.disable_thinking` | `false` | Send `reasoning_effort: "none"` and `chat_template_kwargs: {"enable_thinking": false}`; leave off for endpoints that reject unknown fields |
+| `llm.disable_thinking` | `false` | Send `reasoning_effort: "none"` and `chat_template_kwargs: {"enable_thinking": false}`; the packaged sample turns it on; leave off for endpoints that reject unknown fields |
 | `llm.sampling.*` | (unset) | Optional generation parameters, each sent only when set so an unset one keeps the endpoint default: `temperature` (0–2), `top_p` (0–1), `max_tokens` (>0), `frequency_penalty`/`presence_penalty` (−2–2), `seed`, and `stop` (list of strings). `top_k` (≥0), `min_p` (0–1), and `repetition_penalty` (>0) are vLLM/llama.cpp extensions that strict OpenAI endpoints reject. `temperature: 0` is greedy and deterministic, the most reliable choice for an ops assistant |
 | `mcp.servers.<id>.transport` | (required) | `stdio` or `streamable-http` |
 | `mcp.servers.<id>.command`, `args` | | stdio only: the server process to launch |
 | `mcp.servers.<id>.env` | (none) | stdio only: extra environment variables; values are stored in the file, so never put secrets here |
 | `mcp.servers.<id>.secret_env` | (none) | stdio only: maps a variable for the server to the `chatops` environment variable holding its value, for secrets such as tokens; a name may not appear in both `env` and `secret_env` |
 | `mcp.servers.<id>.url`, `bearer_token_env` | | streamable-http only: endpoint and optional bearer token variable; a token requires an `https` URL unless the host is loopback |
-| `agent.system_prompt` | (required) | Instructions prepended to every turn; edit it to tune behavior without rebuilding, then restart the daemon. Startup fails if it is empty. The packaged sample ends with `/no_think` to disable Qwen3 thinking — drop it for other models, or set `llm.disable_thinking` |
+| `agent.system_prompt` | (required) | Instructions prepended to every turn; edit it to tune behavior without rebuilding, then restart the daemon. Startup fails if it is empty. The packaged sample ends with `/no_think` as a Qwen3 prompt-level backup to `llm.disable_thinking`; drop it for other models |
 | `agent.max_iterations` | `8` | Maximum model calls per turn |
 | `agent.turn_timeout` | `120s` | Wall-clock limit for one turn; a turn that runs past it fails even if a late model or tool reply arrives |
 | `agent.tool_timeout` | `30s` | Limit for one tool call; a timed-out call is reported to the model, which may continue; must not exceed `turn_timeout` |

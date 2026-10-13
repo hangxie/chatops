@@ -7,12 +7,24 @@ chat:
     type: slack
     bot_token_env: SLACK_BOT_TOKEN
     app_token_env: SLACK_APP_TOKEN
+  # Local Unix socket backend, one conversation per connection. The directory
+  # must be writable by the daemon; under the packaged unit that means adding
+  # RuntimeDirectory=chatops so /run/chatops exists.
+  # ops:
+  #   type: unix
+  #   path: /run/chatops/ops.sock
+  #   mode: "0600"   # octal permission bits; default owner-only
+  # Interactive terminal backend for development; not for an unattended daemon.
+  # console:
+  #   type: stdio
 
 llm:
   base_url: http://localhost:8080/v1
   model: CHANGEME   # the model name your endpoint serves
   # api_key_env: LLM_API_KEY
-  # disable_thinking: true
+  # Stops reasoning models such as Qwen3 from spending the budget on thinking;
+  # set false for endpoints that reject unknown request fields.
+  disable_thinking: true
   sampling:
     # Generation parameters sent with every completion; omit any one to use the
     # endpoint's own default. temperature 0 is greedy and deterministic, the most
@@ -43,6 +55,19 @@ mcp:
         - --kubeconfig
         - /etc/chatops/kubeconfig
         - --node-disk-usage
+      # Extra variables for the server process; values live in this file, so
+      # never put secrets here. Only PATH and HOME are inherited otherwise.
+      # env:
+      #   KUBECONFIG: /etc/chatops/kubeconfig
+      # Maps a server variable to the chatops variable holding its secret value.
+      # secret_env:
+      #   API_TOKEN: CHATOPS_API_TOKEN
+    # A remote MCP server over streamable HTTP; a bearer token requires an
+    # https url unless the host is loopback.
+    # remote:
+    #   transport: streamable-http
+    #   url: https://mcp.example.com/mcp
+    #   bearer_token_env: MCP_TOKEN
 
 agent:
   # Earlier user messages replayed as context. 0 (stateless) answers each
@@ -51,9 +76,17 @@ agent:
   # resolve; higher feels more conversational but small models drift.
   # See the Conversation history section of the README for the trade-off.
   history_turns: 0
+  # Remaining limits, shown with their defaults.
+  # max_iterations: 8              # model calls per turn
+  # turn_timeout: 120s             # wall-clock limit for one turn
+  # tool_timeout: 30s              # limit for one tool call; must not exceed turn_timeout
+  # max_tool_result_bytes: 65536   # tool output beyond this is truncated
+  # history_ttl: 24h               # idle conversations start over with no history
+  # max_concurrent_turns: 4        # turns running at once across all conversations
+  # max_pending_messages: 64       # accepted but unfinished messages; more are refused as busy
   # Required: the agent's instructions, prepended to every turn. Edit and restart
-  # to tune behavior without rebuilding. The trailing /no_think disables Qwen3
-  # thinking; drop it for other models, or set llm.disable_thinking instead.
+  # to tune behavior without rebuilding. The trailing /no_think backs up
+  # llm.disable_thinking for Qwen3 templates that ignore the request flag.
   system_prompt: >-
     You are ChatOps, an operations assistant answering in a chat thread.
     First decide whether the message is an operational request about a system your tools cover.

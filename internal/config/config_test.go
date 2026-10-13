@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
@@ -186,10 +187,25 @@ func Test_Load_packaged_sample(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, Chat{"homelab": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}}, cfg.Chat)
 	require.Equal(t, "/usr/bin/chatops-mcp", cfg.MCP.Servers["builtin"].Command)
-	// The shipped prompt must carry the behavioral guard and the Qwen3 thinking switch.
+	// The shipped prompt must carry the behavioral guard, and thinking is disabled by both config and prompt.
 	require.Contains(t, cfg.Agent.SystemPrompt, "Answer only the latest user request")
 	require.Contains(t, cfg.Agent.SystemPrompt, "/no_think")
+	require.True(t, cfg.LLM.DisableThinking)
 	require.Equal(t, 0, cfg.Agent.HistoryTurns)
 	require.NotNil(t, cfg.LLM.Sampling.Temperature)
 	require.Equal(t, 0.0, *cfg.LLM.Sampling.Temperature)
+}
+
+func Test_Load_packaged_sample_agent_defaults(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "package", "systemd", "config.yaml"))
+	require.NoError(t, err)
+	// Uncommenting the agent limits shown with their defaults must not change the parsed config.
+	uncommented := regexp.MustCompile(`(?m)^  # ((max_|turn_|tool_|history_ttl)[a-z_]*:)`).ReplaceAll(data, []byte("  $1"))
+	require.NotEqual(t, data, uncommented)
+
+	cfg, err := Parse(uncommented)
+	require.NoError(t, err)
+	want := defaultAgent()
+	want.SystemPrompt = cfg.Agent.SystemPrompt
+	require.Equal(t, want, cfg.Agent)
 }
