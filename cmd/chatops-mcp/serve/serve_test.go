@@ -47,9 +47,8 @@ func Test_newServer(t *testing.T) {
 		"status-without-config":      {cmd: Cmd{Tools: []string{"status"}}, errMsg: `tool group "status": --status-config is required`},
 		"status-config-missing":      {cmd: Cmd{Tools: []string{"status"}, StatusConfig: "/nonexistent/status.yaml"}, errMsg: `tool group "status": read status config: open /nonexistent/status.yaml: no such file or directory`},
 		"config-without-status":      {cmd: Cmd{Tools: []string{"ping"}, StatusConfig: packagedStatus}, errMsg: "--status-config requires --tools status"},
-		"kube-flag-without-group":    {cmd: Cmd{Tools: []string{"ping"}, Kubeconfig: "/tmp/kubeconfig"}, errMsg: "--kubeconfig, --kube-context, and --node-disk-usage require --tools kubernetes"},
-		"kube-context-without-group": {cmd: Cmd{Tools: []string{"ping"}, KubeContext: "ctx"}, errMsg: "--kubeconfig, --kube-context, and --node-disk-usage require --tools kubernetes"},
-		"disk-usage-without-group":   {cmd: Cmd{Tools: []string{"ping"}, NodeDiskUsage: true}, errMsg: "--kubeconfig, --kube-context, and --node-disk-usage require --tools kubernetes"},
+		"kube-flag-without-group":    {cmd: Cmd{Tools: []string{"ping"}, Kubeconfig: "/tmp/kubeconfig"}, errMsg: "--kubeconfig and --kube-context require --tools kubernetes"},
+		"kube-context-without-group": {cmd: Cmd{Tools: []string{"ping"}, KubeContext: "ctx"}, errMsg: "--kubeconfig and --kube-context require --tools kubernetes"},
 	}
 
 	for name, tc := range tests {

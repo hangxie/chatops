@@ -16,8 +16,6 @@ const requestTimeout = 30 * time.Second
 type Config struct {
 	Kubeconfig string
 	Context    string
-	// NodeDiskUsage enables node_resources disk utilization via the kubelet Summary API; it needs nodes/proxy RBAC.
-	NodeDiskUsage bool
 }
 
 // Register builds the Kubernetes clients from cfg and adds the read-only node tools to server.

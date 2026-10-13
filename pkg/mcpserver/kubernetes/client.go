@@ -16,7 +16,6 @@ import (
 var inClusterConfig = rest.InClusterConfig
 
 // clients holds the API clients the node tools share; they are built once from one rest.Config.
-// diskUsage is nil unless the kubelet Summary API capability is enabled, so node_resources can degrade cleanly.
 type clients struct {
 	core      k8s.Interface
 	metrics   metricsclient.Interface
@@ -39,11 +38,7 @@ func newClients(cfg Config, timeout time.Duration, userAgent string) (clients, e
 	if err != nil {
 		return clients{}, fmt.Errorf("metrics client: %w", err)
 	}
-	c := clients{core: core, metrics: metrics}
-	if cfg.NodeDiskUsage {
-		c.diskUsage = summaryDiskUsage(core.CoreV1().RESTClient())
-	}
-	return c, nil
+	return clients{core: core, metrics: metrics, diskUsage: summaryDiskUsage(core.CoreV1().RESTClient())}, nil
 }
 
 // restConfig resolves the connection: explicit kubeconfig (no fallback), else an explicit context forces

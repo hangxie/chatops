@@ -34,7 +34,7 @@ type NodeResources struct {
 	Capacity    *ResourceAmounts `json:"capacity,omitempty"`
 	Allocatable *ResourceAmounts `json:"allocatable,omitempty"`
 	// Usage is current utilization: cpu and memory from the metrics API, pods from a live count, disk (when
-	// --node-disk-usage is on) the kubelet filesystem used bytes.
+	// RBAC allows the kubelet Summary API) the kubelet filesystem used bytes.
 	Usage *ResourceAmounts `json:"usage,omitempty"`
 	// DiskTotal is the kubelet filesystem capacity in bytes (Summary API), the denominator for Usage.Disk.
 	// It describes the node root filesystem and is distinct from the ephemeral-storage capacity/allocatable above.
@@ -75,13 +75,15 @@ func getNodeResources(ctx context.Context, c clients, name string) (NodeResource
 		out.Usage.Pods = strconv.Itoa(pods)
 	}
 
-	// Disk utilization is an opt-in capability via the kubelet Summary API (needs nodes/proxy RBAC).
+	// Disk utilization comes from the kubelet Summary API, gated only by the nodes/proxy RBAC grant.
 	// Its denominator is the kubelet filesystem capacity, not the ephemeral-storage allocatable above.
-	if c.diskUsage == nil {
-		notes = append(notes, "disk utilization not collected: collection is disabled in chatops-mcp; add --node-disk-usage to chatops-mcp serve (requires get on nodes/proxy); kubelet Summary API availability was not checked")
-	} else if used, total, ok, err := c.diskUsage(ctx, name); err != nil {
+	if used, total, ok, err := c.diskUsage(ctx, name); apierrors.IsForbidden(err) {
+		notes = append(notes, "disk utilization not permitted: grant get on nodes/proxy to read the kubelet Summary API")
+	} else if err != nil {
 		notes = append(notes, "disk utilization unavailable: "+err.Error())
-	} else if ok {
+	} else if !ok {
+		notes = append(notes, "disk utilization unavailable: kubelet Summary API reported no node filesystem usage")
+	} else {
 		out.Usage.Disk = strconv.FormatInt(used, 10)
 		if total > 0 {
 			out.DiskTotal = strconv.FormatInt(total, 10)

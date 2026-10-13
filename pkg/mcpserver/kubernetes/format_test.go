@@ -80,6 +80,16 @@ func Test_formatNodeResources_metrics_unavailable(t *testing.T) {
 	require.Contains(t, text, "note: cpu and memory utilization unavailable")
 }
 
+func Test_formatNodeResources_disk_without_total(t *testing.T) {
+	out := NodeResources{
+		Node: "worker-0", Found: true,
+		Allocatable: &ResourceAmounts{CPU: "16", Memory: "31Gi", Disk: "94Gi", Pods: "110"},
+		Usage:       &ResourceAmounts{CPU: "4", Memory: "8Gi", Disk: "10737418240", Pods: "2"},
+	}
+	// No filesystem total: show used bytes without a percentage rather than one against ephemeral-storage.
+	require.Contains(t, formatNodeResources(out), "disk=10.0Gi pods=2 (2%)")
+}
+
 func Test_formatNodeResources_not_found(t *testing.T) {
 	require.Equal(t, `node "ghost" not found`, formatNodeResources(NodeResources{Node: "ghost"}))
 }
