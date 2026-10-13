@@ -45,7 +45,7 @@ The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.y
 | `mcp.servers.<id>.secret_env` | (none) | stdio only: maps a variable for the server to the `chatops` environment variable holding its value, for secrets such as tokens; a name may not appear in both `env` and `secret_env` |
 | `mcp.servers.<id>.url`, `bearer_token_env` | | streamable-http only: endpoint and optional bearer token variable; a token requires an `https` URL unless the host is loopback |
 | `agent.system_prompt` | (required) | Instructions prepended to every turn; edit it to tune behavior without rebuilding, then restart the daemon. Startup fails if it is empty. The packaged sample ends with `/no_think` as a Qwen3 prompt-level backup to `llm.disable_thinking`; drop it for other models |
-| `agent.max_iterations` | `8` | Maximum model calls per turn |
+| `agent.max_iterations` | `20` | Maximum model calls per turn |
 | `agent.turn_timeout` | `120s` | Wall-clock limit for one turn; a turn that runs past it fails even if a late model or tool reply arrives |
 | `agent.tool_timeout` | `30s` | Limit for one tool call; a timed-out call is reported to the model, which may continue; must not exceed `turn_timeout` |
 | `agent.max_tool_result_bytes` | `65536` | Tool output beyond this is truncated before it reaches the model; a short truncation marker is appended on top of the limit |

@@ -91,7 +91,7 @@ func Test_Parse_defaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, Agent{
 		SystemPrompt:       "p",
-		MaxIterations:      8,
+		MaxIterations:      20,
 		TurnTimeout:        120 * time.Second,
 		ToolTimeout:        30 * time.Second,
 		MaxToolResultBytes: 65536,

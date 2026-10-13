@@ -115,7 +115,7 @@ type Agent struct {
 
 func defaultAgent() Agent {
 	return Agent{
-		MaxIterations:      8,
+		MaxIterations:      20,
 		TurnTimeout:        120 * time.Second,
 		ToolTimeout:        30 * time.Second,
 		MaxToolResultBytes: 64 * 1024,
