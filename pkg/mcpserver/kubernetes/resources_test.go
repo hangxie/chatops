@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -10,9 +11,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	restfake "k8s.io/client-go/rest/fake"
@@ -111,38 +114,48 @@ func Test_getNodeResources_metrics_unavailable(t *testing.T) {
 	require.Contains(t, out.UsageNote, "cpu and memory utilization unavailable")
 }
 
-func Test_getNodeResources_disk_disabled(t *testing.T) {
-	core := fake.NewClientset(node("worker-0"), pod("a", "worker-0", corev1.PodRunning))
-	c := clients{core: core, metrics: newMetricsFake(nodeMetrics("worker-0", "4", "8Gi"))} // diskUsage nil
+func Test_getNodeResources_disk_degradation(t *testing.T) {
+	disk := func(used, total int64, ok bool, err error) func(context.Context, string) (int64, int64, bool, error) {
+		return func(context.Context, string) (int64, int64, bool, error) { return used, total, ok, err }
+	}
+	timeout := fmt.Errorf("Get \"https://api/api/v1/nodes/worker-0/proxy/stats/summary\": %w", context.DeadlineExceeded)
+	forbidden := apierrors.NewForbidden(schema.GroupResource{Resource: "nodes/proxy"}, "worker-0", errors.New("RBAC denied"))
 
-	out, err := getNodeResources(context.Background(), c, "worker-0")
-	require.NoError(t, err)
-	require.Empty(t, out.Usage.Disk)
-	require.Equal(t, "disk utilization not collected: collection is disabled in chatops-mcp; add --node-disk-usage to chatops-mcp serve (requires get on nodes/proxy); kubelet Summary API availability was not checked", out.UsageNote)
-	require.Empty(t, out.DiskTotal)
-	require.Equal(t, "4", out.Usage.CPU)
-	require.Equal(t, "8Gi", out.Usage.Memory)
-	require.Equal(t, "1", out.Usage.Pods)
-}
-
-func Test_getNodeResources_disk_error(t *testing.T) {
-	core := fake.NewClientset(node("worker-0"), pod("a", "worker-0", corev1.PodRunning))
-	c := clients{
-		core:    core,
-		metrics: newMetricsFake(nodeMetrics("worker-0", "4", "8Gi")),
-		diskUsage: func(context.Context, string) (int64, int64, bool, error) {
-			return 0, 0, false, errors.New("nodes/proxy forbidden")
-		},
+	tests := map[string]struct {
+		diskUsage func(context.Context, string) (int64, int64, bool, error)
+		disk      string
+		diskTotal string
+		note      string
+	}{
+		"used and total":     {diskUsage: disk(10737418240, 107374182400, true, nil), disk: "10737418240", diskTotal: "107374182400"},
+		"capacity absent":    {diskUsage: disk(10737418240, 0, true, nil), disk: "10737418240"},
+		"no node filesystem": {diskUsage: disk(0, 0, false, nil), note: "disk utilization unavailable: kubelet Summary API reported no node filesystem usage"},
+		"forbidden":          {diskUsage: disk(0, 0, false, forbidden), note: "disk utilization not permitted: grant get on nodes/proxy to read the kubelet Summary API"},
+		"timeout":            {diskUsage: disk(0, 0, false, timeout), note: "disk utilization unavailable: " + timeout.Error()},
+		"other error":        {diskUsage: disk(0, 0, false, errors.New("kubelet unreachable")), note: "disk utilization unavailable: kubelet unreachable"},
 	}
 
-	out, err := getNodeResources(context.Background(), c, "worker-0")
-	require.NoError(t, err)
-	require.Empty(t, out.Usage.Disk)
-	require.Contains(t, out.UsageNote, "disk utilization unavailable: nodes/proxy forbidden")
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			core := fake.NewClientset(node("worker-0"), pod("a", "worker-0", corev1.PodRunning))
+			c := clients{core: core, metrics: newMetricsFake(nodeMetrics("worker-0", "4", "8Gi")), diskUsage: tc.diskUsage}
+
+			out, err := getNodeResources(context.Background(), c, "worker-0")
+			require.NoError(t, err)
+			require.True(t, out.Found)
+			require.Equal(t, tc.disk, out.Usage.Disk)
+			require.Equal(t, tc.diskTotal, out.DiskTotal)
+			require.Equal(t, tc.note, out.UsageNote)
+			// Disk trouble never costs the other figures.
+			require.Equal(t, "4", out.Usage.CPU)
+			require.Equal(t, "8Gi", out.Usage.Memory)
+			require.Equal(t, "1", out.Usage.Pods)
+		})
+	}
 }
 
 func Test_getNodeResources_not_found(t *testing.T) {
-	c := clients{core: fake.NewClientset(), metrics: newMetricsFake()}
+	c := clients{core: fake.NewClientset(), metrics: newMetricsFake(), diskUsage: fixedDisk(0, 0)}
 
 	out, err := getNodeResources(context.Background(), c, "ghost")
 	require.NoError(t, err)
@@ -164,7 +177,7 @@ func Test_getNodeResources_node_error(t *testing.T) {
 func Test_getNodeResources_pods_error(t *testing.T) {
 	core := fake.NewClientset(node("worker-0"))
 	core.PrependReactor("list", "pods", forbidden("list", "pods"))
-	c := clients{core: core, metrics: newMetricsFake(nodeMetrics("worker-0", "4", "8Gi"))}
+	c := clients{core: core, metrics: newMetricsFake(nodeMetrics("worker-0", "4", "8Gi")), diskUsage: fixedDisk(0, 0)}
 
 	out, err := getNodeResources(context.Background(), c, "worker-0")
 	require.NoError(t, err)
@@ -223,6 +236,15 @@ func Test_summaryDiskUsage_no_capacity(t *testing.T) {
 	require.Zero(t, total)
 }
 
+func Test_summaryDiskUsage_zero_capacity(t *testing.T) {
+	rc := summaryClient(t, http.StatusOK, `{"node":{"fs":{"usedBytes":10737418240,"capacityBytes":0}}}`)
+	used, total, ok, err := summaryDiskUsage(rc)(context.Background(), "worker-0")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, int64(10737418240), used)
+	require.Zero(t, total)
+}
+
 func Test_summaryDiskUsage_no_fs(t *testing.T) {
 	rc := summaryClient(t, http.StatusOK, `{"node":{"fs":{}}}`)
 	_, _, ok, err := summaryDiskUsage(rc)(context.Background(), "worker-0")
@@ -233,7 +255,7 @@ func Test_summaryDiskUsage_no_fs(t *testing.T) {
 func Test_summaryDiskUsage_forbidden(t *testing.T) {
 	rc := summaryClient(t, http.StatusForbidden, "forbidden")
 	_, _, _, err := summaryDiskUsage(rc)(context.Background(), "worker-0")
-	require.Error(t, err)
+	require.True(t, apierrors.IsForbidden(err), err)
 }
 
 func Test_summaryDiskUsage_bad_json(t *testing.T) {

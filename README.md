@@ -181,7 +181,6 @@ journalctl -u chatops -f
 | `--status-config` | (none) | YAML file listing the services the `status` group checks; required with `--tools status` |
 | `--kubeconfig` | (none) | Path to the kubeconfig for the `kubernetes` group, honored exactly with no fallback; requires `--tools kubernetes` |
 | `--kube-context` | (none) | Kubeconfig context for the `kubernetes` group; forces kubeconfig-based resolution; requires `--tools kubernetes` |
-| `--node-disk-usage` | `false` | Collect node disk utilization in `node_resources` via the kubelet Summary API; needs `nodes/proxy` RBAC; requires `--tools kubernetes` |
 | `--token-env` | (none) | Environment variable holding the bearer token HTTP clients must send; required when `--http` is not a loopback address |
 
 ### Built-in MCPs
@@ -214,7 +213,7 @@ rules:
 
 This role is read-only, but note that `list` on `pods` is cluster-wide: the `node_resources` pod count lists pods in all namespaces, so the credentials can read pod metadata across the whole cluster. Scope the binding or namespaces accordingly if that is broader than intended.
 
-`node_resources` reports CPU/memory/disk/pod capacity and allocatable from the node API, CPU and memory utilization from the metrics API, and the pod count from the pod API. Node disk utilization is opt-in: pass `--node-disk-usage` to read it from the kubelet Summary API, which additionally requires `get` on `nodes/proxy`:
+`node_resources` reports CPU/memory/disk/pod capacity and allocatable from the node API, CPU and memory utilization from the metrics API, and the pod count from the pod API. Node disk utilization comes from the kubelet Summary API and is reported only when the credentials also have `get` on `nodes/proxy`; without it, each node notes that disk utilization is not permitted:
 
 ```yaml
 - apiGroups: [""]

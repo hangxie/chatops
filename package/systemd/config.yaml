@@ -54,7 +54,6 @@ mcp:
         - /etc/chatops/status.yaml
         - --kubeconfig
         - /etc/chatops/kubeconfig
-        - --node-disk-usage
       # Extra variables for the server process; values live in this file, so
       # never put secrets here. Only PATH and HOME are inherited otherwise.
       # env:

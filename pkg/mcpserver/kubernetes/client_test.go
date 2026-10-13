@@ -100,13 +100,7 @@ func Test_newClients(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, c.core)
 	require.NotNil(t, c.metrics)
-	require.Nil(t, c.diskUsage) // disabled by default
-}
-
-func Test_newClients_disk_usage_enabled(t *testing.T) {
-	c, err := newClients(Config{Kubeconfig: writeKubeconfig(t), NodeDiskUsage: true}, 5*time.Second, "chatops-mcp/test")
-	require.NoError(t, err)
-	require.NotNil(t, c.diskUsage)
+	require.NotNil(t, c.diskUsage) // always attempted; RBAC decides
 }
 
 func Test_newClients_bad_kubeconfig(t *testing.T) {
