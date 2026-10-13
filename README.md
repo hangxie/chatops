@@ -194,6 +194,8 @@ Each tool group has a design doc under [`docs/`](docs/); the overall architectur
 | `status` | `service_status` | Public status and active incidents of external services, from their status pages | [`docs/mcp-status.md`](docs/mcp-status.md) |
 | `kubernetes` | `node_list`, `node_status`, `node_resources` | Read-only Kubernetes node inspection: roster, health, and resource capacity/utilization | [`docs/mcp-k8s.md`](docs/mcp-k8s.md) |
 
+`node_status` and `node_resources` take a `nodes` list, so a question about several nodes is one call: `node_list` for the names, then one call with all of them. A list holds at most 50 distinct names; a name that does not exist is reported as not found without failing the rest.
+
 The `kubernetes` group connects with `--kubeconfig`/`--kube-context`, else in-cluster credentials when running as a pod, else the default local kubeconfig. See [`docs/mcp-k8s.md`](docs/mcp-k8s.md) for the connection model. Node utilization needs metrics-server; without it, capacity and allocatable are still reported. The group needs only read-only RBAC:
 
 ```yaml
@@ -238,6 +240,12 @@ The second reply carries the result:
 
 ```text
 {"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"pong"}],"structuredContent":{"reply":"pong"}}}
+```
+
+Per-object Kubernetes tools take their targets as a list; with `--tools kubernetes`, this third line reports several nodes in one call:
+
+```text
+'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"node_resources","arguments":{"nodes":["master-0","master-1"]}}}'
 ```
 
 To serve over HTTP instead, run `./build/chatops-mcp serve --http 127.0.0.1:8080` and point an MCP client at `http://127.0.0.1:8080/mcp`. Press Ctrl+C to stop.

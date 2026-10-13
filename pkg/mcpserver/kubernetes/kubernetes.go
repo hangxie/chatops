@@ -2,7 +2,6 @@ package kubernetes
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -43,18 +42,18 @@ func register(server *mcp.Server, c clients) {
 	}, nodeListHandler(c))
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "node_status",
-		Description: "Report one Kubernetes node's health: Ready condition, memory/disk/PID pressure, schedulable or not, taints, kubelet version, and roles. If the node does not exist, found is false.",
+		Description: "Report the health of one or more Kubernetes nodes in one call: Ready condition, memory/disk/PID pressure, schedulable or not, taints, kubelet version, and roles. Pass every node of interest in nodes (names from node_list); a node that does not exist has found false.",
 		Annotations: annotations(),
 	}, nodeStatusHandler(c))
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "node_resources",
-		Description: "Report one Kubernetes node's CPU, memory, disk, and pod capacity, allocatable, and current utilization. If the node does not exist, found is false.",
+		Description: "Report CPU, memory, disk, and pod capacity, allocatable, and current utilization for one or more Kubernetes nodes in one call. Pass every node of interest in nodes (names from node_list); a node that does not exist has found false.",
 		Annotations: annotations(),
 	}, nodeResourcesHandler(c))
 }
 
 type nodeInput struct {
-	Node string `json:"node" jsonschema:"the node name"`
+	Nodes []string `json:"nodes" jsonschema:"the node names to report on, all in one call"`
 }
 
 func nodeListHandler(c clients) func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, NodeListOutput, error) {
@@ -69,27 +68,33 @@ func nodeListHandler(c clients) func(context.Context, *mcp.CallToolRequest, stru
 
 func nodeStatusHandler(c clients) func(context.Context, *mcp.CallToolRequest, nodeInput) (*mcp.CallToolResult, NodeStatusOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in nodeInput) (*mcp.CallToolResult, NodeStatusOutput, error) {
-		if in.Node == "" {
-			return nil, NodeStatusOutput{}, errors.New("node is required")
-		}
-		out, err := getNodeStatus(ctx, c.core, in.Node)
+		names, err := targets("nodes", in.Nodes)
 		if err != nil {
 			return nil, NodeStatusOutput{}, err
 		}
-		return textResult(formatNodeStatus(out)), out, nil
+		nodes, err := fetchAll(ctx, names, func(ctx context.Context, name string) (NodeStatus, error) {
+			return getNodeStatus(ctx, c.core, name)
+		})
+		if err != nil {
+			return nil, NodeStatusOutput{}, err
+		}
+		return textResult(formatEach(nodes, formatNodeStatus)), NodeStatusOutput{Nodes: nodes}, nil
 	}
 }
 
 func nodeResourcesHandler(c clients) func(context.Context, *mcp.CallToolRequest, nodeInput) (*mcp.CallToolResult, NodeResourcesOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in nodeInput) (*mcp.CallToolResult, NodeResourcesOutput, error) {
-		if in.Node == "" {
-			return nil, NodeResourcesOutput{}, errors.New("node is required")
-		}
-		out, err := getNodeResources(ctx, c, in.Node)
+		names, err := targets("nodes", in.Nodes)
 		if err != nil {
 			return nil, NodeResourcesOutput{}, err
 		}
-		return textResult(formatNodeResources(out)), out, nil
+		nodes, err := fetchAll(ctx, names, func(ctx context.Context, name string) (NodeResources, error) {
+			return getNodeResources(ctx, c, name)
+		})
+		if err != nil {
+			return nil, NodeResourcesOutput{}, err
+		}
+		return textResult(formatEach(nodes, formatNodeResources)), NodeResourcesOutput{Nodes: nodes}, nil
 	}
 }
 

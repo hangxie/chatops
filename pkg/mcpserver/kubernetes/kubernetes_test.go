@@ -75,48 +75,72 @@ func Test_node_status_tool(t *testing.T) {
 	session := connect(t, testClients())
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "node_status", Arguments: map[string]any{"node": "worker-0"},
+		Name: "node_status", Arguments: map[string]any{"nodes": []any{"worker-0", "ghost"}},
 	})
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-	require.Contains(t, result.Content[0].(*mcp.TextContent).Text, "[Ready] worker-0")
-	structured := result.StructuredContent.(map[string]any)
-	require.Equal(t, true, structured["found"])
-}
-
-func Test_node_status_tool_missing_arg(t *testing.T) {
-	session := connect(t, testClients())
-
-	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "node_status", Arguments: map[string]any{"node": ""},
-	})
-	require.NoError(t, err)
-	require.True(t, result.IsError)
-	require.Contains(t, result.Content[0].(*mcp.TextContent).Text, "node is required")
+	text := result.Content[0].(*mcp.TextContent).Text
+	require.Contains(t, text, "[Ready] worker-0")
+	require.Contains(t, text, `node "ghost" not found`)
+	nodes := structuredNodes(t, result)
+	require.Len(t, nodes, 2)
+	require.Equal(t, true, nodes[0]["found"])
+	require.Equal(t, "ghost", nodes[1]["node"])
+	require.Equal(t, false, nodes[1]["found"])
 }
 
 func Test_node_resources_tool(t *testing.T) {
 	session := connect(t, testClients())
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "node_resources", Arguments: map[string]any{"node": "worker-0"},
+		Name: "node_resources", Arguments: map[string]any{"nodes": []any{"worker-0", "ghost"}},
 	})
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-	require.Contains(t, result.Content[0].(*mcp.TextContent).Text, "usage:")
-	structured := result.StructuredContent.(map[string]any)
-	require.Equal(t, true, structured["found"])
+	text := result.Content[0].(*mcp.TextContent).Text
+	require.Contains(t, text, "usage:")
+	require.Contains(t, text, `node "ghost" not found`)
+	nodes := structuredNodes(t, result)
+	require.Len(t, nodes, 2)
+	require.Equal(t, true, nodes[0]["found"])
+	require.Equal(t, false, nodes[1]["found"])
 }
 
-func Test_node_resources_tool_missing_arg(t *testing.T) {
+func Test_node_tools_bad_targets(t *testing.T) {
+	tests := map[string]struct {
+		args   map[string]any
+		errMsg string
+	}{
+		"empty list":  {args: map[string]any{"nodes": []any{}}, errMsg: "nodes is required"},
+		"blank entry": {args: map[string]any{"nodes": []any{""}}, errMsg: "nodes[0] is empty"},
+		"missing":     {args: map[string]any{}, errMsg: "nodes"},
+		"string":      {args: map[string]any{"nodes": "worker-0"}, errMsg: "nodes"},
+	}
 	session := connect(t, testClients())
 
-	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "node_resources", Arguments: map[string]any{"node": ""},
-	})
-	require.NoError(t, err)
-	require.True(t, result.IsError)
-	require.Contains(t, result.Content[0].(*mcp.TextContent).Text, "node is required")
+	for _, tool := range []string{"node_status", "node_resources"} {
+		for name, tc := range tests {
+			t.Run(tool+"/"+name, func(t *testing.T) {
+				result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: tc.args})
+				if err != nil {
+					require.ErrorContains(t, err, tc.errMsg)
+					return
+				}
+				require.True(t, result.IsError)
+				require.Contains(t, result.Content[0].(*mcp.TextContent).Text, tc.errMsg)
+			})
+		}
+	}
+}
+
+func structuredNodes(t *testing.T, result *mcp.CallToolResult) []map[string]any {
+	t.Helper()
+	raw := result.StructuredContent.(map[string]any)["nodes"].([]any)
+	nodes := make([]map[string]any, 0, len(raw))
+	for _, n := range raw {
+		nodes = append(nodes, n.(map[string]any))
+	}
+	return nodes
 }
 
 func Test_Register_bad_kubeconfig(t *testing.T) {
