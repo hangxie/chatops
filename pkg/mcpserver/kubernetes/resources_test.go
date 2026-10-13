@@ -184,9 +184,9 @@ func Test_handlers_surface_errors(t *testing.T) {
 
 	_, _, err := nodeListHandler(c)(context.Background(), nil, struct{}{})
 	require.Error(t, err)
-	_, _, err = nodeStatusHandler(c)(context.Background(), nil, nodeInput{Node: "worker-0"})
+	_, _, err = nodeStatusHandler(c)(context.Background(), nil, nodeInput{Nodes: []string{"worker-0"}})
 	require.Error(t, err)
-	_, _, err = nodeResourcesHandler(c)(context.Background(), nil, nodeInput{Node: "worker-0"})
+	_, _, err = nodeResourcesHandler(c)(context.Background(), nil, nodeInput{Nodes: []string{"worker-0"}})
 	require.Error(t, err)
 }
 

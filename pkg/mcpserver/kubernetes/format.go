@@ -30,7 +30,7 @@ func formatNodeList(out NodeListOutput) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func formatNodeStatus(out NodeStatusOutput) string {
+func formatNodeStatus(out NodeStatus) string {
 	if !out.Found {
 		return fmt.Sprintf("node %q not found", out.Node)
 	}
@@ -49,7 +49,7 @@ func formatNodeStatus(out NodeStatusOutput) string {
 	return strings.Join(lines, "\n")
 }
 
-func formatNodeResources(out NodeResourcesOutput) string {
+func formatNodeResources(out NodeResources) string {
 	if !out.Found {
 		return fmt.Sprintf("node %q not found", out.Node)
 	}
@@ -61,6 +61,15 @@ func formatNodeResources(out NodeResourcesOutput) string {
 		lines = append(lines, "note: "+out.UsageNote)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// formatEach renders one block per target, separated by a blank line.
+func formatEach[T any](items []T, format func(T) string) string {
+	blocks := make([]string, 0, len(items))
+	for _, item := range items {
+		blocks = append(blocks, format(item))
+	}
+	return strings.Join(blocks, "\n\n")
 }
 
 func rolesText(roles []string) string {
@@ -107,7 +116,7 @@ func amountsText(a *ResourceAmounts) string {
 // usageText renders utilization: cpu, memory, and pods as a percentage of allocatable, and disk as a percentage
 // of the kubelet filesystem total (DiskTotal), since filesystem used bytes and ephemeral-storage allocatable are
 // different accounting boundaries.
-func usageText(out NodeResourcesOutput) string {
+func usageText(out NodeResources) string {
 	u, alloc := out.Usage, out.Allocatable
 	if u == nil {
 		return "(unavailable)"

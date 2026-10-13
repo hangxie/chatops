@@ -35,7 +35,7 @@ func Test_formatNodeList_empty(t *testing.T) {
 }
 
 func Test_formatNodeStatus(t *testing.T) {
-	out := NodeStatusOutput{
+	out := NodeStatus{
 		Node: "worker-4", Found: true, Ready: "Ready", Roles: nil, Version: "v1.37.1",
 		Conditions:  map[string]string{"Ready": "True", "MemoryPressure": "False", "DiskPressure": "Unknown"},
 		Schedulable: ptr(false),
@@ -48,11 +48,11 @@ func Test_formatNodeStatus(t *testing.T) {
 }
 
 func Test_formatNodeStatus_not_found(t *testing.T) {
-	require.Equal(t, `node "ghost" not found`, formatNodeStatus(NodeStatusOutput{Node: "ghost"}))
+	require.Equal(t, `node "ghost" not found`, formatNodeStatus(NodeStatus{Node: "ghost"}))
 }
 
 func Test_formatNodeResources(t *testing.T) {
-	out := NodeResourcesOutput{
+	out := NodeResources{
 		Node: "worker-0", Found: true,
 		Capacity:    &ResourceAmounts{CPU: "16", Memory: "32Gi", Disk: "100Gi", Pods: "110"},
 		Allocatable: &ResourceAmounts{CPU: "16", Memory: "31Gi", Disk: "94Gi", Pods: "110"},
@@ -68,7 +68,7 @@ func Test_formatNodeResources(t *testing.T) {
 }
 
 func Test_formatNodeResources_metrics_unavailable(t *testing.T) {
-	out := NodeResourcesOutput{
+	out := NodeResources{
 		Node: "worker-0", Found: true,
 		Capacity:    &ResourceAmounts{CPU: "16", Memory: "32Gi", Disk: "100Gi", Pods: "110"},
 		Allocatable: &ResourceAmounts{CPU: "16", Memory: "31Gi", Disk: "94Gi", Pods: "110"},
@@ -81,7 +81,7 @@ func Test_formatNodeResources_metrics_unavailable(t *testing.T) {
 }
 
 func Test_formatNodeResources_not_found(t *testing.T) {
-	require.Equal(t, `node "ghost" not found`, formatNodeResources(NodeResourcesOutput{Node: "ghost"}))
+	require.Equal(t, `node "ghost" not found`, formatNodeResources(NodeResources{Node: "ghost"}))
 }
 
 func Test_conditionsText_order(t *testing.T) {
@@ -130,7 +130,7 @@ func Test_amountsText_nil(t *testing.T) {
 }
 
 func Test_usageText_nil(t *testing.T) {
-	require.Equal(t, "(unavailable)", usageText(NodeResourcesOutput{}))
+	require.Equal(t, "(unavailable)", usageText(NodeResources{}))
 }
 
 func Test_allocField(t *testing.T) {
@@ -141,4 +141,10 @@ func Test_allocField(t *testing.T) {
 	require.Equal(t, "", allocField(a, "disk"))
 	require.Equal(t, "", allocField(a, "bogus"))
 	require.Equal(t, "", allocField(nil, "cpu"))
+}
+
+func Test_formatEach(t *testing.T) {
+	nodes := []NodeStatus{{Node: "ghost"}, {Node: "phantom"}}
+	require.Equal(t, "node \"ghost\" not found\n\nnode \"phantom\" not found", formatEach(nodes, formatNodeStatus))
+	require.Equal(t, `node "ghost" not found`, formatEach(nodes[:1], formatNodeStatus))
 }

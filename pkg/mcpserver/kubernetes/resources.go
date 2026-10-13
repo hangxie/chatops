@@ -22,8 +22,13 @@ type ResourceAmounts struct {
 	Pods   string `json:"pods,omitempty"`
 }
 
-// NodeResourcesOutput is the structured result of node_resources; detail fields are omitted on a miss.
+// NodeResourcesOutput is the structured result of node_resources: one entry per requested node, in request order.
 type NodeResourcesOutput struct {
+	Nodes []NodeResources `json:"nodes"`
+}
+
+// NodeResources is one node's capacity and utilization; detail fields are omitted on a miss.
+type NodeResources struct {
 	Node        string           `json:"node"`
 	Found       bool             `json:"found"`
 	Capacity    *ResourceAmounts `json:"capacity,omitempty"`
@@ -37,16 +42,16 @@ type NodeResourcesOutput struct {
 	UsageNote string `json:"usage_note,omitempty"`
 }
 
-func getNodeResources(ctx context.Context, c clients, name string) (NodeResourcesOutput, error) {
+func getNodeResources(ctx context.Context, c clients, name string) (NodeResources, error) {
 	n, err := c.core.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return NodeResourcesOutput{Node: name, Found: false}, nil
+		return NodeResources{Node: name, Found: false}, nil
 	}
 	if err != nil {
-		return NodeResourcesOutput{}, err
+		return NodeResources{}, err
 	}
 
-	out := NodeResourcesOutput{
+	out := NodeResources{
 		Node:        name,
 		Found:       true,
 		Capacity:    amounts(n.Status.Capacity),

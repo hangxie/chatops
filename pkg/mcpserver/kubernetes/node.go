@@ -29,8 +29,13 @@ type NodeListOutput struct {
 	Nodes []NodeListItem `json:"nodes"`
 }
 
-// NodeStatusOutput is the structured health result of node_status; detail fields are omitted on a miss.
+// NodeStatusOutput is the structured result of node_status: one entry per requested node, in request order.
 type NodeStatusOutput struct {
+	Nodes []NodeStatus `json:"nodes"`
+}
+
+// NodeStatus is one node's health; detail fields are omitted on a miss.
+type NodeStatus struct {
 	Node        string            `json:"node"`
 	Found       bool              `json:"found"`
 	Ready       string            `json:"ready,omitempty"`
@@ -61,17 +66,17 @@ func listNodes(ctx context.Context, client k8s.Interface) (NodeListOutput, error
 	return out, nil
 }
 
-func getNodeStatus(ctx context.Context, client k8s.Interface, name string) (NodeStatusOutput, error) {
+func getNodeStatus(ctx context.Context, client k8s.Interface, name string) (NodeStatus, error) {
 	n, err := client.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return NodeStatusOutput{Node: name, Found: false}, nil
+		return NodeStatus{Node: name, Found: false}, nil
 	}
 	if err != nil {
-		return NodeStatusOutput{}, err
+		return NodeStatus{}, err
 	}
 	schedulable := !n.Spec.Unschedulable
 	created := n.CreationTimestamp.Time
-	return NodeStatusOutput{
+	return NodeStatus{
 		Node:        name,
 		Found:       true,
 		Ready:       readyStatus(n),
