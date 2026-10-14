@@ -13,7 +13,7 @@ No service, URL, or product name is hardcoded: the code knows only the page form
 
 ## Configuration
 
-Services are listed in the `--status-config` YAML file (required with `--tools status`), shipped as `package/systemd/status.yaml` and installed at `/etc/chatops/status.yaml`. Services are reported in file order; restart the server after editing. Each entry has:
+Services are listed in the `--status-config` YAML file (required with `--tools status`), shipped as `package/systemd/mcp-status.yaml` and installed at `/etc/chatops/mcp-status.yaml`. Services are reported in file order; restart the server after editing. Each entry has:
 
 - `name` — the tool argument value (lowercase letters, digits, `-`).
 - `display` — the name shown in results.

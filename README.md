@@ -175,7 +175,7 @@ The deb and rpm packages install both binaries, a `chatops` system user, and a s
 | Path | Purpose |
 |---|---|
 | `/etc/chatops/config.yaml` | Config file; set `llm.base_url` and `llm.model` before starting |
-| `/etc/chatops/status.yaml` | Services the `status` tool group checks; edit to add services or product names |
+| `/etc/chatops/mcp-status.yaml` | Services the `status` tool group checks; edit to add services or product names |
 | `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `LLM_API_KEY`) and `LOG_LEVEL`/`LOG_FORMAT`; readable only by root and the `chatops` group |
 | `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml --chat ${CHAT}` (default `homelab`, the backend named in the sample config) with JSON logs to the journal; restarts on failure |
 
@@ -281,7 +281,7 @@ This role is read-only, but its reads are cluster-wide: the credentials can read
 
 `nodes/proxy` is a powerful permission that reaches every kubelet endpoint, not just the Summary API, so grant it only when node disk reporting is wanted. The Summary API reports the kubelet's own filesystem usage, not arbitrary host-mounted disks (a separate data disk or Ceph OSD will not appear); use Prometheus with node-exporter for comprehensive host disk monitoring.
 
-The `status` group has no built-in services: every service comes from the `--status-config` file. `package/systemd/status.yaml` is the shipped list, installed as `/etc/chatops/status.yaml` and kept across upgrades; edit it to add services or product names and restart the server. See [`docs/mcp-status.md`](docs/mcp-status.md) for the entry schema and supported page types.
+The `status` group has no built-in services: every service comes from the `--status-config` file. `package/systemd/mcp-status.yaml` is the shipped list, installed as `/etc/chatops/mcp-status.yaml` and kept across upgrades; edit it to add services or product names and restart the server. See [`docs/mcp-status.md`](docs/mcp-status.md) for the entry schema and supported page types.
 
 To exercise the server by hand over stdio, send an MCP `initialize` handshake followed by a tool call. The trailing `sleep` keeps stdin open until the replies are written:
 

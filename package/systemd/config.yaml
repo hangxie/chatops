@@ -51,7 +51,7 @@ mcp:
         - --tools
         - "ping,status,kubernetes"
         - --status-config
-        - /etc/chatops/status.yaml
+        - /etc/chatops/mcp-status.yaml
         - --kubeconfig
         - /etc/chatops/kubeconfig
       # Extra variables for the server process; values live in this file, so
