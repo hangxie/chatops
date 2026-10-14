@@ -34,9 +34,8 @@ type Cmd struct {
 	TokenEnv string   `help:"Environment variable holding the bearer token HTTP clients must send; required when --http is not a loopback address." placeholder:"NAME"`
 	// StatusConfig lists the services the status group checks; nothing is built in.
 	StatusConfig string `help:"YAML file listing the services the status tool group checks; required with --tools status." placeholder:"FILE" type:"path"`
-	// Kubeconfig and KubeContext configure the kubernetes group; both require --tools kubernetes.
-	Kubeconfig  string `name:"kubeconfig" help:"Path to the kubeconfig for the kubernetes tool group; honored exactly with no fallback." placeholder:"FILE" type:"path"`
-	KubeContext string `name:"kube-context" help:"Kubeconfig context for the kubernetes tool group; forces kubeconfig-based resolution." placeholder:"NAME"`
+	// KubernetesConfig holds every kubernetes group setting; without it the group uses its defaults.
+	KubernetesConfig string `name:"kubernetes-config" help:"YAML file configuring the kubernetes tool group (kubeconfig, context); optional with --tools kubernetes." placeholder:"FILE" type:"path"`
 
 	// transport overrides stdio and listener overrides --http listening in tests.
 	transport mcp.Transport
@@ -105,8 +104,8 @@ func newServer(c Cmd) (*mcp.Server, error) {
 	if c.StatusConfig != "" && !seen["status"] {
 		return nil, errors.New("--status-config requires --tools status")
 	}
-	if (c.Kubeconfig != "" || c.KubeContext != "") && !seen["kubernetes"] {
-		return nil, errors.New("--kubeconfig and --kube-context require --tools kubernetes")
+	if c.KubernetesConfig != "" && !seen["kubernetes"] {
+		return nil, errors.New("--kubernetes-config requires --tools kubernetes")
 	}
 	return server, nil
 }
@@ -123,10 +122,14 @@ func registerStatus(server *mcp.Server, c Cmd) error {
 }
 
 func registerKubernetes(server *mcp.Server, c Cmd) error {
-	return kubernetes.Register(server, kubernetes.Config{
-		Kubeconfig: c.Kubeconfig,
-		Context:    c.KubeContext,
-	})
+	var cfg kubernetes.Config
+	if c.KubernetesConfig != "" {
+		var err error
+		if cfg, err = kubernetes.Load(c.KubernetesConfig); err != nil {
+			return err
+		}
+	}
+	return kubernetes.Register(server, cfg)
 }
 
 func availableGroups() string {
