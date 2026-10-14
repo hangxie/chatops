@@ -11,6 +11,7 @@ import (
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kube"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/namespace"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/node"
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/pod"
 )
 
 // requestTimeout is the per-request backstop set on the client, independent of the caller's context deadline.
@@ -28,5 +29,6 @@ func Register(server *mcp.Server, cfg Config) error {
 	node.Register(server, c)
 	namespace.Register(server, c)
 	deployment.Register(server, c)
+	pod.Register(server, c)
 	return nil
 }

@@ -52,7 +52,7 @@ func Test_describeDeployment_misses(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			out, err := describeDeployment(context.Background(), client, tc.ref)
 			require.NoError(t, err)
-			require.Equal(t, DeploymentDescribe{Namespace: tc.ref.Namespace, Name: tc.ref.Name, Note: tc.note}, out)
+			require.Equal(t, kube.Described{Namespace: tc.ref.Namespace, Name: tc.ref.Name, Note: tc.note}, out)
 		})
 	}
 }

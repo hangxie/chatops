@@ -110,10 +110,10 @@ func usageText(out NodeResources) string {
 	if u == nil {
 		return "(unavailable)"
 	}
-	cpu := kube.OrNone(withPercent(humanCPU(u.CPU), percent(u.CPU, allocField(alloc, "cpu"))))
-	mem := kube.OrNone(withPercent(humanSize(u.Memory), percent(u.Memory, allocField(alloc, "memory"))))
-	disk := kube.OrNone(withPercent(humanSize(u.Disk), percent(u.Disk, out.DiskTotal)))
-	pods := kube.OrNone(withPercent(u.Pods, percent(u.Pods, allocField(alloc, "pods"))))
+	cpu := kube.OrNone(kube.WithPercent(kube.HumanCPU(u.CPU), kube.Percent(u.CPU, allocField(alloc, "cpu"))))
+	mem := kube.OrNone(kube.WithPercent(humanSize(u.Memory), kube.Percent(u.Memory, allocField(alloc, "memory"))))
+	disk := kube.OrNone(kube.WithPercent(humanSize(u.Disk), kube.Percent(u.Disk, out.DiskTotal)))
+	pods := kube.OrNone(kube.WithPercent(u.Pods, kube.Percent(u.Pods, allocField(alloc, "pods"))))
 	return fmt.Sprintf("cpu=%s memory=%s disk=%s pods=%s", cpu, mem, disk, pods)
 }
 
@@ -132,18 +132,6 @@ func allocField(a *ResourceAmounts, key string) string {
 	return ""
 }
 
-// humanCPU renders a CPU quantity as millicores, matching kubectl (e.g. 276m); empty or unparseable pass through.
-func humanCPU(s string) string {
-	if s == "" {
-		return ""
-	}
-	q, err := resource.ParseQuantity(s)
-	if err != nil {
-		return s
-	}
-	return fmt.Sprintf("%dm", q.MilliValue())
-}
-
 // humanSize renders a byte-denominated quantity (memory, disk) to GiB; non-byte or empty values pass through.
 func humanSize(s string) string {
 	if s == "" {
@@ -154,21 +142,4 @@ func humanSize(s string) string {
 		return s
 	}
 	return fmt.Sprintf("%.1fGi", float64(q.Value())/(1024*1024*1024))
-}
-
-func withPercent(value, percent string) string {
-	if value == "" || percent == "" {
-		return value
-	}
-	return value + " (" + percent + ")"
-}
-
-// percent computes used/total as a whole-percent string; MilliValue keeps fractional CPU correct.
-func percent(used, total string) string {
-	u, uerr := resource.ParseQuantity(used)
-	t, terr := resource.ParseQuantity(total)
-	if uerr != nil || terr != nil || t.MilliValue() == 0 {
-		return ""
-	}
-	return fmt.Sprintf("%.0f%%", float64(u.MilliValue())/float64(t.MilliValue())*100)
 }

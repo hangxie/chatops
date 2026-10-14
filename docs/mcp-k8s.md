@@ -11,6 +11,7 @@ The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organ
 | node | `node_list`, `node_status`, `node_resources` | [`mcp-k8s-node.md`](mcp-k8s-node.md) |
 | namespace | `namespace_list` | [below](#namespace) |
 | deployment | `deployment_list`, `deployment_pods`, `deployment_describe` | [below](#deployment) |
+| pod | `pod_list`, `pod_describe`, `pod_log`, `pod_resources` | [below](#pod) |
 
 ### namespace
 
@@ -19,6 +20,10 @@ The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organ
 ### deployment
 
 Health builds on `kubectl rollout status`, checked in the order `Paused`, `Stalled` (`ProgressDeadlineExceeded`), `ScaledToZero`, `Progressing` (generation not observed, replicas not all updated, or more replicas than desired, which kubectl ignores during a scale-down), `Degraded` (fewer available than desired, which includes a scale-up whose new pods are not ready yet), `Healthy`. A pod belongs to the deployment only when its controller is a ReplicaSet the deployment controls, so another workload's pods carrying the same labels are excluded; its revision is `current` when that ReplicaSet is at the deployment's `deployment.kubernetes.io/revision`, `old` otherwise, and `unknown` rather than guessed when no such ReplicaSet exists yet. Deployment events are omitted, since they are mostly `ScalingReplicaSet`; the useful ones are pod events. RBAC: `get`/`list` on `deployments`, `list` on `replicasets`, `list` on `pods`.
+
+### pod
+
+Health is the kubectl-style pod status. `pod_list` filters by namespace and by node (a server-side field selector) and names each pod's controller. `pod_log` returns every main container unless one is named (init and ephemeral containers can be named), tails 50 lines by default and at most 500, streams each container's output and keeps its newest 16 KB cut at a line boundary (no server-side byte limit, which would cut the newest output instead of the oldest), and turns the API's 400 answers (no previous instance, container not started) into a per-container note carrying the API's message; `previous` shows the crashed instance behind a `CrashLoopBackOff`. Logs are raw container output relayed into chat and cannot be redacted, so the `pods/log` grant is the boundary. `pod_resources` reports requests and limits per container, native sidecars included, with usage from the metrics API measured against the limit, else the request, and degrades to a `usage_note` like `node_resources`. RBAC: `get`/`list` on `pods`, `get` on `pods/log`, and `get` on `pods` in `metrics.k8s.io`.
 
 ## One group, resource-oriented internals
 
@@ -37,6 +42,7 @@ Tool names are resource-first and snake_case, `<resource>_<verb>`, matching the 
 | `resources` | capacity, allocation, and utilization of specific objects | a target list |
 | `pods` | the pods each workload object selects, with their state | a target list |
 | `describe` | the full object as cleaned YAML | a target list |
+| `log` | recent container output | a target list, plus container, tail, and previous-instance options |
 
 Every tool is read-only (`ReadOnlyHint: true`, `IdempotentHint: true`, `OpenWorldHint: true`). Each returns a typed Go response, so `mcp.AddTool` derives the output schema and populates `StructuredContent`; the handler also sets `Content` to a concise human-readable summary rather than relying on the SDK's JSON fallback, because ChatOps targets small models that answer better from a compact text block. Text is kubectl-like: a `list` is an aligned table, and a per-target tool renders one block per target separated by a blank line.
 
@@ -44,7 +50,7 @@ Every tool is read-only (`ReadOnlyHint: true`, `IdempotentHint: true`, `OpenWorl
 
 Every tool that reports on specific objects takes a list of targets rather than a single name, and listing is always a separate tool. A question about several objects therefore costs one list call plus one call naming all of them, so the number of model rounds does not grow with the number of objects. This matters for the small models ChatOps targets, which usually make one tool call per response and would otherwise exhaust `agent.max_iterations` on a mid-sized cluster. There is no implicit "all objects" mode: the model always names its targets, taken from the list tool.
 
-The target list is required and non-empty, and its argument is named after the resource in the plural (`nodes`, `deployments`). Cluster-scoped targets are names; namespaced targets are objects with required `namespace` and `name` fields (`{"namespace": "argocd", "name": "argocd-server"}`), so the schema enforces both and nothing is parsed out of a combined string. Fields are trimmed, a blank one is an error, and duplicates are dropped keeping request order. A call accepts at most 50 distinct targets so the combined result stays within the agent's tool-result budget; every `describe` tool shares a lower cap of 5 because each target's output is a full object.
+The target list is required and non-empty, and its argument is named after the resource in the plural (`nodes`, `deployments`). Cluster-scoped targets are names; namespaced targets are objects with required `namespace` and `name` fields (`{"namespace": "argocd", "name": "argocd-server"}`), so the schema enforces both and nothing is parsed out of a combined string. Fields are trimmed, a blank one is an error, and duplicates are dropped keeping request order. A call accepts at most 50 distinct targets so the combined result stays within the agent's tool-result budget; every `describe` and `log` tool shares a lower cap of 5 because each target's output is a full object or raw output.
 
 Targets are fetched in parallel, at most four at a time, and the output keeps request order. A target that does not exist is a normal entry with `found: false`, never a fuzzy match and never a tool error, so one bad name does not hide the others. A failure that is not a miss (unreachable cluster, RBAC-forbidden) fails the whole call, cancels the targets still in flight or queued, and reports that first failure with the target it hit. Structured output wraps the per-target entries in one list field named after the argument, e.g. `{"deployments": [...]}`, and each entry carries `found`.
 
