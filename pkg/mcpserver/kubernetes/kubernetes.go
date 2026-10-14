@@ -15,6 +15,7 @@ import (
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/node"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/pod"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/pv"
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/pvc"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/replicaset"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/service"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/statefulset"
@@ -42,5 +43,6 @@ func Register(server *mcp.Server, cfg Config) error {
 	service.Register(server, c)
 	job.Register(server, c)
 	pv.Register(server, c)
+	pvc.Register(server, c)
 	return nil
 }

@@ -18,6 +18,7 @@ The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organ
 | service | `service_list`, `service_pods`, `service_describe` | [below](#service) |
 | job | `job_list`, `job_pods`, `job_log`, `job_describe` | [below](#job) |
 | pv | `pv_list`, `pv_describe` | [below](#pv) |
+| pvc | `pvc_list`, `pvc_describe` | [below](#pvc) |
 
 ### namespace
 
@@ -54,6 +55,10 @@ A job runs to an end rather than rolling out, so its health reads the terminal c
 ### pv
 
 Persistent volumes are cluster-scoped, so `pv_describe` takes plain names in `pvs` and a missing one is just `found: false`. Health is the volume's phase (`Available`, `Bound`, `Released`, `Failed`, `Pending`); the list follows `kubectl get pv`, with kubectl's short access modes and the bound claim as namespace/name. A volume's events come from `event_list` rather than a volume tool. RBAC: `get`/`list` on `persistentvolumes`.
+
+### pvc
+
+Health is the claim's phase (`Bound`, `Pending`, `Lost`); the list follows `kubectl get pvc`, with the capacity the bound volume provides rather than the request, so a pending resize shows the old size until it finishes (its condition is in `pvc_describe`). RBAC: `get`/`list` on `persistentvolumeclaims`.
 
 ## One group, resource-oriented internals
 
