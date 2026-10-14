@@ -30,5 +30,5 @@ func Test_Register_lists_tools(t *testing.T) {
 		require.True(t, *tool.Annotations.OpenWorldHint, tool.Name)
 		require.NotNil(t, tool.OutputSchema, tool.Name)
 	}
-	require.ElementsMatch(t, []string{"node_list", "node_status", "node_resources"}, names)
+	require.ElementsMatch(t, []string{"node_list", "node_status", "node_resources", "namespace_list"}, names)
 }
