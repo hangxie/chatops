@@ -191,7 +191,7 @@ Each tool group has a design doc under [`docs/`](docs/); the overall architectur
 |---|---|---|---|
 | `ping` | `ping` | Connectivity smoke test; replies `pong` | [`docs/mcp-ping.md`](docs/mcp-ping.md) |
 | `status` | `service_status` | Public status and active incidents of external services, from their status pages | [`docs/mcp-status.md`](docs/mcp-status.md) |
-| `kubernetes` | `node_list`, `node_status`, `node_resources`, `namespace_list`, `deployment_list`, `deployment_pods`, `deployment_describe`, `pod_list`, `pod_describe`, `pod_log`, `pod_resources` | Read-only Kubernetes inspection: node roster, health, and resource capacity/utilization; namespaces and why one is stuck terminating; deployment health, pods, and definition; pod roster, definition, logs, and resource usage | [`docs/mcp-k8s.md`](docs/mcp-k8s.md) |
+| `kubernetes` | `node_list`, `node_status`, `node_resources`, `namespace_list`, `deployment_list`, `deployment_pods`, `deployment_describe`, `pod_list`, `pod_describe`, `pod_log`, `pod_resources`, `statefulset_list`, `statefulset_pods`, `statefulset_describe` | Read-only Kubernetes inspection: node roster, health, and resource capacity/utilization; namespaces and why one is stuck terminating; deployment health, pods, and definition; pod roster, definition, logs, and resource usage; statefulset health, pods, and definition | [`docs/mcp-k8s.md`](docs/mcp-k8s.md) |
 
 `node_status` and `node_resources` take a `nodes` list, so a question about several nodes is one call: `node_list` for the names, then one call with all of them. Every other per-object tool likewise takes a list named after its resource (`pods`, `deployments`, and so on), of `{namespace, name}` objects for namespaced resources. A list holds at most 50 distinct targets (5 for every `_describe` and `_log` tool, whose output is a full object or raw container output); a target that does not exist is reported as not found without failing the rest, and a namespace that does not exist is named as such.
 
@@ -218,6 +218,9 @@ rules:
 - apiGroups: [""]
   resources: [pods/log]
   verbs: [get]
+- apiGroups: ["apps"]
+  resources: [statefulsets]
+  verbs: [get, list]
 - apiGroups: ["metrics.k8s.io"]
   resources: [nodes, pods]
   verbs: [get, list]

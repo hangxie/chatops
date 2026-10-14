@@ -152,11 +152,11 @@ func Test_listDeployments(t *testing.T) {
 	out, err := listDeployments(context.Background(), client, "argocd")
 	require.NoError(t, err)
 	require.Equal(t, "argocd", out.Namespace)
-	byName := map[string]DeploymentListItem{}
+	byName := map[string]kube.WorkloadListItem{}
 	for _, d := range out.Deployments {
 		byName[d.Name] = d
 	}
-	require.Equal(t, DeploymentListItem{
+	require.Equal(t, kube.WorkloadListItem{
 		Namespace: "argocd", Name: "server", Health: healthHealthy,
 		Desired: 2, Ready: 2, Updated: 2, Available: 2, Created: created,
 	}, byName["server"])
