@@ -4,6 +4,7 @@ package kubetest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -67,4 +68,23 @@ func StructuredList(t *testing.T, result *mcp.CallToolResult, field string) []ma
 		items = append(items, item.(map[string]any))
 	}
 	return items
+}
+
+// RequireCapped checks a list result keeps shown rows under field, reports total, and notes the cap in its text.
+func RequireCapped(t *testing.T, result *mcp.CallToolResult, field string, shown, total int) {
+	t.Helper()
+	require.False(t, result.IsError)
+	require.Len(t, StructuredList(t, result, field), shown)
+	require.EqualValues(t, total, result.StructuredContent.(map[string]any)["total"])
+	require.Contains(t, result.Content[0].(*mcp.TextContent).Text, fmt.Sprintf("(showing the first %d of %d ", shown, total))
+}
+
+// RequireCappedTarget checks a per-target result's first entry keeps shown rows, reports total, and notes the cap.
+func RequireCappedTarget(t *testing.T, result *mcp.CallToolResult, field, rows string, shown, total int) {
+	t.Helper()
+	require.False(t, result.IsError)
+	entry := StructuredList(t, result, field)[0]
+	require.Len(t, entry[rows], shown)
+	require.EqualValues(t, total, entry["total"])
+	require.Contains(t, result.Content[0].(*mcp.TextContent).Text, fmt.Sprintf("(showing the first %d of %d ", shown, total))
 }

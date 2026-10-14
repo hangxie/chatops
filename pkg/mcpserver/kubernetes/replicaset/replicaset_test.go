@@ -193,3 +193,20 @@ func Test_tools_bad_arguments(t *testing.T) {
 		})
 	}
 }
+
+func Test_tools_capped(t *testing.T) {
+	r := replicaSet("argocd", "server-abc")
+	session := connect(t, kube.Clients{MaxResults: 1, Core: fake.NewClientset(kubetest.Namespace("argocd"), r, replicaSet("argocd", "web-abc"),
+		kubetest.WorkloadPod("argocd", "server-abc-1", "server-abc", kubetest.OwnedBy(r)),
+		kubetest.WorkloadPod("argocd", "server-abc-2", "server-abc", kubetest.OwnedBy(r)))})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "replicaset_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "replicasets", 1, 2)
+
+	result, err = session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "replicaset_pods", Arguments: map[string]any{"replicasets": []any{map[string]any{"namespace": "argocd", "name": "server-abc"}}},
+	})
+	require.NoError(t, err)
+	kubetest.RequireCappedTarget(t, result, "replicasets", "pods", 1, 2)
+}

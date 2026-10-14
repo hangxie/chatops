@@ -29,6 +29,8 @@ type PVListItem struct {
 // PVListOutput is the structured result of pv_list.
 type PVListOutput struct {
 	PVs []PVListItem `json:"pvs"`
+	// Total counts every match before the cap.
+	Total int `json:"total"`
 }
 
 // PVDescribeOutput is the structured result of pv_describe: one entry per requested volume, in request order.
@@ -60,6 +62,7 @@ func listHandler(c kube.Clients) mcp.ToolHandlerFor[struct{}, PVListOutput] {
 		if err != nil {
 			return nil, PVListOutput{}, err
 		}
+		out.PVs, out.Total = kube.Cap(out.PVs, c.ResultLimit())
 		return kube.TextResult(formatList(out)), out, nil
 	}
 }
@@ -127,5 +130,6 @@ func formatList(out PVListOutput) string {
 			kube.OrNone(p.Claim), kube.OrNone(p.StorageClass), kube.Age(p.Created),
 		})
 	}
-	return kube.Table([]string{"NAME", "CAPACITY", "ACCESS", "RECLAIM", "STATUS", "CLAIM", "STORAGECLASS", "AGE"}, rows)
+	return kube.Table([]string{"NAME", "CAPACITY", "ACCESS", "RECLAIM", "STATUS", "CLAIM", "STORAGECLASS", "AGE"}, rows) +
+		kube.CapNote(len(out.PVs), out.Total, "persistent volumes")
 }

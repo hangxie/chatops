@@ -157,3 +157,14 @@ func Test_tools(t *testing.T) {
 		})
 	}
 }
+
+func Test_list_tool_capped(t *testing.T) {
+	session := kubetest.Connect(t, func(s *mcp.Server) {
+		Register(s, kube.Clients{MaxResults: 1, Core: fake.NewClientset(kubetest.Namespace("argocd"),
+			configMap("argocd", "a", map[string]string{"k": "v"}, nil), configMap("argocd", "b", nil, nil))})
+	})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "configmap_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "configmaps", 1, 2)
+}

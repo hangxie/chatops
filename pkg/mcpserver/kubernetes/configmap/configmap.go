@@ -33,6 +33,8 @@ type ConfigMapListItem struct {
 type ConfigMapListOutput struct {
 	Namespace  string              `json:"namespace,omitempty"`
 	ConfigMaps []ConfigMapListItem `json:"configmaps"`
+	// Total counts every match before the cap.
+	Total int `json:"total"`
 }
 
 // ConfigMapDescribeOutput is the structured result of configmap_describe: one entry per requested configmap, in request order.
@@ -68,6 +70,7 @@ func listHandler(c kube.Clients) mcp.ToolHandlerFor[listInput, ConfigMapListOutp
 		if err != nil {
 			return nil, ConfigMapListOutput{}, err
 		}
+		out.ConfigMaps, out.Total = kube.Cap(out.ConfigMaps, c.ResultLimit())
 		return kube.TextResult(formatList(out)), out, nil
 	}
 }
@@ -161,7 +164,8 @@ func formatList(out ConfigMapListOutput) string {
 	for _, m := range out.ConfigMaps {
 		rows = append(rows, []string{m.Namespace, m.Name, strconv.Itoa(m.Keys), humanBytes(m.Bytes), kube.Age(m.Created)})
 	}
-	return kube.Table([]string{"NAMESPACE", "NAME", "KEYS", "SIZE", "AGE"}, rows)
+	return kube.Table([]string{"NAMESPACE", "NAME", "KEYS", "SIZE", "AGE"}, rows) +
+		kube.CapNote(len(out.ConfigMaps), out.Total, "configmaps")
 }
 
 func humanBytes(n int) string {

@@ -33,6 +33,8 @@ type PodListOutput struct {
 	Namespace string        `json:"namespace,omitempty"`
 	Node      string        `json:"node,omitempty"`
 	Pods      []PodListItem `json:"pods"`
+	// Total counts every match before the cap.
+	Total int `json:"total"`
 }
 
 type podListInput struct {
@@ -74,6 +76,7 @@ func podListHandler(c kube.Clients) mcp.ToolHandlerFor[podListInput, PodListOutp
 		if err != nil {
 			return nil, PodListOutput{}, err
 		}
+		out.Pods, out.Total = kube.Cap(out.Pods, c.ResultLimit())
 		return kube.TextResult(formatPodList(out)), out, nil
 	}
 }

@@ -45,6 +45,8 @@ type JobListItem struct {
 type JobListOutput struct {
 	Namespace string        `json:"namespace,omitempty"`
 	Jobs      []JobListItem `json:"jobs"`
+	// Total counts every match before the cap.
+	Total int `json:"total"`
 }
 
 type listInput struct {
@@ -85,6 +87,7 @@ func listHandler(c kube.Clients) mcp.ToolHandlerFor[listInput, JobListOutput] {
 		if err != nil {
 			return nil, JobListOutput{}, err
 		}
+		out.Jobs, out.Total = kube.Cap(out.Jobs, c.ResultLimit())
 		return kube.TextResult(formatList(out)), out, nil
 	}
 }
@@ -95,7 +98,8 @@ func podsHandler(c kube.Clients) mcp.ToolHandlerFor[targetInput, JobPodsOutput] 
 			return kube.ObjectTargets("jobs", in.Jobs, kube.MaxTargets)
 		},
 		func(ctx context.Context, ref kube.ObjectRef) (kube.WorkloadPods, error) {
-			return getPods(ctx, c.Core, ref)
+			w, err := getPods(ctx, c.Core, ref)
+			return w.Capped(c.ResultLimit()), err
 		},
 		kube.FormatWorkloadPods("job"),
 		func(j []kube.WorkloadPods) JobPodsOutput { return JobPodsOutput{Jobs: j} },
@@ -202,7 +206,8 @@ func formatList(out JobListOutput) string {
 			kube.OrNone(duration(j.Started, j.Finished)), kube.OrNone(j.Owner), kube.Age(j.Created),
 		})
 	}
-	return kube.Table([]string{"NAMESPACE", "NAME", "HEALTH", "COMPLETIONS", "FAILED", "DURATION", "OWNER", "AGE"}, rows)
+	return kube.Table([]string{"NAMESPACE", "NAME", "HEALTH", "COMPLETIONS", "FAILED", "DURATION", "OWNER", "AGE"}, rows) +
+		kube.CapNote(len(out.Jobs), out.Total, "jobs")
 }
 
 // duration runs from start to finish, or to now while the job is still running.

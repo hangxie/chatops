@@ -15,6 +15,8 @@ import (
 type configFile struct {
 	Kubeconfig string `yaml:"kubeconfig"`
 	Context    string `yaml:"context"`
+	// MaxResults is a pointer so an explicit 0 is rejected rather than read as the default.
+	MaxResults *int `yaml:"max_results"`
 }
 
 // Load reads a kubernetes config file; unknown fields are errors, and a relative kubeconfig is resolved
@@ -31,6 +33,12 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("parse kubernetes config %s: %w", path, err)
 	}
 	cfg := Config{Kubeconfig: file.Kubeconfig, Context: file.Context}
+	if file.MaxResults != nil {
+		if *file.MaxResults < 1 {
+			return Config{}, fmt.Errorf("kubernetes config %s: max_results must be at least 1, got %d", path, *file.MaxResults)
+		}
+		cfg.MaxResults = *file.MaxResults
+	}
 	if cfg.Kubeconfig != "" && !filepath.IsAbs(cfg.Kubeconfig) {
 		cfg.Kubeconfig = filepath.Join(filepath.Dir(path), cfg.Kubeconfig)
 	}

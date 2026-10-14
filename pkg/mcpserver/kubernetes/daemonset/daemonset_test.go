@@ -198,3 +198,21 @@ func controllerRevision(d *appsv1.DaemonSet, number int64, hash string) *appsv1.
 		Revision: number,
 	}
 }
+
+func Test_tools_capped(t *testing.T) {
+	d := daemonSet("kube-system", "cilium")
+	session := connect(t, kube.Clients{MaxResults: 1, Core: fake.NewClientset(kubetest.Namespace("kube-system"), d,
+		daemonSet("kube-system", "kube-proxy"), controllerRevision(d, 1, "abc"),
+		kubetest.WorkloadPod("kube-system", "cilium-x", "cilium", ownedBy(d), revision("abc")),
+		kubetest.WorkloadPod("kube-system", "cilium-y", "cilium", ownedBy(d), revision("abc")))})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "daemonset_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "daemonsets", 1, 2)
+
+	result, err = session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "daemonset_pods", Arguments: map[string]any{"daemonsets": []any{map[string]any{"namespace": "kube-system", "name": "cilium"}}},
+	})
+	require.NoError(t, err)
+	kubetest.RequireCappedTarget(t, result, "daemonsets", "pods", 1, 2)
+}

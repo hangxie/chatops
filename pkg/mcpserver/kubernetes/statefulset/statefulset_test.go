@@ -200,3 +200,20 @@ func ownedBy(s *appsv1.StatefulSet) kubetest.PodOpt {
 func revision(hash string) kubetest.PodOpt {
 	return func(p *corev1.Pod) { p.Labels[appsv1.ControllerRevisionHashLabelKey] = hash }
 }
+
+func Test_tools_capped(t *testing.T) {
+	s := statefulSet("db", "pg")
+	session := connect(t, kube.Clients{MaxResults: 1, Core: fake.NewClientset(kubetest.Namespace("db"), s, statefulSet("db", "redis"),
+		kubetest.WorkloadPod("db", "pg-0", "pg", ownedBy(s), revision("pg-1")),
+		kubetest.WorkloadPod("db", "pg-1", "pg", ownedBy(s), revision("pg-1")))})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "statefulset_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "statefulsets", 1, 2)
+
+	result, err = session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "statefulset_pods", Arguments: map[string]any{"statefulsets": []any{map[string]any{"namespace": "db", "name": "pg"}}},
+	})
+	require.NoError(t, err)
+	kubetest.RequireCappedTarget(t, result, "statefulsets", "pods", 1, 2)
+}

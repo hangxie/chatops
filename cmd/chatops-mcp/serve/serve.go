@@ -35,7 +35,7 @@ type Cmd struct {
 	// StatusConfig lists the services the status group checks; nothing is built in.
 	StatusConfig string `help:"YAML file listing the services the status tool group checks; required with --tools status." placeholder:"FILE" type:"path"`
 	// KubernetesConfig holds every kubernetes group setting; without it the group uses its defaults.
-	KubernetesConfig string `name:"kubernetes-config" help:"YAML file configuring the kubernetes tool group (kubeconfig, context); optional with --tools kubernetes." placeholder:"FILE" type:"path"`
+	KubernetesConfig string `name:"kubernetes-config" help:"YAML file configuring the kubernetes tool group (kubeconfig, context, max_results); optional with --tools kubernetes." placeholder:"FILE" type:"path"`
 
 	// transport overrides stdio and listener overrides --http listening in tests.
 	transport mcp.Transport

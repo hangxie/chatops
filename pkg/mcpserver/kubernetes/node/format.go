@@ -25,7 +25,7 @@ func formatNodeList(out NodeListOutput) string {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", n.Name, n.Ready, rolesText(n.Roles), kube.Age(n.Created), n.Version)
 	}
 	_ = w.Flush()
-	return strings.TrimRight(b.String(), "\n")
+	return strings.TrimRight(b.String(), "\n") + kube.CapNote(len(out.Nodes), out.Total, "nodes")
 }
 
 func formatNodeStatus(out NodeStatus) string {

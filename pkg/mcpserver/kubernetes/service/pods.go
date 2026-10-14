@@ -25,6 +25,8 @@ type ServicePods struct {
 	Health    string     `json:"health,omitempty"`
 	Type      string     `json:"type,omitempty"`
 	Endpoints []Endpoint `json:"endpoints,omitempty"`
+	// Total counts every endpoint before the cap.
+	Total int `json:"total,omitempty"`
 }
 
 // Endpoint is one backend of a service, merged across the EndpointSlices that list it.
@@ -85,7 +87,8 @@ func formatPods(out ServicePods) string {
 			yesNo(e.Terminating), kube.OrNone(e.Node),
 		})
 	}
-	return head + "\n" + kube.Table([]string{"POD", "ADDRESS", "READY", "SERVING", "TERMINATING", "NODE"}, rows)
+	return head + "\n" + kube.Table([]string{"POD", "ADDRESS", "READY", "SERVING", "TERMINATING", "NODE"}, rows) +
+		kube.CapNote(len(out.Endpoints), out.Total, "endpoints")
 }
 
 func yesNo(b bool) string {

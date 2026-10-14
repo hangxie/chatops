@@ -18,9 +18,6 @@ import (
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kube"
 )
 
-// maxEvents bounds the rows returned; the newest events explain the current state.
-const maxEvents = 50
-
 // kinds maps the names people and models use to the API kind, since the involvedObject.kind selector is exact.
 var kinds = map[string]string{
 	"pod": "Pod", "pods": "Pod", "node": "Node", "nodes": "Node", "namespace": "Namespace",
@@ -64,7 +61,7 @@ type listInput struct {
 func Register(server *mcp.Server, c kube.Clients) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "event_list",
-		Description: "List recent Kubernetes events, newest first and at most 50, with time, type, reason, object, count, and message. Filter by namespace, by object kind and name (events about one pod, deployment, node, persistent volume, and so on), and by type Warning or Normal. The cluster keeps events for about an hour.",
+		Description: fmt.Sprintf("List recent Kubernetes events, newest first and at most %d, with time, type, reason, object, count, and message. Filter by namespace, by object kind and name (events about one pod, deployment, node, persistent volume, and so on), and by type Warning or Normal. The cluster keeps events for about an hour.", c.ResultLimit()),
 		Annotations: kube.ReadOnly(),
 	}, listHandler(c))
 }
@@ -75,11 +72,13 @@ func listHandler(c kube.Clients) mcp.ToolHandlerFor[listInput, EventListOutput] 
 		if err != nil {
 			return nil, EventListOutput{}, err
 		}
+		// The newest events explain the current state, so the cap applies after sorting.
+		out.Events, out.Total = kube.Cap(out.Events, c.ResultLimit())
 		return kube.TextResult(formatList(out)), out, nil
 	}
 }
 
-// listEvents filters on the server with event field selectors, then keeps the newest maxEvents.
+// listEvents filters on the server with event field selectors and sorts the matches newest first.
 func listEvents(ctx context.Context, client k8s.Interface, in listInput) (EventListOutput, error) {
 	out := EventListOutput{
 		Namespace: strings.TrimSpace(in.Namespace), Kind: normalizeKind(in.Kind), Name: strings.TrimSpace(in.Name),
@@ -106,7 +105,7 @@ func listEvents(ctx context.Context, client k8s.Interface, in listInput) (EventL
 	if err := kube.CheckNamespace(ctx, client, out.Namespace, len(list.Items)); err != nil {
 		return EventListOutput{}, err
 	}
-	out.Events = make([]Event, 0, min(len(list.Items), maxEvents))
+	out.Events = make([]Event, 0, len(list.Items))
 	for i := range list.Items {
 		e := &list.Items[i]
 		if out.Kind != "" && !knownKind && !strings.EqualFold(e.InvolvedObject.Kind, out.Kind) {
@@ -117,9 +116,7 @@ func listEvents(ctx context.Context, client k8s.Interface, in listInput) (EventL
 			Object: e.InvolvedObject.Kind + "/" + e.InvolvedObject.Name, Count: max(e.Count, 1), Message: e.Message,
 		})
 	}
-	out.Total = len(out.Events)
 	sort.SliceStable(out.Events, func(a, b int) bool { return out.Events[a].LastSeen.After(out.Events[b].LastSeen) })
-	out.Events = out.Events[:min(len(out.Events), maxEvents)]
 	return out, nil
 }
 

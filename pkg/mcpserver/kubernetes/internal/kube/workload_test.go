@@ -79,6 +79,13 @@ func Test_FormatWorkloadPods(t *testing.T) {
 			},
 			want: []string{"db/pg Healthy (selector app=pg)\n", "pg-0", "current"},
 		},
+		"capped": {
+			w: WorkloadPods{
+				Namespace: "db", Name: "pg", Found: true, Health: "Healthy", Selector: "app=pg", Total: 3,
+				Pods: []PodSummary{{Name: "pg-0", Ready: 1, Containers: 1, Status: "Running", Created: created}},
+			},
+			want: []string{"pg-0", "\n(showing the first 1 of 3 pods)"},
+		},
 		"no pods":           {w: WorkloadPods{Namespace: "db", Name: "idle", Found: true, Health: "ScaledToZero", Selector: "app=idle"}, want: []string{"db/idle ScaledToZero (selector app=idle)\nno pods owned by this statefulset"}},
 		"missing":           {w: WorkloadPods{Namespace: "db", Name: "ghost"}, want: []string{`statefulset "db/ghost" not found`}},
 		"missing namespace": {w: WorkloadPods{Namespace: "nope", Name: "x", Note: "gone"}, want: []string{`statefulset "nope/x" not found: gone`}},
@@ -102,12 +109,23 @@ func Test_FormatWorkloadList(t *testing.T) {
 		{Namespace: "db", Name: "redis", Health: "Progressing", Desired: 2, Ready: 1, Updated: 1, Available: 1, Created: created},
 	}
 
-	text := FormatWorkloadList("statefulsets", "", items)
+	text := FormatWorkloadList("statefulsets", "", items, 2)
 	require.Regexp(t, `NAMESPACE\s+NAME\s+HEALTH\s+READY\s+UP-TO-DATE\s+AVAILABLE\s+AGE`, text)
 	require.Regexp(t, `db\s+pg\s+Healthy\s+3/3\s+3\s+3\s+34d`, text)
 	require.Regexp(t, `db\s+redis\s+Progressing\s+1/2\s+1\s+1\s+34d`, text)
-	require.Equal(t, "no statefulsets found", FormatWorkloadList("statefulsets", "", nil))
-	require.Equal(t, `no statefulsets in namespace "db"`, FormatWorkloadList("statefulsets", "db", nil))
+	require.NotContains(t, text, "showing")
+	require.Contains(t, FormatWorkloadList("statefulsets", "", items, 9), "\n(showing the first 2 of 9 statefulsets)")
+	require.Equal(t, "no statefulsets found", FormatWorkloadList("statefulsets", "", nil, 0))
+	require.Equal(t, `no statefulsets in namespace "db"`, FormatWorkloadList("statefulsets", "db", nil, 0))
+}
+
+func Test_WorkloadPods_Capped(t *testing.T) {
+	w := WorkloadPods{Found: true, Pods: []PodSummary{{Name: "a"}, {Name: "b"}, {Name: "c"}}}
+	got := w.Capped(2)
+	require.Equal(t, []PodSummary{{Name: "a"}, {Name: "b"}}, got.Pods)
+	require.Equal(t, 3, got.Total)
+	require.Len(t, w.Pods, 3)
+	require.Equal(t, WorkloadPods{Name: "ghost"}, WorkloadPods{Name: "ghost"}.Capped(2))
 }
 
 func Test_CheckNamespace(t *testing.T) {

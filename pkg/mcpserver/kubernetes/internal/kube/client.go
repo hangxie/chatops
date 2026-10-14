@@ -20,16 +20,22 @@ var inClusterConfig = rest.InClusterConfig
 type Config struct {
 	Kubeconfig string
 	Context    string
+	// MaxResults caps the rows of every list and pods tool; zero means DefaultMaxResults.
+	MaxResults int
 }
 
-// Clients holds the API clients every resource shares; they are built once from one rest.Config.
+// Clients holds the API clients every resource shares, built once from one rest.Config, and the row cap.
 type Clients struct {
-	Core    k8s.Interface
-	Metrics metricsclient.Interface
+	Core       k8s.Interface
+	Metrics    metricsclient.Interface
+	MaxResults int
 }
 
 // NewClients resolves the connection, applies the request-timeout backstop and user agent, and builds the clients.
 func NewClients(cfg Config, timeout time.Duration, userAgent string) (Clients, error) {
+	if cfg.MaxResults < 0 {
+		return Clients{}, fmt.Errorf("max results must not be negative, got %d", cfg.MaxResults)
+	}
 	restCfg, err := restConfig(cfg)
 	if err != nil {
 		return Clients{}, err
@@ -44,7 +50,7 @@ func NewClients(cfg Config, timeout time.Duration, userAgent string) (Clients, e
 	if err != nil {
 		return Clients{}, fmt.Errorf("metrics client: %w", err)
 	}
-	return Clients{Core: core, Metrics: metrics}, nil
+	return Clients{Core: core, Metrics: metrics, MaxResults: cfg.MaxResults}, nil
 }
 
 // restConfig resolves the connection: explicit kubeconfig (no fallback), else an explicit context forces

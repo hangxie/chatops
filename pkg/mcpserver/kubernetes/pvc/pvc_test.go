@@ -143,3 +143,14 @@ func Test_tools(t *testing.T) {
 		})
 	}
 }
+
+func Test_list_tool_capped(t *testing.T) {
+	session := kubetest.Connect(t, func(s *mcp.Server) {
+		Register(s, kube.Clients{MaxResults: 1, Core: fake.NewClientset(kubetest.Namespace("db"),
+			claim("db", "data-pg-0", corev1.ClaimBound, "pvc-1"), claim("db", "data-pg-1", corev1.ClaimPending, ""))})
+	})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "pvc_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "pvcs", 1, 2)
+}

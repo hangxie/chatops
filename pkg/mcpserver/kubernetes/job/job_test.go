@@ -209,3 +209,19 @@ func Test_tools_bad_arguments(t *testing.T) {
 		})
 	}
 }
+
+func Test_tools_capped(t *testing.T) {
+	j := job("db", "migrate")
+	session := connect(t, kube.Clients{MaxResults: 1, Core: fake.NewClientset(kubetest.Namespace("db"), j, job("db", "backup"),
+		kubetest.WorkloadPod("db", "migrate-x", "migrate", ownedBy(j)), kubetest.WorkloadPod("db", "migrate-y", "migrate", ownedBy(j)))})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "job_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "jobs", 1, 2)
+
+	result, err = session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "job_pods", Arguments: map[string]any{"jobs": []any{map[string]any{"namespace": "db", "name": "migrate"}}},
+	})
+	require.NoError(t, err)
+	kubetest.RequireCappedTarget(t, result, "jobs", "pods", 1, 2)
+}

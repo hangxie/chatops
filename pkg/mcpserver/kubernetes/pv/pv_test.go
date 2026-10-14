@@ -122,3 +122,13 @@ func Test_listHandler_error(t *testing.T) {
 	_, _, err := listHandler(kube.Clients{Core: client})(context.Background(), nil, struct{}{})
 	require.ErrorContains(t, err, "list denied")
 }
+
+func Test_list_tool_capped(t *testing.T) {
+	session := kubetest.Connect(t, func(s *mcp.Server) {
+		Register(s, kube.Clients{MaxResults: 1, Core: fake.NewClientset(volume("pvc-1", corev1.VolumeBound, nil), volume("pvc-2", corev1.VolumeAvailable, nil))})
+	})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "pv_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "pvs", 1, 2)
+}

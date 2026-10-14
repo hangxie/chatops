@@ -28,6 +28,8 @@ const (
 type DeploymentListOutput struct {
 	Namespace   string                  `json:"namespace,omitempty"`
 	Deployments []kube.WorkloadListItem `json:"deployments"`
+	// Total counts every match before the cap.
+	Total int `json:"total"`
 }
 
 type deploymentListInput struct {
@@ -63,7 +65,8 @@ func deploymentListHandler(c kube.Clients) mcp.ToolHandlerFor[deploymentListInpu
 		if err != nil {
 			return nil, DeploymentListOutput{}, err
 		}
-		return kube.TextResult(kube.FormatWorkloadList("deployments", out.Namespace, out.Deployments)), out, nil
+		out.Deployments, out.Total = kube.Cap(out.Deployments, c.ResultLimit())
+		return kube.TextResult(kube.FormatWorkloadList("deployments", out.Namespace, out.Deployments, out.Total)), out, nil
 	}
 }
 
@@ -73,7 +76,8 @@ func deploymentPodsHandler(c kube.Clients) mcp.ToolHandlerFor[deploymentInput, D
 			return kube.ObjectTargets("deployments", in.Deployments, kube.MaxTargets)
 		},
 		func(ctx context.Context, ref kube.ObjectRef) (kube.WorkloadPods, error) {
-			return getDeploymentPods(ctx, c.Core, ref)
+			w, err := getDeploymentPods(ctx, c.Core, ref)
+			return w.Capped(c.ResultLimit()), err
 		},
 		kube.FormatWorkloadPods("deployment"),
 		func(d []kube.WorkloadPods) DeploymentPodsOutput { return DeploymentPodsOutput{Deployments: d} },

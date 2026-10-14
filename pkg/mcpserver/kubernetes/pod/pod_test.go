@@ -186,3 +186,12 @@ func Test_pod_tools_bad_arguments(t *testing.T) {
 		})
 	}
 }
+
+func Test_pod_list_tool_capped(t *testing.T) {
+	session := connect(t, kube.Clients{MaxResults: 1, Core: fake.NewClientset(kubetest.Namespace("argocd"),
+		kubetest.WorkloadPod("argocd", "server-1", "server"), kubetest.WorkloadPod("argocd", "server-2", "server"))})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "pod_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "pods", 1, 2)
+}

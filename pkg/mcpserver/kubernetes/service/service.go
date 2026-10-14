@@ -45,6 +45,8 @@ type ServiceListItem struct {
 type ServiceListOutput struct {
 	Namespace string            `json:"namespace,omitempty"`
 	Services  []ServiceListItem `json:"services"`
+	// Total counts every match before the cap.
+	Total int `json:"total"`
 }
 
 type listInput struct {
@@ -80,6 +82,7 @@ func listHandler(c kube.Clients) mcp.ToolHandlerFor[listInput, ServiceListOutput
 		if err != nil {
 			return nil, ServiceListOutput{}, err
 		}
+		out.Services, out.Total = kube.Cap(out.Services, c.ResultLimit())
 		return kube.TextResult(formatList(out)), out, nil
 	}
 }
@@ -89,7 +92,11 @@ func podsHandler(c kube.Clients) mcp.ToolHandlerFor[targetInput, ServicePodsOutp
 		func(in targetInput) ([]kube.ObjectRef, error) {
 			return kube.ObjectTargets("services", in.Services, kube.MaxTargets)
 		},
-		func(ctx context.Context, ref kube.ObjectRef) (ServicePods, error) { return getPods(ctx, c.Core, ref) },
+		func(ctx context.Context, ref kube.ObjectRef) (ServicePods, error) {
+			p, err := getPods(ctx, c.Core, ref)
+			p.Endpoints, p.Total = kube.Cap(p.Endpoints, c.ResultLimit())
+			return p, err
+		},
 		formatPods,
 		func(s []ServicePods) ServicePodsOutput { return ServicePodsOutput{Services: s} },
 	)
@@ -260,7 +267,8 @@ func formatList(out ServiceListOutput) string {
 			s.Health, fmt.Sprintf("%d/%d", s.Ready, s.Endpoints), kube.Age(s.Created),
 		})
 	}
-	return kube.Table([]string{"NAMESPACE", "NAME", "TYPE", "CLUSTER-IP", "EXTERNAL-IP", "PORTS", "HEALTH", "ENDPOINTS", "AGE"}, rows)
+	return kube.Table([]string{"NAMESPACE", "NAME", "TYPE", "CLUSTER-IP", "EXTERNAL-IP", "PORTS", "HEALTH", "ENDPOINTS", "AGE"}, rows) +
+		kube.CapNote(len(out.Services), out.Total, "services")
 }
 
 // getService returns nil and a note on a miss; the note names the namespace when that is what is missing.

@@ -21,7 +21,7 @@ const (
 	RevisionUnknown = "unknown"
 )
 
-// WorkloadPods is one workload's owned pods; detail fields are omitted on a miss.
+// WorkloadPods is one workload's owned pods; detail fields are omitted on a miss, and Total counts every owned pod.
 type WorkloadPods struct {
 	Namespace string       `json:"namespace"`
 	Name      string       `json:"name"`
@@ -30,6 +30,13 @@ type WorkloadPods struct {
 	Health    string       `json:"health,omitempty"`
 	Selector  string       `json:"selector,omitempty"`
 	Pods      []PodSummary `json:"pods,omitempty"`
+	Total     int          `json:"total,omitempty"`
+}
+
+// Capped keeps the first limit pods and records how many the workload owns.
+func (w WorkloadPods) Capped(limit int) WorkloadPods {
+	w.Pods, w.Total = Cap(w.Pods, limit)
+	return w
 }
 
 // OwnedPods summarizes the pods a workload controls; revision marks each pod against the workload's current
@@ -93,7 +100,7 @@ func FormatWorkloadPods(kind string) func(WorkloadPods) string {
 		if len(w.Pods) == 0 {
 			return head + "\nno pods owned by this " + kind
 		}
-		return head + "\n" + FormatPodTable(w.Pods)
+		return head + "\n" + FormatPodTable(w.Pods) + CapNote(len(w.Pods), w.Total, "pods")
 	}
 }
 
@@ -110,8 +117,8 @@ type WorkloadListItem struct {
 }
 
 // FormatWorkloadList renders workloads like kubectl get deployments, with the derived health; plural names the
-// kind in the empty message.
-func FormatWorkloadList(plural, namespace string, items []WorkloadListItem) string {
+// kind in the empty message and the cap note, and total counts the workloads before the cap.
+func FormatWorkloadList(plural, namespace string, items []WorkloadListItem, total int) string {
 	if len(items) == 0 {
 		if namespace != "" {
 			return fmt.Sprintf("no %s in namespace %q", plural, namespace)
@@ -125,7 +132,8 @@ func FormatWorkloadList(plural, namespace string, items []WorkloadListItem) stri
 			strconv.Itoa(int(w.Updated)), strconv.Itoa(int(w.Available)), Age(w.Created),
 		})
 	}
-	return Table([]string{"NAMESPACE", "NAME", "HEALTH", "READY", "UP-TO-DATE", "AVAILABLE", "AGE"}, rows)
+	return Table([]string{"NAMESPACE", "NAME", "HEALTH", "READY", "UP-TO-DATE", "AVAILABLE", "AGE"}, rows) +
+		CapNote(len(items), total, plural)
 }
 
 // CheckNamespace turns an empty list in a named namespace into an error when that namespace does not exist.
