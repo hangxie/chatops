@@ -53,7 +53,7 @@ func Test_getDeploymentPods(t *testing.T) {
 		revisions[p.Name] = p.Revision
 	}
 	// Selector-matching pods without the deployment's ReplicaSet as controller are not its pods.
-	require.Equal(t, map[string]string{"server-bbb-1": revisionCurrent, "server-aaa-1": revisionOld}, revisions)
+	require.Equal(t, map[string]string{"server-bbb-1": kube.RevisionCurrent, "server-aaa-1": kube.RevisionOld}, revisions)
 }
 
 func Test_getDeploymentPods_no_current_replicaset(t *testing.T) {
@@ -73,7 +73,7 @@ func Test_getDeploymentPods_no_current_replicaset(t *testing.T) {
 			out, err := getDeploymentPods(context.Background(), fake.NewClientset(objs...), kube.ObjectRef{Namespace: "ns", Name: "web"})
 			require.NoError(t, err)
 			require.Len(t, out.Pods, 1)
-			require.Equal(t, revisionUnknown, out.Pods[0].Revision)
+			require.Equal(t, kube.RevisionUnknown, out.Pods[0].Revision)
 		})
 	}
 }
@@ -122,23 +122,6 @@ func Test_getDeploymentPods_errors(t *testing.T) {
 			client.PrependReactor(tc.verb, tc.resource, kubetest.Forbidden(tc.verb, tc.resource))
 			_, err := getDeploymentPods(context.Background(), client, kube.ObjectRef{Namespace: "ns", Name: "web"})
 			require.Error(t, err)
-		})
-	}
-}
-
-func Test_podRevision(t *testing.T) {
-	tests := map[string]struct {
-		owner, current types.UID
-		want           string
-	}{
-		"current":    {owner: "rs-2", current: "rs-2", want: revisionCurrent},
-		"old":        {owner: "rs-1", current: "rs-2", want: revisionOld},
-		"no current": {owner: "rs-1", current: "", want: revisionUnknown},
-	}
-
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			require.Equal(t, tc.want, podRevision(tc.owner, tc.current))
 		})
 	}
 }

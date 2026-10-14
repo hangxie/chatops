@@ -12,6 +12,7 @@ The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organ
 | namespace | `namespace_list` | [below](#namespace) |
 | deployment | `deployment_list`, `deployment_pods`, `deployment_describe` | [below](#deployment) |
 | pod | `pod_list`, `pod_describe`, `pod_log`, `pod_resources` | [below](#pod) |
+| statefulset | `statefulset_list`, `statefulset_pods`, `statefulset_describe` | [below](#statefulset) |
 
 ### namespace
 
@@ -24,6 +25,10 @@ Health builds on `kubectl rollout status`, checked in the order `Paused`, `Stall
 ### pod
 
 Health is the kubectl-style pod status. `pod_list` filters by namespace and by node (a server-side field selector) and names each pod's controller. `pod_log` returns every main container unless one is named (init and ephemeral containers can be named), tails 50 lines by default and at most 500, streams each container's output and keeps its newest 16 KB cut at a line boundary (no server-side byte limit, which would cut the newest output instead of the oldest), and turns the API's 400 answers (no previous instance, container not started) into a per-container note carrying the API's message; `previous` shows the crashed instance behind a `CrashLoopBackOff`. Logs are raw container output relayed into chat and cannot be redacted, so the `pods/log` grant is the boundary. `pod_resources` reports requests and limits per container, native sidecars included, with usage from the metrics API measured against the limit, else the request, and degrades to a `usage_note` like `node_resources`. RBAC: `get`/`list` on `pods`, `get` on `pods/log`, and `get` on `pods` in `metrics.k8s.io`.
+
+### statefulset
+
+Health follows `kubectl rollout status` for statefulsets, checked in the order `ScaledToZero`, `Progressing` (generation not observed, a rolling update not finished, or more replicas than desired), `Degraded` (fewer available than desired), `Healthy`. A partitioned rolling update is finished once every pod at or above the partition is updated, and an `OnDelete` update is never in progress, since it waits for pods to be deleted; its pods still show as `old`. A pod belongs to the statefulset when the statefulset is its controller, and its revision is its `controller-revision-hash` label compared with `status.updateRevision`. RBAC: `get`/`list` on `statefulsets`.
 
 ## One group, resource-oriented internals
 
@@ -87,7 +92,7 @@ Every tool is read-only, so RBAC reduces to `get`/`list` grants. Each resource l
 
 ## Package layout
 
-One Go package per resource under `pkg/mcpserver/kubernetes/` (`node/`, `namespace/`, `deployment/`), each exporting `Register(server, kube.Clients)` and holding its types, tools, and text rendering, with a one-to-one `_test.go` per file. The root package only resolves the connection and calls each resource's `Register`, explicitly. Code every resource shares lives in `internal/kube` (clients, target validation and bounded parallel fetch, the generic per-target handler, the missing-namespace check, the pod summary, describe cleaning and redaction, table and age helpers), and fixtures shared by more than one resource's tests live in `internal/kubetest`; `internal/` keeps both private to the group. Wiring in `cmd/chatops-mcp/serve/serve.go` adds `"kubernetes"` to the `groups` map and the `--kubeconfig`/`--kube-context` flags.
+One Go package per resource under `pkg/mcpserver/kubernetes/` (`node/`, `namespace/`, `deployment/`), each exporting `Register(server, kube.Clients)` and holding its types, tools, and text rendering, with a one-to-one `_test.go` per file. The root package only resolves the connection and calls each resource's `Register`, explicitly. Code every resource shares lives in `internal/kube` (clients, target validation and bounded parallel fetch, the generic per-target handler, the namespaced lookup and missing-namespace check, the workload list row and owned-pods lookup with revision marking, the pod summary, log fetching, describe cleaning and redaction, table, age, and quantity helpers), and fixtures shared by more than one resource's tests live in `internal/kubetest`; `internal/` keeps both private to the group. Wiring in `cmd/chatops-mcp/serve/serve.go` adds `"kubernetes"` to the `groups` map and the `--kubeconfig`/`--kube-context` flags.
 
 ## Adding a resource
 

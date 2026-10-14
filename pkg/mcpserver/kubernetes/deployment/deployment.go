@@ -3,9 +3,7 @@ package deployment
 
 import (
 	"context"
-	"errors"
 	"strings"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	appsv1 "k8s.io/api/apps/v1"
@@ -26,22 +24,10 @@ const (
 	healthHealthy      = "Healthy"
 )
 
-// DeploymentListItem is one deployment's roster entry.
-type DeploymentListItem struct {
-	Namespace string    `json:"namespace"`
-	Name      string    `json:"name"`
-	Health    string    `json:"health"`
-	Desired   int32     `json:"desired"`
-	Ready     int32     `json:"ready"`
-	Updated   int32     `json:"updated"`
-	Available int32     `json:"available"`
-	Created   time.Time `json:"created"`
-}
-
 // DeploymentListOutput is the structured result of deployment_list; Namespace is empty when listing all.
 type DeploymentListOutput struct {
-	Namespace   string               `json:"namespace,omitempty"`
-	Deployments []DeploymentListItem `json:"deployments"`
+	Namespace   string                  `json:"namespace,omitempty"`
+	Deployments []kube.WorkloadListItem `json:"deployments"`
 }
 
 type deploymentListInput struct {
@@ -77,7 +63,7 @@ func deploymentListHandler(c kube.Clients) mcp.ToolHandlerFor[deploymentListInpu
 		if err != nil {
 			return nil, DeploymentListOutput{}, err
 		}
-		return kube.TextResult(formatDeploymentList(out)), out, nil
+		return kube.TextResult(kube.FormatWorkloadList("deployments", out.Namespace, out.Deployments)), out, nil
 	}
 }
 
@@ -86,11 +72,11 @@ func deploymentPodsHandler(c kube.Clients) mcp.ToolHandlerFor[deploymentInput, D
 		func(in deploymentInput) ([]kube.ObjectRef, error) {
 			return kube.ObjectTargets("deployments", in.Deployments, kube.MaxTargets)
 		},
-		func(ctx context.Context, ref kube.ObjectRef) (DeploymentPods, error) {
+		func(ctx context.Context, ref kube.ObjectRef) (kube.WorkloadPods, error) {
 			return getDeploymentPods(ctx, c.Core, ref)
 		},
-		formatDeploymentPods,
-		func(d []DeploymentPods) DeploymentPodsOutput { return DeploymentPodsOutput{Deployments: d} },
+		kube.FormatWorkloadPods("deployment"),
+		func(d []kube.WorkloadPods) DeploymentPodsOutput { return DeploymentPodsOutput{Deployments: d} },
 	)
 }
 
@@ -113,19 +99,13 @@ func listDeployments(ctx context.Context, client k8s.Interface, namespace string
 	if err != nil {
 		return DeploymentListOutput{}, err
 	}
-	if len(list.Items) == 0 && namespace != "" {
-		note, err := kube.MissingNamespace(ctx, client, namespace)
-		if err != nil {
-			return DeploymentListOutput{}, err
-		}
-		if note != "" {
-			return DeploymentListOutput{}, errors.New(note)
-		}
+	if err := kube.CheckNamespace(ctx, client, namespace, len(list.Items)); err != nil {
+		return DeploymentListOutput{}, err
 	}
-	out := DeploymentListOutput{Namespace: namespace, Deployments: make([]DeploymentListItem, 0, len(list.Items))}
+	out := DeploymentListOutput{Namespace: namespace, Deployments: make([]kube.WorkloadListItem, 0, len(list.Items))}
 	for i := range list.Items {
 		d := &list.Items[i]
-		out.Deployments = append(out.Deployments, DeploymentListItem{
+		out.Deployments = append(out.Deployments, kube.WorkloadListItem{
 			Namespace: d.Namespace,
 			Name:      d.Name,
 			Health:    deploymentHealth(d),

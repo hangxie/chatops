@@ -3,7 +3,6 @@ package pod
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"time"
 
@@ -102,14 +101,8 @@ func listPods(ctx context.Context, client k8s.Interface, namespace, node string)
 	if err != nil {
 		return PodListOutput{}, err
 	}
-	if len(list.Items) == 0 && namespace != "" {
-		note, err := kube.MissingNamespace(ctx, client, namespace)
-		if err != nil {
-			return PodListOutput{}, err
-		}
-		if note != "" {
-			return PodListOutput{}, errors.New(note)
-		}
+	if err := kube.CheckNamespace(ctx, client, namespace, len(list.Items)); err != nil {
+		return PodListOutput{}, err
 	}
 	out := PodListOutput{Namespace: namespace, Node: node, Pods: make([]PodListItem, 0, len(list.Items))}
 	for i := range list.Items {
