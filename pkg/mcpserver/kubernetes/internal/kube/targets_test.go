@@ -42,6 +42,58 @@ func Test_targets(t *testing.T) {
 	}
 }
 
+func Test_objectTargets(t *testing.T) {
+	a, b := ObjectRef{"argocd", "server"}, ObjectRef{"argocd", "repo"}
+	tests := map[string]struct {
+		refs   []ObjectRef
+		limit  int
+		want   []ObjectRef
+		errMsg string
+	}{
+		"keeps order":          {refs: []ObjectRef{a, b}, limit: MaxTargets, want: []ObjectRef{a, b}},
+		"drops duplicates":     {refs: []ObjectRef{a, b, a}, limit: MaxTargets, want: []ObjectRef{a, b}},
+		"trims both fields":    {refs: []ObjectRef{{" argocd ", " server "}, a}, limit: MaxTargets, want: []ObjectRef{a}},
+		"same name other ns":   {refs: []ObjectRef{a, {"other", "server"}}, limit: MaxTargets, want: []ObjectRef{a, {"other", "server"}}},
+		"empty":                {refs: nil, limit: MaxTargets, errMsg: "deployments must contain at least one target"},
+		"blank namespace":      {refs: []ObjectRef{a, {" ", "server"}}, limit: MaxTargets, errMsg: "deployments[1] needs both namespace and name"},
+		"blank name":           {refs: []ObjectRef{{"argocd", ""}}, limit: MaxTargets, errMsg: "deployments[0] needs both namespace and name"},
+		"over describe cap":    {refs: manyRefs(MaxDescribeTargets + 1), limit: MaxDescribeTargets, errMsg: "deployments has 6 entries; at most 5 are allowed"},
+		"at describe cap":      {refs: manyRefs(MaxDescribeTargets), limit: MaxDescribeTargets, want: manyRefs(MaxDescribeTargets)},
+		"duplicates under cap": {refs: append(manyRefs(MaxDescribeTargets), a, a), limit: MaxDescribeTargets + 1, want: append(manyRefs(MaxDescribeTargets), a)},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := ObjectTargets("deployments", tc.refs, tc.limit)
+			if tc.errMsg != "" {
+				require.EqualError(t, err, tc.errMsg)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func manyRefs(n int) []ObjectRef {
+	refs := make([]ObjectRef, n)
+	for i := range refs {
+		refs[i] = ObjectRef{Namespace: "ns", Name: fmt.Sprintf("d%d", i)}
+	}
+	return refs
+}
+
+func Test_ObjectRef_String(t *testing.T) {
+	require.Equal(t, "argocd/server", ObjectRef{"argocd", "server"}.String())
+}
+
+func Test_fetchAll_error_names_object(t *testing.T) {
+	_, err := FetchAll(context.Background(), []ObjectRef{{"argocd", "server"}}, func(context.Context, ObjectRef) (string, error) {
+		return "", errors.New("timeout")
+	})
+	require.EqualError(t, err, "argocd/server: timeout")
+}
+
 func manyNames(n int) []string {
 	names := make([]string, n)
 	for i := range names {

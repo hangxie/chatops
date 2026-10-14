@@ -11,8 +11,19 @@ import (
 // MaxTargets bounds one call's targets so the combined result stays within the agent's tool-result budget.
 const MaxTargets = 50
 
+// MaxDescribeTargets is the lower cap shared by every *_describe tool, whose per-target output is a full object.
+const MaxDescribeTargets = 5
+
 // maxConcurrentFetches bounds parallel per-target API calls within one tool call.
 const maxConcurrentFetches = 4
+
+// ObjectRef names one namespaced object a per-object tool reports on.
+type ObjectRef struct {
+	Namespace string `json:"namespace" jsonschema:"the object's namespace"`
+	Name      string `json:"name" jsonschema:"the object's name"`
+}
+
+func (r ObjectRef) String() string { return r.Namespace + "/" + r.Name }
 
 // Targets validates cluster-scoped names such as nodes.
 func Targets(field string, names []string) ([]string, error) {
@@ -22,6 +33,17 @@ func Targets(field string, names []string) ([]string, error) {
 			return "", "is empty"
 		}
 		return name, ""
+	})
+}
+
+// ObjectTargets validates namespaced targets; limit is MaxTargets or MaxDescribeTargets.
+func ObjectTargets(field string, refs []ObjectRef, limit int) ([]ObjectRef, error) {
+	return uniqueTargets(field, refs, limit, func(r ObjectRef) (ObjectRef, string) {
+		r = ObjectRef{Namespace: strings.TrimSpace(r.Namespace), Name: strings.TrimSpace(r.Name)}
+		if r.Namespace == "" || r.Name == "" {
+			return r, "needs both namespace and name"
+		}
+		return r, ""
 	})
 }
 

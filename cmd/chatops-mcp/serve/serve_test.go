@@ -91,7 +91,7 @@ func Test_newServer_kubernetes(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = session.Close() }()
 
-	require.ElementsMatch(t, []string{"node_list", "node_status", "node_resources", "namespace_list"}, toolNames(t, session))
+	require.ElementsMatch(t, []string{"node_list", "node_status", "node_resources", "namespace_list", "deployment_list", "deployment_pods", "deployment_describe"}, toolNames(t, session))
 }
 
 func Test_Cmd_Run_transport(t *testing.T) {
