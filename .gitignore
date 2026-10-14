@@ -42,3 +42,6 @@ build/
 # vim swap files
 .*.sw[a-p]
 .sw[a-p]
+
+# python
+__pycache__/
