@@ -25,6 +25,8 @@ const (
 type DaemonSetListOutput struct {
 	Namespace  string                  `json:"namespace,omitempty"`
 	DaemonSets []kube.WorkloadListItem `json:"daemonsets"`
+	// Total counts every match before the cap.
+	Total int `json:"total"`
 }
 
 type listInput struct {
@@ -60,7 +62,8 @@ func listHandler(c kube.Clients) mcp.ToolHandlerFor[listInput, DaemonSetListOutp
 		if err != nil {
 			return nil, DaemonSetListOutput{}, err
 		}
-		return kube.TextResult(kube.FormatWorkloadList("daemonsets", out.Namespace, out.DaemonSets)), out, nil
+		out.DaemonSets, out.Total = kube.Cap(out.DaemonSets, c.ResultLimit())
+		return kube.TextResult(kube.FormatWorkloadList("daemonsets", out.Namespace, out.DaemonSets, out.Total)), out, nil
 	}
 }
 
@@ -70,7 +73,8 @@ func podsHandler(c kube.Clients) mcp.ToolHandlerFor[targetInput, DaemonSetPodsOu
 			return kube.ObjectTargets("daemonsets", in.DaemonSets, kube.MaxTargets)
 		},
 		func(ctx context.Context, ref kube.ObjectRef) (kube.WorkloadPods, error) {
-			return getPods(ctx, c.Core, ref)
+			w, err := getPods(ctx, c.Core, ref)
+			return w.Capped(c.ResultLimit()), err
 		},
 		kube.FormatWorkloadPods("daemonset"),
 		func(d []kube.WorkloadPods) DaemonSetPodsOutput { return DaemonSetPodsOutput{DaemonSets: d} },

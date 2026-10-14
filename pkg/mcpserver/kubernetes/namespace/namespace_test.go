@@ -64,3 +64,11 @@ func Test_namespace_list_tool(t *testing.T) {
 	require.Contains(t, result.Content[0].(*mcp.TextContent).Text, "argocd")
 	require.Len(t, kubetest.StructuredList(t, result, "namespaces"), 1)
 }
+
+func Test_namespace_list_tool_capped(t *testing.T) {
+	session := connect(t, kube.Clients{MaxResults: 1, Core: fake.NewClientset(kubetest.Namespace("argocd"), kubetest.Namespace("db"))})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "namespace_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "namespaces", 1, 2)
+}

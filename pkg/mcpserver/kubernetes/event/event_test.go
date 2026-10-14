@@ -85,27 +85,47 @@ func Test_listEvents_unknown_kind_any_case(t *testing.T) {
 	)
 	out, err := listEvents(context.Background(), client, listInput{Kind: "clustersecretstore"})
 	require.NoError(t, err)
-	require.Equal(t, 1, out.Total)
+	require.Len(t, out.Events, 1)
 	require.Equal(t, "ClusterSecretStore/loki", out.Events[0].Object)
 }
 
-func Test_listEvents_newest_first_and_capped(t *testing.T) {
-	var events []*corev1.Event
-	for i := range maxEvents + 5 {
-		events = append(events, event("argocd", fmt.Sprintf("e%d", i), "Normal", "Pulled", "Pod", "p", base.Add(time.Duration(i)*time.Second)))
-	}
-	client, _ := selectorClient(events...)
+func Test_listEvents_newest_first(t *testing.T) {
+	client, _ := selectorClient(
+		event("argocd", "old", "Normal", "Pulled", "Pod", "p", base),
+		event("argocd", "new", "Normal", "Pulled", "Pod", "p", base.Add(2*time.Second)),
+		event("argocd", "mid", "Normal", "Pulled", "Pod", "p", base.Add(time.Second)),
+	)
 
 	out, err := listEvents(context.Background(), client, listInput{Namespace: "argocd"})
 	require.NoError(t, err)
-	require.Equal(t, maxEvents+5, out.Total)
-	require.Len(t, out.Events, maxEvents)
-	require.Equal(t, base.Add(time.Duration(maxEvents+4)*time.Second), out.Events[0].LastSeen)
-	require.Equal(t, base.Add(5*time.Second), out.Events[maxEvents-1].LastSeen)
+	require.Len(t, out.Events, 3)
+	require.Equal(t, []time.Time{base.Add(2 * time.Second), base.Add(time.Second), base}, []time.Time{out.Events[0].LastSeen, out.Events[1].LastSeen, out.Events[2].LastSeen})
 	require.Equal(t, Event{
-		Namespace: "argocd", LastSeen: base.Add(5 * time.Second), Type: "Normal", Reason: "Pulled", Object: "Pod/p",
+		Namespace: "argocd", LastSeen: base, Type: "Normal", Reason: "Pulled", Object: "Pod/p",
 		Count: 2, Message: "Back-off restarting\nfailed container",
-	}, out.Events[maxEvents-1])
+	}, out.Events[2])
+}
+
+func Test_tool_keeps_newest_under_cap(t *testing.T) {
+	var events []*corev1.Event
+	for i := range 5 {
+		events = append(events, event("argocd", fmt.Sprintf("e%d", i), "Normal", "Pulled", "Pod", "p", base.Add(time.Duration(i)*time.Second)))
+	}
+	client, _ := selectorClient(events...)
+	session := kubetest.Connect(t, func(s *mcp.Server) { Register(s, kube.Clients{Core: client, MaxResults: 2}) })
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "event_list"})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	rows := kubetest.StructuredList(t, result, "events")
+	require.Len(t, rows, 2)
+	require.EqualValues(t, 5, result.StructuredContent.(map[string]any)["total"])
+	require.Equal(t, base.Add(4*time.Second).Format(time.RFC3339), rows[0]["last_seen"])
+	require.Contains(t, result.Content[0].(*mcp.TextContent).Text, "(showing the newest 2 of 5 events)")
+
+	tools, err := session.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	require.Contains(t, tools.Tools[0].Description, "at most 2,")
 }
 
 func Test_listEvents_namespace_and_errors(t *testing.T) {

@@ -36,7 +36,7 @@ func formatNamespaceList(out NamespaceListOutput) string {
 		}
 		rows = append(rows, row)
 	}
-	text := kube.Table(header, rows)
+	text := kube.Table(header, rows) + kube.CapNote(len(out.Namespaces), out.Total, "namespaces")
 	if len(details) > 0 {
 		text += "\n\n" + strings.Join(details, "\n")
 	}

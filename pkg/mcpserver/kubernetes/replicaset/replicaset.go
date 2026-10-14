@@ -40,6 +40,8 @@ type ReplicaSetListItem struct {
 type ReplicaSetListOutput struct {
 	Namespace   string               `json:"namespace,omitempty"`
 	ReplicaSets []ReplicaSetListItem `json:"replicasets"`
+	// Total counts every match before the cap.
+	Total int `json:"total"`
 }
 
 type listInput struct {
@@ -75,6 +77,7 @@ func listHandler(c kube.Clients) mcp.ToolHandlerFor[listInput, ReplicaSetListOut
 		if err != nil {
 			return nil, ReplicaSetListOutput{}, err
 		}
+		out.ReplicaSets, out.Total = kube.Cap(out.ReplicaSets, c.ResultLimit())
 		return kube.TextResult(formatList(out)), out, nil
 	}
 }
@@ -85,7 +88,8 @@ func podsHandler(c kube.Clients) mcp.ToolHandlerFor[targetInput, ReplicaSetPodsO
 			return kube.ObjectTargets("replicasets", in.ReplicaSets, kube.MaxTargets)
 		},
 		func(ctx context.Context, ref kube.ObjectRef) (kube.WorkloadPods, error) {
-			return getPods(ctx, c.Core, ref)
+			w, err := getPods(ctx, c.Core, ref)
+			return w.Capped(c.ResultLimit()), err
 		},
 		kube.FormatWorkloadPods("replicaset"),
 		func(r []kube.WorkloadPods) ReplicaSetPodsOutput { return ReplicaSetPodsOutput{ReplicaSets: r} },
@@ -131,7 +135,7 @@ func listReplicaSets(ctx context.Context, client k8s.Interface, namespace string
 
 func formatList(out ReplicaSetListOutput) string {
 	if len(out.ReplicaSets) == 0 {
-		return kube.FormatWorkloadList("replicasets", out.Namespace, nil)
+		return kube.FormatWorkloadList("replicasets", out.Namespace, nil, 0)
 	}
 	rows := make([][]string, 0, len(out.ReplicaSets))
 	for _, r := range out.ReplicaSets {
@@ -140,7 +144,8 @@ func formatList(out ReplicaSetListOutput) string {
 			fmt.Sprintf("%d/%d", r.Ready, r.Desired), kube.OrNone(r.Owner), kube.Age(r.Created),
 		})
 	}
-	return kube.Table([]string{"NAMESPACE", "NAME", "HEALTH", "DESIRED", "CURRENT", "READY", "OWNER", "AGE"}, rows)
+	return kube.Table([]string{"NAMESPACE", "NAME", "HEALTH", "DESIRED", "CURRENT", "READY", "OWNER", "AGE"}, rows) +
+		kube.CapNote(len(out.ReplicaSets), out.Total, "replicasets")
 }
 
 // getReplicaSet returns nil and a note on a miss; the note names the namespace when that is what is missing.

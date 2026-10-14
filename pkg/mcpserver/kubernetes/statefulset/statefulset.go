@@ -25,6 +25,8 @@ const (
 type StatefulSetListOutput struct {
 	Namespace    string                  `json:"namespace,omitempty"`
 	StatefulSets []kube.WorkloadListItem `json:"statefulsets"`
+	// Total counts every match before the cap.
+	Total int `json:"total"`
 }
 
 type listInput struct {
@@ -60,7 +62,8 @@ func listHandler(c kube.Clients) mcp.ToolHandlerFor[listInput, StatefulSetListOu
 		if err != nil {
 			return nil, StatefulSetListOutput{}, err
 		}
-		return kube.TextResult(kube.FormatWorkloadList("statefulsets", out.Namespace, out.StatefulSets)), out, nil
+		out.StatefulSets, out.Total = kube.Cap(out.StatefulSets, c.ResultLimit())
+		return kube.TextResult(kube.FormatWorkloadList("statefulsets", out.Namespace, out.StatefulSets, out.Total)), out, nil
 	}
 }
 
@@ -70,7 +73,8 @@ func podsHandler(c kube.Clients) mcp.ToolHandlerFor[targetInput, StatefulSetPods
 			return kube.ObjectTargets("statefulsets", in.StatefulSets, kube.MaxTargets)
 		},
 		func(ctx context.Context, ref kube.ObjectRef) (kube.WorkloadPods, error) {
-			return getPods(ctx, c.Core, ref)
+			w, err := getPods(ctx, c.Core, ref)
+			return w.Capped(c.ResultLimit()), err
 		},
 		kube.FormatWorkloadPods("statefulset"),
 		func(s []kube.WorkloadPods) StatefulSetPodsOutput { return StatefulSetPodsOutput{StatefulSets: s} },

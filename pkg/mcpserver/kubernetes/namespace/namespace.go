@@ -32,6 +32,8 @@ type NamespaceCondition struct {
 // NamespaceListOutput is the structured result of namespace_list.
 type NamespaceListOutput struct {
 	Namespaces []NamespaceListItem `json:"namespaces"`
+	// Total counts every match before the cap.
+	Total int `json:"total"`
 }
 
 func Register(server *mcp.Server, c kube.Clients) {
@@ -48,6 +50,7 @@ func namespaceListHandler(c kube.Clients) mcp.ToolHandlerFor[struct{}, Namespace
 		if err != nil {
 			return nil, NamespaceListOutput{}, err
 		}
+		out.Namespaces, out.Total = kube.Cap(out.Namespaces, c.ResultLimit())
 		return kube.TextResult(formatNamespaceList(out)), out, nil
 	}
 }

@@ -290,3 +290,19 @@ func Test_serviceSlices_error(t *testing.T) {
 	_, err := serviceSlices(context.Background(), client, kube.ObjectRef{Namespace: "a", Name: "b"})
 	require.ErrorContains(t, err, "list denied")
 }
+
+func Test_tools_capped(t *testing.T) {
+	session := connect(t, kube.Clients{MaxResults: 1, Core: fake.NewClientset(kubetest.Namespace("argocd"),
+		service("argocd", "server"), service("argocd", "web"),
+		slice("argocd", "server", "server-a", ep("server-1", true, false), ep("server-22", true, false)))})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "service_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "services", 1, 2)
+
+	result, err = session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "service_pods", Arguments: map[string]any{"services": []any{map[string]any{"namespace": "argocd", "name": "server"}}},
+	})
+	require.NoError(t, err)
+	kubetest.RequireCappedTarget(t, result, "services", "endpoints", 1, 2)
+}

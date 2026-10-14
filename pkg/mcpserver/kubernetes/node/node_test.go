@@ -198,7 +198,7 @@ func testClients() clients {
 		pod("a", "worker-0", corev1.PodRunning),
 	)
 	metrics := newMetricsFake(nodeMetrics("worker-0", "4", "8Gi"))
-	return clients{core: core, metrics: metrics, diskUsage: fixedDisk(10737418240, 107374182400)}
+	return clients{core: core, metrics: metrics, diskUsage: fixedDisk(10737418240, 107374182400), maxResults: kube.DefaultMaxResults}
 }
 
 func Test_node_list_tool(t *testing.T) {
@@ -311,4 +311,24 @@ func Test_Register(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, result.IsError)
 	require.Contains(t, result.Content[0].(*mcp.TextContent).Text, "[Ready] worker-0")
+}
+
+func Test_node_list_tool_capped(t *testing.T) {
+	c := testClients()
+	c.core, c.maxResults = fake.NewClientset(node("worker-0"), node("worker-1")), 1
+	session := connect(t, c)
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "node_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "nodes", 1, 2)
+}
+
+func Test_Register_applies_result_limit(t *testing.T) {
+	session := kubetest.Connect(t, func(s *mcp.Server) {
+		Register(s, kube.Clients{Core: fake.NewClientset(node("worker-0"), node("worker-1")), Metrics: newMetricsFake(), MaxResults: 1})
+	})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "node_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "nodes", 1, 2)
 }

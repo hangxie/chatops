@@ -51,3 +51,35 @@ func Test_Connect_and_StructuredList(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []map[string]any{{"name": "a"}}, StructuredList(t, result, "items"))
 }
+
+type cappedOutput struct {
+	Items []map[string]any `json:"items"`
+	Total int              `json:"total"`
+}
+
+func Test_RequireCapped(t *testing.T) {
+	session := Connect(t, func(s *mcp.Server) {
+		mcp.AddTool(s, &mcp.Tool{Name: "capped"}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, cappedOutput, error) {
+			text := &mcp.TextContent{Text: "a\n(showing the first 1 of 3 items)"}
+			return &mcp.CallToolResult{Content: []mcp.Content{text}}, cappedOutput{Items: []map[string]any{{"name": "a"}}, Total: 3}, nil
+		})
+	})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "capped"})
+	require.NoError(t, err)
+	RequireCapped(t, result, "items", 1, 3)
+}
+
+func Test_RequireCappedTarget(t *testing.T) {
+	session := Connect(t, func(s *mcp.Server) {
+		mcp.AddTool(s, &mcp.Tool{Name: "capped"}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, echoOutput, error) {
+			text := &mcp.TextContent{Text: "a\n(showing the first 1 of 2 pods)"}
+			entry := map[string]any{"pods": []any{"a"}, "total": 2}
+			return &mcp.CallToolResult{Content: []mcp.Content{text}}, echoOutput{Items: []map[string]any{entry}}, nil
+		})
+	})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "capped"})
+	require.NoError(t, err)
+	RequireCappedTarget(t, result, "items", "pods", 1, 2)
+}

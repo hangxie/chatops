@@ -21,7 +21,8 @@ func formatPodList(out PodListOutput) string {
 			strconv.Itoa(int(p.Restarts)), kube.OrNone(p.Node), kube.Age(p.Created), kube.OrNone(p.Owner),
 		})
 	}
-	return kube.Table([]string{"NAMESPACE", "NAME", "READY", "STATUS", "RESTARTS", "NODE", "AGE", "OWNER"}, rows)
+	return kube.Table([]string{"NAMESPACE", "NAME", "READY", "STATUS", "RESTARTS", "NODE", "AGE", "OWNER"}, rows) +
+		kube.CapNote(len(out.Pods), out.Total, "pods")
 }
 
 func emptyPodList(out PodListOutput) string {

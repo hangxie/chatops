@@ -336,3 +336,23 @@ func Test_deployment_handlers_surface_errors(t *testing.T) {
 	_, _, err = deploymentDescribeHandler(c)(context.Background(), nil, refs)
 	require.ErrorContains(t, err, "argocd/server: ")
 }
+
+func Test_deployment_tools_capped(t *testing.T) {
+	server := deployment("argocd", "server")
+	serverRS := replicaSet(server, "1", "abc")
+	session := connect(t, kube.Clients{MaxResults: 1, Core: fake.NewClientset(
+		kubetest.Namespace("argocd"), server, deployment("argocd", "web"), serverRS,
+		kubetest.WorkloadPod("argocd", "server-1", "server", kubetest.OwnedBy(serverRS)),
+		kubetest.WorkloadPod("argocd", "server-2", "server", kubetest.OwnedBy(serverRS)),
+	)})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "deployment_list"})
+	require.NoError(t, err)
+	kubetest.RequireCapped(t, result, "deployments", 1, 2)
+
+	result, err = session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "deployment_pods", Arguments: map[string]any{"deployments": []any{map[string]any{"namespace": "argocd", "name": "server"}}},
+	})
+	require.NoError(t, err)
+	kubetest.RequireCappedTarget(t, result, "deployments", "pods", 1, 2)
+}

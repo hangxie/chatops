@@ -69,10 +69,16 @@ func Test_restConfig_dev_fallback(t *testing.T) {
 func Test_NewClients(t *testing.T) {
 	path := kubetest.WriteKubeconfig(t)
 
-	c, err := NewClients(Config{Kubeconfig: path}, 5*time.Second, "chatops-mcp/test")
+	c, err := NewClients(Config{Kubeconfig: path, MaxResults: 7}, 5*time.Second, "chatops-mcp/test")
 	require.NoError(t, err)
 	require.NotNil(t, c.Core)
 	require.NotNil(t, c.Metrics)
+	require.Equal(t, 7, c.ResultLimit())
+}
+
+func Test_NewClients_negative_max_results(t *testing.T) {
+	_, err := NewClients(Config{MaxResults: -1}, 5*time.Second, "chatops-mcp/test")
+	require.EqualError(t, err, "max results must not be negative, got -1")
 }
 
 func Test_NewClients_bad_kubeconfig(t *testing.T) {

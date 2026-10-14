@@ -1,7 +1,10 @@
 # Settings for chatops-mcp's kubernetes tool group (serve --tools kubernetes --kubernetes-config <this file>).
 # Every field is optional:
-#   kubeconfig: kubeconfig file, honored exactly with no fallback; relative paths follow this file. Omit to use
-#               in-cluster credentials when running as a pod, else $KUBECONFIG or ~/.kube/config.
-#   context:    kubeconfig context; forces kubeconfig-based resolution even in a pod.
+#   kubeconfig:  kubeconfig file, honored exactly with no fallback; relative paths follow this file. Omit to use
+#                in-cluster credentials when running as a pod, else $KUBECONFIG or ~/.kube/config.
+#   context:     kubeconfig context; forces kubeconfig-based resolution even in a pod.
+#   max_results: row cap for every tool that returns rows: each *_list tool, and each target of a *_pods tool
+#                (default 50); the total matched is still reported.
 kubeconfig: /etc/chatops/kubeconfig
 # context: homelab
+max_results: 50

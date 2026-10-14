@@ -31,6 +31,8 @@ type NodeListItem struct {
 // NodeListOutput is the structured result of node_list.
 type NodeListOutput struct {
 	Nodes []NodeListItem `json:"nodes"`
+	// Total counts every match before the cap.
+	Total int `json:"total"`
 }
 
 // NodeStatusOutput is the structured result of node_status: one entry per requested node, in request order.
@@ -53,14 +55,17 @@ type NodeStatus struct {
 
 // clients carries the shared clients plus the Summary API reader, a seam so tests can stub disk usage.
 type clients struct {
-	core      k8s.Interface
-	metrics   metricsclient.Interface
-	diskUsage func(ctx context.Context, node string) (usedBytes, totalBytes int64, ok bool, err error)
+	core       k8s.Interface
+	metrics    metricsclient.Interface
+	diskUsage  func(ctx context.Context, node string) (usedBytes, totalBytes int64, ok bool, err error)
+	maxResults int
 }
 
 // Register adds the node tools to server.
 func Register(server *mcp.Server, c kube.Clients) {
-	register(server, clients{core: c.Core, metrics: c.Metrics, diskUsage: summaryDiskUsage(c.Core.CoreV1().RESTClient())})
+	register(server, clients{
+		core: c.Core, metrics: c.Metrics, diskUsage: summaryDiskUsage(c.Core.CoreV1().RESTClient()), maxResults: c.ResultLimit(),
+	})
 }
 
 func register(server *mcp.Server, c clients) {
@@ -93,6 +98,7 @@ func nodeListHandler(c clients) mcp.ToolHandlerFor[struct{}, NodeListOutput] {
 		if err != nil {
 			return nil, NodeListOutput{}, err
 		}
+		out.Nodes, out.Total = kube.Cap(out.Nodes, c.maxResults)
 		return kube.TextResult(formatNodeList(out)), out, nil
 	}
 }

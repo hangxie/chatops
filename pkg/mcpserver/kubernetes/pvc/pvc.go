@@ -31,6 +31,8 @@ type PVCListItem struct {
 type PVCListOutput struct {
 	Namespace string        `json:"namespace,omitempty"`
 	PVCs      []PVCListItem `json:"pvcs"`
+	// Total counts every match before the cap.
+	Total int `json:"total"`
 }
 
 // PVCDescribeOutput is the structured result of pvc_describe: one entry per requested claim, in request order.
@@ -66,6 +68,7 @@ func listHandler(c kube.Clients) mcp.ToolHandlerFor[listInput, PVCListOutput] {
 		if err != nil {
 			return nil, PVCListOutput{}, err
 		}
+		out.PVCs, out.Total = kube.Cap(out.PVCs, c.ResultLimit())
 		return kube.TextResult(formatList(out)), out, nil
 	}
 }
@@ -139,5 +142,6 @@ func formatList(out PVCListOutput) string {
 			kube.OrNone(c.AccessModes), kube.OrNone(c.StorageClass), kube.Age(c.Created),
 		})
 	}
-	return kube.Table([]string{"NAMESPACE", "NAME", "STATUS", "VOLUME", "CAPACITY", "ACCESS", "STORAGECLASS", "AGE"}, rows)
+	return kube.Table([]string{"NAMESPACE", "NAME", "STATUS", "VOLUME", "CAPACITY", "ACCESS", "STORAGECLASS", "AGE"}, rows) +
+		kube.CapNote(len(out.PVCs), out.Total, "persistent volume claims")
 }
