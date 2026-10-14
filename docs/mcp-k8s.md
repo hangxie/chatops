@@ -15,6 +15,7 @@ The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organ
 | statefulset | `statefulset_list`, `statefulset_pods`, `statefulset_describe` | [below](#statefulset) |
 | daemonset | `daemonset_list`, `daemonset_pods`, `daemonset_describe` | [below](#daemonset) |
 | replicaset | `replicaset_list`, `replicaset_pods`, `replicaset_describe` | [below](#replicaset) |
+| service | `service_list`, `service_pods`, `service_describe` | [below](#service) |
 
 ### namespace
 
@@ -39,6 +40,10 @@ Counts are against the nodes that should run a pod (`desiredNumberScheduled`). H
 ### replicaset
 
 A replicaset is one revision with no rollout of its own, so health is `ScaledToZero` (desired and current both 0), `Progressing` (generation not observed or current not yet desired, scaling either way), `Degraded` (fewer available than desired), or `Healthy`, and its pods carry no revision. The list follows `kubectl get rs` (desired, current, ready) and names each replicaset's controller, usually a deployment whose old revisions show as `ScaledToZero`. RBAC: `get`/`list` on `replicasets`.
+
+### service
+
+A service's pods are the ones its EndpointSlices name, which is where traffic actually goes, not whatever its selector matches; this also covers services without a selector. A backend listed in several slices (a dual-stack service repeats a pod in one slice per address family) is merged into one endpoint with all its addresses, conservatively when the entries disagree: ready and serving only if every entry says so, terminating if any does, so the result never depends on slice order; terminating ones are left out of the counts but still listed, and an unset `ready` condition means ready, as the API defines. Health is `External` for an ExternalName service, otherwise `NoEndpoints`, `Unavailable` (none ready), `Degraded` (some not ready), or `Healthy`; `service_list` counts endpoints with one EndpointSlice list for the whole scope. RBAC: `get`/`list` on `services` and `list` on `endpointslices` in `discovery.k8s.io`.
 
 ## One group, resource-oriented internals
 
