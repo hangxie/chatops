@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,4 +209,22 @@ func Test_Load_packaged_sample_agent_defaults(t *testing.T) {
 	want := defaultAgent()
 	want.SystemPrompt = cfg.Agent.SystemPrompt
 	require.Equal(t, want, cfg.Agent)
+}
+
+func Test_Parse_slack_reply_in_channel(t *testing.T) {
+	for _, value := range []string{"", "false", "true", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			input := fullConfig
+			if value != "" {
+				input = strings.Replace(input, "    app_token_env: SLACK_APP_TOKEN", "    app_token_env: SLACK_APP_TOKEN\n    reply_in_channel: "+value, 1)
+			}
+			cfg, err := Parse([]byte(input))
+			if value == "invalid" {
+				require.ErrorContains(t, err, "parse config")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, value == "true", cfg.Chat["slack"].ReplyInChannel)
+		})
+	}
 }

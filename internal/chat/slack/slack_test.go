@@ -123,9 +123,10 @@ func (w *fakeWeb) nextPost(t *testing.T) url.Values {
 }
 
 type harness struct {
-	socket    *fakeSocket
-	web       *fakeWeb
-	submitted chan conversation.Message
+	replyInChannel bool
+	socket         *fakeSocket
+	web            *fakeWeb
+	submitted      chan conversation.Message
 	// submitErrs supplies submit's results in order; nil once drained.
 	submitErrs chan error
 	cancel     context.CancelFunc
@@ -140,6 +141,7 @@ func run(t *testing.T, mutate func(*harness)) *harness {
 		mutate(h)
 	}
 	adapter := newAdapter(h.socket, h.web.client(), nil)
+	adapter.replyInChannel = h.replyInChannel
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel = cancel
 	submit := func(msg conversation.Message) error {
@@ -408,10 +410,72 @@ func Test_New(t *testing.T) {
 	t.Setenv("CHATOPS_TEST_SLACK_BOT", "xoxb-1")
 	t.Setenv("CHATOPS_TEST_SLACK_APP", "xapp-1")
 
-	_, err := New(config.ChatBackend{BotTokenEnv: "CHATOPS_TEST_SLACK_BOT", AppTokenEnv: "CHATOPS_TEST_SLACK_APP"}, nil)
-	require.NoError(t, err)
-	_, err = New(config.ChatBackend{BotTokenEnv: "CHATOPS_TEST_SLACK_MISSING", AppTokenEnv: "CHATOPS_TEST_SLACK_APP"}, nil)
+	for _, enabled := range []bool{false, true} {
+		adapter, err := New(config.ChatBackend{BotTokenEnv: "CHATOPS_TEST_SLACK_BOT", AppTokenEnv: "CHATOPS_TEST_SLACK_APP", ReplyInChannel: enabled}, nil)
+		require.NoError(t, err)
+		require.Equal(t, enabled, adapter.replyInChannel)
+	}
+	_, err := New(config.ChatBackend{BotTokenEnv: "CHATOPS_TEST_SLACK_MISSING", AppTokenEnv: "CHATOPS_TEST_SLACK_APP"}, nil)
 	require.EqualError(t, err, "slack bot token: environment variable CHATOPS_TEST_SLACK_MISSING is not set")
 	_, err = New(config.ChatBackend{BotTokenEnv: "CHATOPS_TEST_SLACK_BOT", AppTokenEnv: "CHATOPS_TEST_SLACK_MISSING"}, nil)
 	require.EqualError(t, err, "slack app token: environment variable CHATOPS_TEST_SLACK_MISSING is not set")
+}
+
+func Test_Adapter_Run_reply_destination(t *testing.T) {
+	tests := []struct {
+		name                    string
+		channel                 bool
+		event                   slackevents.EventsAPIEvent
+		wantChannel, wantThread string
+		reply                   string
+	}{
+		{"default channel", false, mention(nil), "C1", "1700000000.000100", "text"},
+		{"default thread", false, mention(func(e *slackevents.AppMentionEvent) { e.ThreadTimeStamp = "1.1" }), "C1", "1.1", "text"},
+		{"default direct", false, direct(nil), "D1", "1700000000.000200", "text"},
+		{"channel", true, mention(nil), "C1", "1700000000.000100", "text"},
+		{"thread to channel", true, mention(func(e *slackevents.AppMentionEvent) { e.ThreadTimeStamp = "1.1" }), "C1", "1.1", "text"},
+		{"direct", true, direct(nil), "D1", "1700000000.000200", "text"},
+		{"table", true, mention(nil), "C1", "1700000000.000100", "table"},
+		{"fallback", true, mention(nil), "C1", "1700000000.000100", "fallback"},
+		{"busy", true, mention(nil), "C1", "1700000000.000100", "busy"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := run(t, func(h *harness) {
+				h.replyInChannel = tc.channel
+				if tc.reply == "busy" {
+					h.submitErrs <- conversation.ErrBusy
+				}
+				h.web.postErr = func(form url.Values) string {
+					if tc.reply == "fallback" && form.Get("blocks") != "" {
+						return "invalid_blocks"
+					}
+					return ""
+				}
+			})
+			h.send(t, eventsAPI("e1", tc.event))
+			msg := h.nextSubmitted(t)
+			require.Equal(t, "slack:T1:"+tc.wantChannel+":"+tc.wantThread, msg.Conversation)
+			if tc.reply != "busy" {
+				text := "pong"
+				if tc.reply == "table" || tc.reply == "fallback" {
+					text = "| A |\n|---|\n| 1 |"
+				}
+				require.NoError(t, msg.Reply(context.Background(), text))
+			}
+			posts := 1
+			if tc.reply == "fallback" {
+				posts = 2
+			}
+			for range posts {
+				form := h.web.nextPost(t)
+				require.Equal(t, tc.wantChannel, form.Get("channel"))
+				wantThread := tc.wantThread
+				if tc.channel {
+					wantThread = ""
+				}
+				require.Equal(t, wantThread, form.Get("thread_ts"))
+			}
+		})
+	}
 }

@@ -2,7 +2,7 @@
 
 [![](https://hangxie.github.io/chatops/coverage.svg)](https://hangxie.github.io/chatops/coverage-history.html)
 
-`chatops` connects a chat platform to an OpenAI-compatible language model and to tools served over the [Model Context Protocol](https://modelcontextprotocol.io/specification) (MCP). The model chooses which tools to call, ChatOps enforces authorization and approval, and the answer is posted back to the chat thread.
+`chatops` connects a chat platform to an OpenAI-compatible language model and to tools served over the [Model Context Protocol](https://modelcontextprotocol.io/specification) (MCP). The model chooses which tools to call, ChatOps enforces authorization and approval, and the answer is posted back to chat.
 
 This project is under early development: `chatops serve --chat <names>` answers messages from the selected chat backends (Slack, or a local terminal), and `chatops-mcp` serves the `ping`, `service_status`, and read-only Kubernetes node tools (`node_list`, `node_status`, `node_resources`). Authorization policy and approvals are not implemented yet.
 
@@ -49,6 +49,7 @@ The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.y
 |---|---|---|
 | `chat.<name>.type` | (required) | Chat backend kind: `slack`, `stdio`, or `unix`; `<name>` is a free-form id selected on the command line with `--chat` |
 | `chat.<name>.bot_token_env`, `app_token_env` | (none) | slack only: environment variables holding the Slack bot (`xoxb-`) and app-level (`xapp-`) tokens; both required |
+| `chat.<name>.reply_in_channel` | `false` | slack only: post replies directly to the channel or DM instead of a thread, including replies to messages within existing threads |
 | `chat.<name>.path`, `mode` | (none) | unix only: filesystem path of the socket to create (required) and optional octal permission bits (e.g. `0600`, the default owner-only) |
 | `llm.base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions` |
 | `llm.model` | (required) | Model name sent with each request |
@@ -160,10 +161,10 @@ How it answers:
 
 - In a channel the app has been invited to, a message must start with a mention of the bot, such as `@chatops is the builtin server up?`; a mention later in the message is ignored. Follow-ups in the thread need the mention too.
 - In a direct message to the app, every message is answered; no mention is needed.
-- Replies go into the message's thread. Each thread is a separate conversation with its own history, so context never crosses threads; a direct message that is not in a thread starts a new conversation.
+- Replies go into the message's thread by default. Set `reply_in_channel: true` on the Slack backend to post all replies, including busy and failed-turn replies, directly to the channel or DM instead. This changes only the reply destination: each thread is a separate conversation with its own history, so context never crosses threads; a direct message that is not in a thread starts a new conversation.
 - Messages in one thread are answered one at a time, in order; different threads are answered concurrently up to `agent.max_concurrent_turns`. When `agent.max_pending_messages` is reached, new messages get a short "try again shortly" reply; at most four such replies are posted at a time, and further refused messages are only logged.
 - Slack retries and duplicate deliveries of an accepted message are answered once; a message refused as busy may be accepted if Slack delivers it again.
-- A failed turn gets a short apology in the thread; the details, which may include internal endpoints, go only to the log.
+- A failed turn gets a short apology at the configured reply destination; the details, which may include internal endpoints, go only to the log.
 - Replies are posted as plain text with Slack link previews turned off, so model output cannot mention `@channel` or users, or make Slack fetch a URL.
 - Every message is answered with every configured tool available; per-user permissions come in a later release, and `serve` logs a warning at startup until then. Until that release, configure only read-only tools, and only invite the app where all members may use all of its tools.
 - Stopping the daemon (SIGINT or SIGTERM) stops accepting new messages and gives in-flight turns and their replies a short grace period to finish before exiting; anything still running past it is cancelled, and conversation history is lost.

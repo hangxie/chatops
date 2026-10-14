@@ -1,4 +1,4 @@
-// Package slack receives Slack messages over Socket Mode and replies in their threads.
+// Package slack receives Slack messages over Socket Mode and replies in their threads or channels.
 package slack
 
 import (
@@ -45,12 +45,13 @@ func (s socket) Ack(ctx context.Context, req *socketmode.Request) error {
 
 // Adapter turns Slack events into conversation messages.
 type Adapter struct {
-	socket socketClient
-	api    *slackapi.Client
-	logger *slog.Logger
-	now    func() time.Time
-	seen   *seenSet
-	botID  string
+	socket         socketClient
+	api            *slackapi.Client
+	logger         *slog.Logger
+	now            func() time.Time
+	seen           *seenSet
+	botID          string
+	replyInChannel bool
 
 	busySlots chan struct{}
 	busy      sync.WaitGroup
@@ -67,7 +68,9 @@ func New(cfg config.ChatBackend, logger *slog.Logger) (*Adapter, error) {
 		return nil, fmt.Errorf("slack app token: %w", err)
 	}
 	api := slackapi.New(botToken, slackapi.OptionAppLevelToken(appToken))
-	return newAdapter(socket{client: socketmode.New(api)}, api, logger), nil
+	adapter := newAdapter(socket{client: socketmode.New(api)}, api, logger)
+	adapter.replyInChannel = cfg.ReplyInChannel
+	return adapter, nil
 }
 
 func newAdapter(socket socketClient, api *slackapi.Client, logger *slog.Logger) *Adapter {
@@ -189,9 +192,11 @@ func (a *Adapter) replier(channel, thread string) func(context.Context, string) 
 	return func(ctx context.Context, text string) error {
 		opts := []slackapi.MsgOption{
 			slackapi.MsgOptionText(limitReply(toMrkdwn(text)), true),
-			slackapi.MsgOptionTS(thread),
 			slackapi.MsgOptionDisableLinkUnfurl(),
 			slackapi.MsgOptionDisableMediaUnfurl(),
+		}
+		if !a.replyInChannel {
+			opts = append(opts, slackapi.MsgOptionTS(thread))
 		}
 		if blocks := toBlocks(text); blocks != nil {
 			_, _, err := a.api.PostMessageContext(ctx, channel, append(opts, slackapi.MsgOptionBlocks(blocks...))...)
