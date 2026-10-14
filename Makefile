@@ -12,9 +12,14 @@ REL_TARGET	= \
 				linux-amd64 linux-arm linux-arm64
 VERSION		= $(shell git describe --tags --always)
 
+PAGES_DIR		= $(BUILD_DIR)/pages
+COVERAGE_CSV	?= $(BUILD_DIR)/coverage.csv
+COLLECT_ARGS	?=
+
 # go option
 CGO_ENABLED := 0
 GO			?= go
+PYTHON		?= python3
 GOBIN		= $(shell $(GO) env GOPATH)/bin
 GOFLAGS		:= -trimpath
 GOSOURCES	:= $(shell find . -type f -name '*.go')
@@ -87,6 +92,21 @@ test: deps tools  ## Run unit tests
 		$(GO) tool cover -html=coverage.out -o coverage.html ; \
 		$(GO) tool cover -func=coverage.out -o coverage.txt ; \
 		cat coverage.txt
+
+.PHONY: pages
+pages: pages-coverage  ## Generate all GitHub Pages content to build/pages/
+
+.PHONY: pages-coverage
+pages-coverage: deps  ## Collect coverage and generate chart, report and badge (COLLECT_ARGS="--start 2026-01-01 --end 2026-06-01")
+	@echo "==> Generating coverage history page"
+	@mkdir -p $(PAGES_DIR)
+	@$(PYTHON) scripts/coverage-history.py $(COLLECT_ARGS) $(PAGES_DIR)/coverage-history.html $(COVERAGE_CSV)
+	@echo "==> Generating Go coverage report"
+	@mkdir -p $(BUILD_DIR)/test
+	@set -euo pipefail ; \
+		CGO_ENABLED=1 $(GO) test -parallel 4 -count 1 -trimpath \
+			-coverprofile=$(BUILD_DIR)/test/coverage.out ./... ; \
+		$(GO) tool cover -html=$(BUILD_DIR)/test/coverage.out -o $(PAGES_DIR)/coverage.html
 
 .PHONY: release-build
 release-build: deps ## Build release binaries

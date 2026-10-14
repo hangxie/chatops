@@ -1,5 +1,7 @@
 # chatops
 
+[![](https://hangxie.github.io/chatops/coverage.svg)](https://hangxie.github.io/chatops/coverage-history.html)
+
 `chatops` connects a chat platform to an OpenAI-compatible language model and to tools served over the [Model Context Protocol](https://modelcontextprotocol.io/specification) (MCP). The model chooses which tools to call, ChatOps enforces authorization and approval, and the answer is posted back to the chat thread.
 
 This project is under early development: `chatops serve --chat <names>` answers messages from the selected chat backends (Slack, or a local terminal), and `chatops-mcp` serves the `ping`, `service_status`, and read-only Kubernetes node tools (`node_list`, `node_status`, `node_resources`). Authorization policy and approvals are not implemented yet.
@@ -22,6 +24,20 @@ make build
 ```
 
 `make all` runs dependency, format, lint, test, and build steps.
+
+### Coverage history
+
+`make pages-coverage` (or `make pages`) generates the project's GitHub Pages content to `build/pages/`. It checks out each day's latest commit, runs `go test`, and appends results to `build/coverage.csv` (sorted chronologically). Days with no commits carry forward the previous day's coverage, and days before the first commit with non-zero coverage are skipped. It also writes the per-package HTML coverage report to `build/pages/coverage.html` and the README coverage badge to `build/pages/coverage.svg`.
+
+```bash
+make pages-coverage                                                     # last 7 completed UTC days (default)
+make pages-coverage COLLECT_ARGS="--start 2026-10-01"                   # full history from a date
+make pages-coverage COLLECT_ARGS="--start 2026-10-01 --end 2026-10-10"  # explicit range
+```
+
+The HTML chart and badge need no third-party Python modules; the companion PNG requires `matplotlib` and is skipped with a warning when it is missing.
+
+The `github-pages` workflow runs the same target weekly and publishes the result to <https://hangxie.github.io/chatops/>. It seeds `build/coverage.csv` from the previously published copy so history accumulates across runs rather than living in the repository, and the coverage badge in this README is served from the same deployment.
 
 ## Configuration
 
