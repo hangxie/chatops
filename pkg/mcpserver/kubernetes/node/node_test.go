@@ -1,4 +1,4 @@
-package kubernetes
+package node
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -14,6 +15,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kube"
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kubetest"
 )
 
 // test fixtures: a node builder with functional options, shared across the package's tests.
@@ -86,12 +90,6 @@ func allocatable(rl corev1.ResourceList) nodeOpt {
 	return func(n *corev1.Node) { n.Status.Allocatable = rl }
 }
 
-func forbidden(verb, resource string) k8stesting.ReactionFunc {
-	return func(k8stesting.Action) (bool, runtime.Object, error) {
-		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: resource}, "", errors.New(verb+" denied"))
-	}
-}
-
 func Test_listNodes(t *testing.T) {
 	created := time.Date(2026, 9, 9, 3, 30, 0, 0, time.UTC)
 	client := fake.NewClientset(
@@ -120,7 +118,7 @@ func Test_listNodes(t *testing.T) {
 
 func Test_listNodes_error(t *testing.T) {
 	client := fake.NewClientset()
-	client.PrependReactor("list", "nodes", forbidden("list", "nodes"))
+	client.PrependReactor("list", "nodes", kubetest.Forbidden("list", "nodes"))
 
 	_, err := listNodes(context.Background(), client)
 	require.Error(t, err)
@@ -186,4 +184,131 @@ func Test_conditions_and_taints_empty(t *testing.T) {
 func Test_taints_with_value(t *testing.T) {
 	n := node("x", taint("dedicated", "gpu", corev1.TaintEffectNoExecute))
 	require.Equal(t, []string{"dedicated=gpu:NoExecute"}, taints(n))
+}
+
+func connect(t *testing.T, c clients) *mcp.ClientSession {
+	t.Helper()
+	return kubetest.Connect(t, func(s *mcp.Server) { register(s, c) })
+}
+
+func testClients() clients {
+	core := fake.NewClientset(
+		node("worker-0", capacity(resourceList("16", "32Gi", "100Gi", "110")),
+			allocatable(resourceList("16", "31Gi", "94Gi", "110"))),
+		pod("a", "worker-0", corev1.PodRunning),
+	)
+	metrics := newMetricsFake(nodeMetrics("worker-0", "4", "8Gi"))
+	return clients{core: core, metrics: metrics, diskUsage: fixedDisk(10737418240, 107374182400)}
+}
+
+func Test_node_list_tool(t *testing.T) {
+	session := connect(t, testClients())
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "node_list"})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	text := result.Content[0].(*mcp.TextContent)
+	require.Contains(t, text.Text, "worker-0")
+	structured := result.StructuredContent.(map[string]any)
+	require.Len(t, structured["nodes"], 1)
+}
+
+func Test_node_status_tool(t *testing.T) {
+	session := connect(t, testClients())
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "node_status", Arguments: map[string]any{"nodes": []any{"worker-0", "ghost"}},
+	})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	text := result.Content[0].(*mcp.TextContent).Text
+	require.Contains(t, text, "[Ready] worker-0")
+	require.Contains(t, text, `node "ghost" not found`)
+	nodes := kubetest.StructuredList(t, result, "nodes")
+	require.Len(t, nodes, 2)
+	require.Equal(t, true, nodes[0]["found"])
+	require.Equal(t, "ghost", nodes[1]["node"])
+	require.Equal(t, false, nodes[1]["found"])
+}
+
+func Test_node_resources_tool(t *testing.T) {
+	session := connect(t, testClients())
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "node_resources", Arguments: map[string]any{"nodes": []any{"worker-0", "ghost"}},
+	})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	text := result.Content[0].(*mcp.TextContent).Text
+	require.Contains(t, text, "usage:")
+	require.Contains(t, text, `node "ghost" not found`)
+	nodes := kubetest.StructuredList(t, result, "nodes")
+	require.Len(t, nodes, 2)
+	require.Equal(t, true, nodes[0]["found"])
+	require.Equal(t, false, nodes[1]["found"])
+}
+
+func Test_node_resources_tool_mixed_disk_access(t *testing.T) {
+	c := testClients()
+	c.core = fake.NewClientset(node("worker-0"), node("worker-1"))
+	c.metrics = newMetricsFake(nodeMetrics("worker-0", "4", "8Gi"), nodeMetrics("worker-1", "2", "4Gi"))
+	c.diskUsage = func(_ context.Context, name string) (int64, int64, bool, error) {
+		if name == "worker-1" {
+			return 0, 0, false, apierrors.NewForbidden(schema.GroupResource{Resource: "nodes/proxy"}, name, errors.New("RBAC denied"))
+		}
+		return 10737418240, 107374182400, true, nil
+	}
+	session := connect(t, c)
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "node_resources", Arguments: map[string]any{"nodes": []any{"worker-0", "worker-1"}},
+	})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	nodes := kubetest.StructuredList(t, result, "nodes")
+	require.Len(t, nodes, 2)
+	require.Equal(t, "10737418240", nodes[0]["usage"].(map[string]any)["disk"])
+	require.NotContains(t, nodes[0], "usage_note")
+	require.NotContains(t, nodes[1]["usage"], "disk")
+	require.Equal(t, "2", nodes[1]["usage"].(map[string]any)["cpu"])
+	require.Contains(t, nodes[1]["usage_note"], "not permitted")
+}
+
+func Test_node_tools_bad_targets(t *testing.T) {
+	tests := map[string]struct {
+		args   map[string]any
+		errMsg string
+	}{
+		"empty list":  {args: map[string]any{"nodes": []any{}}, errMsg: "nodes must contain at least one target"},
+		"blank entry": {args: map[string]any{"nodes": []any{""}}, errMsg: "nodes[0] is empty"},
+		"missing":     {args: map[string]any{}, errMsg: "nodes"},
+		"string":      {args: map[string]any{"nodes": "worker-0"}, errMsg: "nodes"},
+	}
+	session := connect(t, testClients())
+
+	for _, tool := range []string{"node_status", "node_resources"} {
+		for name, tc := range tests {
+			t.Run(tool+"/"+name, func(t *testing.T) {
+				result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: tc.args})
+				if err != nil {
+					require.ErrorContains(t, err, tc.errMsg)
+					return
+				}
+				require.True(t, result.IsError)
+				require.Contains(t, result.Content[0].(*mcp.TextContent).Text, tc.errMsg)
+			})
+		}
+	}
+}
+
+func Test_Register(t *testing.T) {
+	c := kube.Clients{Core: fake.NewClientset(node("worker-0")), Metrics: newMetricsFake()}
+	session := kubetest.Connect(t, func(s *mcp.Server) { Register(s, c) })
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "node_status", Arguments: map[string]any{"nodes": []any{"worker-0"}},
+	})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	require.Contains(t, result.Content[0].(*mcp.TextContent).Text, "[Ready] worker-0")
 }

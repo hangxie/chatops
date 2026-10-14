@@ -1,4 +1,4 @@
-package kubernetes
+package kube
 
 import (
 	"context"
@@ -21,17 +21,17 @@ func Test_targets(t *testing.T) {
 		"keeps order":         {names: []string{"worker-2", "worker-0", "worker-1"}, want: []string{"worker-2", "worker-0", "worker-1"}},
 		"drops duplicates":    {names: []string{"worker-1", "worker-0", "worker-1"}, want: []string{"worker-1", "worker-0"}},
 		"trims whitespace":    {names: []string{" worker-0 ", "worker-0"}, want: []string{"worker-0"}},
-		"nil":                 {names: nil, errMsg: "nodes is required: pass at least one node name"},
-		"empty":               {names: []string{}, errMsg: "nodes is required: pass at least one node name"},
+		"nil":                 {names: nil, errMsg: "nodes must contain at least one target"},
+		"empty":               {names: []string{}, errMsg: "nodes must contain at least one target"},
 		"blank entry":         {names: []string{"worker-0", " "}, errMsg: "nodes[1] is empty"},
-		"too many":            {names: manyNames(maxTargets + 1), errMsg: "nodes has 51 entries; at most 50 are allowed"},
-		"at the limit":        {names: manyNames(maxTargets), want: manyNames(maxTargets)},
-		"duplicates collapse": {names: append(manyNames(maxTargets), "n0"), want: manyNames(maxTargets)},
+		"too many":            {names: manyNames(MaxTargets + 1), errMsg: "nodes has 51 entries; at most 50 are allowed"},
+		"at the limit":        {names: manyNames(MaxTargets), want: manyNames(MaxTargets)},
+		"duplicates collapse": {names: append(manyNames(MaxTargets), "n0"), want: manyNames(MaxTargets)},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			got, err := targets("nodes", tc.names)
+			got, err := Targets("nodes", tc.names)
 			if tc.errMsg != "" {
 				require.EqualError(t, err, tc.errMsg)
 				return
@@ -52,7 +52,7 @@ func manyNames(n int) []string {
 
 func Test_fetchAll_keeps_order(t *testing.T) {
 	var inFlight, peak atomic.Int32
-	got, err := fetchAll(context.Background(), []string{"a", "b", "c", "d", "e", "f"}, func(_ context.Context, name string) (string, error) {
+	got, err := FetchAll(context.Background(), []string{"a", "b", "c", "d", "e", "f"}, func(_ context.Context, name string) (string, error) {
 		n := inFlight.Add(1)
 		defer inFlight.Add(-1)
 		for {
@@ -69,7 +69,7 @@ func Test_fetchAll_keeps_order(t *testing.T) {
 }
 
 func Test_fetchAll_error_names_target(t *testing.T) {
-	_, err := fetchAll(context.Background(), []string{"a", "b"}, func(_ context.Context, name string) (string, error) {
+	_, err := FetchAll(context.Background(), []string{"a", "b"}, func(_ context.Context, name string) (string, error) {
 		if name == "b" {
 			return "", errors.New("connection refused")
 		}
@@ -85,7 +85,7 @@ func Test_fetchAll_failure_cancels_in_flight(t *testing.T) {
 	var mu sync.Mutex
 	fetched := map[string]error{}
 
-	_, err := fetchAll(context.Background(), names, func(ctx context.Context, name string) (string, error) {
+	_, err := FetchAll(context.Background(), names, func(ctx context.Context, name string) (string, error) {
 		if name == "bad" {
 			for range 3 {
 				<-inFlight
@@ -111,7 +111,7 @@ func Test_fetchAll_parent_canceled(t *testing.T) {
 	cancel()
 	var calls atomic.Int32
 
-	_, err := fetchAll(ctx, []string{"a", "b"}, func(context.Context, string) (string, error) {
+	_, err := FetchAll(ctx, []string{"a", "b"}, func(context.Context, string) (string, error) {
 		calls.Add(1)
 		return "", nil
 	})

@@ -1,7 +1,8 @@
-package kubernetes
+// Package kube holds what every kubernetes resource package shares: clients, targets, the per-target
+// handler, and the pod, describe, and table helpers.
+package kube
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -15,30 +16,35 @@ import (
 // inClusterConfig is a seam so tests can exercise the in-cluster branch without running in a pod.
 var inClusterConfig = rest.InClusterConfig
 
-// clients holds the API clients the node tools share; they are built once from one rest.Config.
-type clients struct {
-	core      k8s.Interface
-	metrics   metricsclient.Interface
-	diskUsage func(ctx context.Context, node string) (usedBytes, totalBytes int64, ok bool, err error)
+// Config selects how the Kubernetes client connects; an empty Config uses in-cluster then the default kubeconfig.
+type Config struct {
+	Kubeconfig string
+	Context    string
 }
 
-// newClients resolves the connection, applies the request-timeout backstop and user agent, and builds the clients.
-func newClients(cfg Config, timeout time.Duration, userAgent string) (clients, error) {
+// Clients holds the API clients every resource shares; they are built once from one rest.Config.
+type Clients struct {
+	Core    k8s.Interface
+	Metrics metricsclient.Interface
+}
+
+// NewClients resolves the connection, applies the request-timeout backstop and user agent, and builds the clients.
+func NewClients(cfg Config, timeout time.Duration, userAgent string) (Clients, error) {
 	restCfg, err := restConfig(cfg)
 	if err != nil {
-		return clients{}, err
+		return Clients{}, err
 	}
 	restCfg.Timeout = timeout
 	restCfg.UserAgent = userAgent
 	core, err := k8s.NewForConfig(restCfg)
 	if err != nil {
-		return clients{}, fmt.Errorf("kubernetes client: %w", err)
+		return Clients{}, fmt.Errorf("kubernetes client: %w", err)
 	}
 	metrics, err := metricsclient.NewForConfig(restCfg)
 	if err != nil {
-		return clients{}, fmt.Errorf("metrics client: %w", err)
+		return Clients{}, fmt.Errorf("metrics client: %w", err)
 	}
-	return clients{core: core, metrics: metrics, diskUsage: summaryDiskUsage(core.CoreV1().RESTClient())}, nil
+	return Clients{Core: core, Metrics: metrics}, nil
 }
 
 // restConfig resolves the connection: explicit kubeconfig (no fallback), else an explicit context forces

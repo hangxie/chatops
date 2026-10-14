@@ -1,17 +1,15 @@
-package kubernetes
+package node
 
 import (
 	"fmt"
 	"sort"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"k8s.io/apimachinery/pkg/api/resource"
-)
 
-// now is a seam so age rendering is deterministic in tests.
-var now = time.Now
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kube"
+)
 
 // conditionOrder lists the conditions on-call cares about first; any others follow, sorted.
 var conditionOrder = []string{"Ready", "MemoryPressure", "DiskPressure", "PIDPressure", "NetworkUnavailable"}
@@ -24,7 +22,7 @@ func formatNodeList(out NodeListOutput) string {
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "NAME\tSTATUS\tROLES\tAGE\tVERSION")
 	for _, n := range out.Nodes {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", n.Name, n.Ready, rolesText(n.Roles), age(n.Created), n.Version)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", n.Name, n.Ready, rolesText(n.Roles), kube.Age(n.Created), n.Version)
 	}
 	_ = w.Flush()
 	return strings.TrimRight(b.String(), "\n")
@@ -61,15 +59,6 @@ func formatNodeResources(out NodeResources) string {
 		lines = append(lines, "note: "+out.UsageNote)
 	}
 	return strings.Join(lines, "\n")
-}
-
-// formatEach renders one block per target, separated by a blank line.
-func formatEach[T any](items []T, format func(T) string) string {
-	blocks := make([]string, 0, len(items))
-	for _, item := range items {
-		blocks = append(blocks, format(item))
-	}
-	return strings.Join(blocks, "\n\n")
 }
 
 func rolesText(roles []string) string {
@@ -110,7 +99,7 @@ func amountsText(a *ResourceAmounts) string {
 		return "(unknown)"
 	}
 	return fmt.Sprintf("cpu=%s memory=%s disk=%s pods=%s",
-		orNone(a.CPU), orNone(humanSize(a.Memory)), orNone(humanSize(a.Disk)), orNone(a.Pods))
+		kube.OrNone(a.CPU), kube.OrNone(humanSize(a.Memory)), kube.OrNone(humanSize(a.Disk)), kube.OrNone(a.Pods))
 }
 
 // usageText renders utilization: cpu, memory, and pods as a percentage of allocatable, and disk as a percentage
@@ -121,10 +110,10 @@ func usageText(out NodeResources) string {
 	if u == nil {
 		return "(unavailable)"
 	}
-	cpu := orNone(withPercent(humanCPU(u.CPU), percent(u.CPU, allocField(alloc, "cpu"))))
-	mem := orNone(withPercent(humanSize(u.Memory), percent(u.Memory, allocField(alloc, "memory"))))
-	disk := orNone(withPercent(humanSize(u.Disk), percent(u.Disk, out.DiskTotal)))
-	pods := orNone(withPercent(u.Pods, percent(u.Pods, allocField(alloc, "pods"))))
+	cpu := kube.OrNone(withPercent(humanCPU(u.CPU), percent(u.CPU, allocField(alloc, "cpu"))))
+	mem := kube.OrNone(withPercent(humanSize(u.Memory), percent(u.Memory, allocField(alloc, "memory"))))
+	disk := kube.OrNone(withPercent(humanSize(u.Disk), percent(u.Disk, out.DiskTotal)))
+	pods := kube.OrNone(withPercent(u.Pods, percent(u.Pods, allocField(alloc, "pods"))))
 	return fmt.Sprintf("cpu=%s memory=%s disk=%s pods=%s", cpu, mem, disk, pods)
 }
 
@@ -141,13 +130,6 @@ func allocField(a *ResourceAmounts, key string) string {
 		return a.Pods
 	}
 	return ""
-}
-
-func orNone(s string) string {
-	if s == "" {
-		return "n/a"
-	}
-	return s
 }
 
 // humanCPU renders a CPU quantity as millicores, matching kubectl (e.g. 276m); empty or unparseable pass through.
@@ -189,21 +171,4 @@ func percent(used, total string) string {
 		return ""
 	}
 	return fmt.Sprintf("%.0f%%", float64(u.MilliValue())/float64(t.MilliValue())*100)
-}
-
-func age(t time.Time) string {
-	if t.IsZero() {
-		return "<unknown>"
-	}
-	d := max(now().Sub(t), 0)
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 48*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	}
 }
