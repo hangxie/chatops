@@ -176,6 +176,7 @@ The deb and rpm packages install both binaries, a `chatops` system user, and a s
 |---|---|
 | `/etc/chatops/config.yaml` | Config file; set `llm.base_url` and `llm.model` before starting |
 | `/etc/chatops/mcp-status.yaml` | Services the `status` tool group checks; edit to add services or product names |
+| `/etc/chatops/mcp-kubernetes.yaml` | Settings for the `kubernetes` tool group, such as the kubeconfig at `/etc/chatops/kubeconfig` |
 | `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `LLM_API_KEY`) and `LOG_LEVEL`/`LOG_FORMAT`; readable only by root and the `chatops` group |
 | `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml --chat ${CHAT}` (default `homelab`, the backend named in the sample config) with JSON logs to the journal; restarts on failure |
 
@@ -195,8 +196,7 @@ journalctl -u chatops -f
 | `--tools` | `ping` | Comma-separated tool groups to serve |
 | `--http` | (stdio) | Serve Streamable HTTP at `/mcp` on this address instead of stdio |
 | `--status-config` | (none) | YAML file listing the services the `status` group checks; required with `--tools status` |
-| `--kubeconfig` | (none) | Path to the kubeconfig for the `kubernetes` group, honored exactly with no fallback; requires `--tools kubernetes` |
-| `--kube-context` | (none) | Kubeconfig context for the `kubernetes` group; forces kubeconfig-based resolution; requires `--tools kubernetes` |
+| `--kubernetes-config` | (none) | YAML file configuring the `kubernetes` group; optional, requires `--tools kubernetes` |
 | `--token-env` | (none) | Environment variable holding the bearer token HTTP clients must send; required when `--http` is not a loopback address |
 
 ### Built-in MCPs
@@ -211,7 +211,7 @@ Each tool group has a design doc under [`docs/`](docs/); the overall architectur
 
 `node_status` and `node_resources` take a `nodes` list, so a question about several nodes is one call: `node_list` for the names, then one call with all of them. Every other per-object tool likewise takes a list named after its resource (`pods`, `deployments`, and so on), of `{namespace, name}` objects for namespaced resources. A list holds at most 50 distinct targets (5 for every `_describe` and `_log` tool, whose output is a full object or raw container output); a target that does not exist is reported as not found without failing the rest, and a namespace that does not exist is named as such.
 
-The `kubernetes` group connects with `--kubeconfig`/`--kube-context`, else in-cluster credentials when running as a pod, else the default local kubeconfig. See [`docs/mcp-k8s.md`](docs/mcp-k8s.md) for the connection model. Node utilization needs metrics-server; without it, capacity and allocatable are still reported. The group needs only read-only RBAC:
+Every `kubernetes` group setting lives in the `--kubernetes-config` file, shipped as `package/systemd/mcp-kubernetes.yaml` and installed as `/etc/chatops/mcp-kubernetes.yaml`; every field is optional, and without the file the group uses its defaults. `kubeconfig` names a kubeconfig honored exactly with no fallback (a relative path follows the config file) and `context` selects a kubeconfig context; without them the group uses in-cluster credentials when running as a pod, else the default local kubeconfig. See [`docs/mcp-k8s.md`](docs/mcp-k8s.md) for the connection model. Node utilization needs metrics-server; without it, capacity and allocatable are still reported. The group needs only read-only RBAC:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1

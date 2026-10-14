@@ -31,24 +31,27 @@ func newClient() *mcp.Client {
 // packagedStatus is the services file the packages install as /etc/chatops/mcp-status.yaml.
 const packagedStatus = "../../../package/systemd/mcp-status.yaml"
 
+// packagedKubernetes is the kubernetes settings file the packages install as /etc/chatops/mcp-kubernetes.yaml.
+const packagedKubernetes = "../../../package/systemd/mcp-kubernetes.yaml"
+
 func Test_newServer(t *testing.T) {
 	tests := map[string]struct {
 		cmd    Cmd
 		tools  []string
 		errMsg string
 	}{
-		"ping":                       {cmd: Cmd{Tools: []string{"ping"}}, tools: []string{"ping"}},
-		"status":                     {cmd: Cmd{Tools: []string{"status"}, StatusConfig: packagedStatus}, tools: []string{"service_status"}},
-		"both":                       {cmd: Cmd{Tools: []string{"ping", "status"}, StatusConfig: packagedStatus}, tools: []string{"ping", "service_status"}},
-		"duplicate":                  {cmd: Cmd{Tools: []string{"ping", "ping"}}, errMsg: `tool group "ping" listed more than once`},
-		"unknown":                    {cmd: Cmd{Tools: []string{"bogus"}}, errMsg: `unknown tool group "bogus" (available: kubernetes, ping, status)`},
-		"none":                       {cmd: Cmd{}, errMsg: "at least one tool group is required"},
-		"blank-is-bogus":             {cmd: Cmd{Tools: []string{""}}, errMsg: `unknown tool group "" (available: kubernetes, ping, status)`},
-		"status-without-config":      {cmd: Cmd{Tools: []string{"status"}}, errMsg: `tool group "status": --status-config is required`},
-		"status-config-missing":      {cmd: Cmd{Tools: []string{"status"}, StatusConfig: "/nonexistent/status.yaml"}, errMsg: `tool group "status": read status config: open /nonexistent/status.yaml: no such file or directory`},
-		"config-without-status":      {cmd: Cmd{Tools: []string{"ping"}, StatusConfig: packagedStatus}, errMsg: "--status-config requires --tools status"},
-		"kube-flag-without-group":    {cmd: Cmd{Tools: []string{"ping"}, Kubeconfig: "/tmp/kubeconfig"}, errMsg: "--kubeconfig and --kube-context require --tools kubernetes"},
-		"kube-context-without-group": {cmd: Cmd{Tools: []string{"ping"}, KubeContext: "ctx"}, errMsg: "--kubeconfig and --kube-context require --tools kubernetes"},
+		"ping":                      {cmd: Cmd{Tools: []string{"ping"}}, tools: []string{"ping"}},
+		"status":                    {cmd: Cmd{Tools: []string{"status"}, StatusConfig: packagedStatus}, tools: []string{"service_status"}},
+		"both":                      {cmd: Cmd{Tools: []string{"ping", "status"}, StatusConfig: packagedStatus}, tools: []string{"ping", "service_status"}},
+		"duplicate":                 {cmd: Cmd{Tools: []string{"ping", "ping"}}, errMsg: `tool group "ping" listed more than once`},
+		"unknown":                   {cmd: Cmd{Tools: []string{"bogus"}}, errMsg: `unknown tool group "bogus" (available: kubernetes, ping, status)`},
+		"none":                      {cmd: Cmd{}, errMsg: "at least one tool group is required"},
+		"blank-is-bogus":            {cmd: Cmd{Tools: []string{""}}, errMsg: `unknown tool group "" (available: kubernetes, ping, status)`},
+		"status-without-config":     {cmd: Cmd{Tools: []string{"status"}}, errMsg: `tool group "status": --status-config is required`},
+		"status-config-missing":     {cmd: Cmd{Tools: []string{"status"}, StatusConfig: "/nonexistent/status.yaml"}, errMsg: `tool group "status": read status config: open /nonexistent/status.yaml: no such file or directory`},
+		"config-without-status":     {cmd: Cmd{Tools: []string{"ping"}, StatusConfig: packagedStatus}, errMsg: "--status-config requires --tools status"},
+		"kube-config-without-group": {cmd: Cmd{Tools: []string{"ping"}, KubernetesConfig: packagedKubernetes}, errMsg: "--kubernetes-config requires --tools kubernetes"},
+		"kube-config-missing":       {cmd: Cmd{Tools: []string{"kubernetes"}, KubernetesConfig: "/nonexistent/mcp-kubernetes.yaml"}, errMsg: `tool group "kubernetes": read kubernetes config: open /nonexistent/mcp-kubernetes.yaml: no such file or directory`},
 	}
 
 	for name, tc := range tests {
@@ -80,7 +83,10 @@ func Test_newServer_kubernetes(t *testing.T) {
 	content := "apiVersion: v1\nkind: Config\nclusters:\n- cluster: {server: https://cluster.example:6443}\n  name: c\ncontexts:\n- context: {cluster: c, user: u}\n  name: ctx\ncurrent-context: ctx\nusers:\n- name: u\n  user: {token: t}\n"
 	require.NoError(t, os.WriteFile(kubeconfig, []byte(content), 0o600))
 
-	server, err := newServer(Cmd{Tools: []string{"kubernetes"}, Kubeconfig: kubeconfig})
+	settings := filepath.Join(t.TempDir(), "mcp-kubernetes.yaml")
+	require.NoError(t, os.WriteFile(settings, []byte("kubeconfig: "+kubeconfig+"\n"), 0o600))
+
+	server, err := newServer(Cmd{Tools: []string{"kubernetes"}, KubernetesConfig: settings})
 	require.NoError(t, err)
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()

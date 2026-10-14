@@ -52,8 +52,8 @@ mcp:
         - "ping,status,kubernetes"
         - --status-config
         - /etc/chatops/mcp-status.yaml
-        - --kubeconfig
-        - /etc/chatops/kubeconfig
+        - --kubernetes-config
+        - /etc/chatops/mcp-kubernetes.yaml
       # Extra variables for the server process; values live in this file, so
       # never put secrets here. Only PATH and HOME are inherited otherwise.
       # env:
