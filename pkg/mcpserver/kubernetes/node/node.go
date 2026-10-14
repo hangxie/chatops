@@ -1,5 +1,5 @@
-// Package kubernetes serves read-only Kubernetes inspection tools over MCP.
-package kubernetes
+// Package node serves the read-only node tools: roster, health, and resource capacity/utilization.
+package node
 
 import (
 	"context"
@@ -7,10 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8s "k8s.io/client-go/kubernetes"
+	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
+
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kube"
 )
 
 const rolePrefix = "node-role.kubernetes.io/"
@@ -45,6 +49,66 @@ type NodeStatus struct {
 	Schedulable *bool             `json:"schedulable,omitempty"`
 	Taints      []string          `json:"taints,omitempty"`
 	Created     *time.Time        `json:"created,omitempty"`
+}
+
+// clients carries the shared clients plus the Summary API reader, a seam so tests can stub disk usage.
+type clients struct {
+	core      k8s.Interface
+	metrics   metricsclient.Interface
+	diskUsage func(ctx context.Context, node string) (usedBytes, totalBytes int64, ok bool, err error)
+}
+
+// Register adds the node tools to server.
+func Register(server *mcp.Server, c kube.Clients) {
+	register(server, clients{core: c.Core, metrics: c.Metrics, diskUsage: summaryDiskUsage(c.Core.CoreV1().RESTClient())})
+}
+
+func register(server *mcp.Server, c clients) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "node_list",
+		Description: "List the Kubernetes cluster's nodes with their status, roles, age, and kubelet version. Takes no arguments.",
+		Annotations: kube.ReadOnly(),
+	}, nodeListHandler(c))
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "node_status",
+		Description: "Report the health of one or more Kubernetes nodes in one call: Ready condition, memory/disk/PID pressure, schedulable or not, taints, kubelet version, and roles. Pass every node of interest in nodes (names from node_list); a node that does not exist has found false.",
+		Annotations: kube.ReadOnly(),
+	}, nodeStatusHandler(c))
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "node_resources",
+		Description: "Report CPU, memory, disk, and pod capacity, allocatable, and current utilization for one or more Kubernetes nodes in one call. Pass every node of interest in nodes (names from node_list); a node that does not exist has found false.",
+		Annotations: kube.ReadOnly(),
+	}, nodeResourcesHandler(c))
+}
+
+type nodeInput struct {
+	Nodes []string `json:"nodes" jsonschema:"the node names to report on, all in one call"`
+}
+
+func nodeTargets(in nodeInput) ([]string, error) { return kube.Targets("nodes", in.Nodes) }
+
+func nodeListHandler(c clients) mcp.ToolHandlerFor[struct{}, NodeListOutput] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, NodeListOutput, error) {
+		out, err := listNodes(ctx, c.core)
+		if err != nil {
+			return nil, NodeListOutput{}, err
+		}
+		return kube.TextResult(formatNodeList(out)), out, nil
+	}
+}
+
+func nodeStatusHandler(c clients) mcp.ToolHandlerFor[nodeInput, NodeStatusOutput] {
+	return kube.PerTarget(nodeTargets,
+		func(ctx context.Context, name string) (NodeStatus, error) { return getNodeStatus(ctx, c.core, name) },
+		formatNodeStatus,
+		func(nodes []NodeStatus) NodeStatusOutput { return NodeStatusOutput{Nodes: nodes} })
+}
+
+func nodeResourcesHandler(c clients) mcp.ToolHandlerFor[nodeInput, NodeResourcesOutput] {
+	return kube.PerTarget(nodeTargets,
+		func(ctx context.Context, name string) (NodeResources, error) { return getNodeResources(ctx, c, name) },
+		formatNodeResources,
+		func(nodes []NodeResources) NodeResourcesOutput { return NodeResourcesOutput{Nodes: nodes} })
 }
 
 func listNodes(ctx context.Context, client k8s.Interface) (NodeListOutput, error) {

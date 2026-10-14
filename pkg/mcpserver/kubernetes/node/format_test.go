@@ -1,23 +1,18 @@
-package kubernetes
+package node
 
 import (
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kube"
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kubetest"
 )
-
-func freezeNow(t *testing.T, at time.Time) {
-	t.Helper()
-	now = func() time.Time { return at }
-	t.Cleanup(func() { now = time.Now })
-}
-
-func ptr[T any](v T) *T { return &v }
 
 func Test_formatNodeList(t *testing.T) {
 	created := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
-	freezeNow(t, created.Add(32*24*time.Hour))
+	kubetest.FreezeNow(t, &kube.Now, created.Add(32*24*time.Hour))
 	out := NodeListOutput{Nodes: []NodeListItem{
 		{Name: "master-0", Ready: "Ready", Roles: []string{"control-plane"}, Created: created, Version: "v1.37.1"},
 		{Name: "worker-0", Ready: "NotReady", Roles: nil, Created: created, Version: "v1.37.1"},
@@ -38,7 +33,7 @@ func Test_formatNodeStatus(t *testing.T) {
 	out := NodeStatus{
 		Node: "worker-4", Found: true, Ready: "Ready", Roles: nil, Version: "v1.37.1",
 		Conditions:  map[string]string{"Ready": "True", "MemoryPressure": "False", "DiskPressure": "Unknown"},
-		Schedulable: ptr(false),
+		Schedulable: kubetest.Ptr(false),
 		Taints:      []string{"gpu:NoSchedule"},
 	}
 	text := formatNodeStatus(out)
@@ -105,36 +100,6 @@ func Test_rolesText(t *testing.T) {
 	require.Equal(t, "control-plane,worker", rolesText([]string{"control-plane", "worker"}))
 }
 
-func Test_humanSize(t *testing.T) {
-	require.Equal(t, "31.3Gi", humanSize("32866976Ki"))
-	require.Equal(t, "", humanSize(""))
-	require.Equal(t, "not-a-size", humanSize("not-a-size"))
-}
-
-func Test_humanCPU(t *testing.T) {
-	require.Equal(t, "277m", humanCPU("276202172n")) // MilliValue rounds up from 276.2m
-	require.Equal(t, "4000m", humanCPU("4"))
-	require.Equal(t, "", humanCPU(""))
-	require.Equal(t, "bad", humanCPU("bad"))
-}
-
-func Test_percent(t *testing.T) {
-	require.Equal(t, "25%", percent("4", "16"))
-	require.Equal(t, "", percent("4", "0"))
-	require.Equal(t, "", percent("bad", "16"))
-}
-
-func Test_age(t *testing.T) {
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	freezeNow(t, base)
-	require.Equal(t, "<unknown>", age(time.Time{}))
-	require.Equal(t, "0s", age(base.Add(time.Hour))) // future clamps to zero
-	require.Equal(t, "30s", age(base.Add(-30*time.Second)))
-	require.Equal(t, "5m", age(base.Add(-5*time.Minute)))
-	require.Equal(t, "10h", age(base.Add(-10*time.Hour)))
-	require.Equal(t, "3d", age(base.Add(-72*time.Hour)))
-}
-
 func Test_amountsText_nil(t *testing.T) {
 	require.Equal(t, "(unknown)", amountsText(nil))
 }
@@ -153,8 +118,21 @@ func Test_allocField(t *testing.T) {
 	require.Equal(t, "", allocField(nil, "cpu"))
 }
 
-func Test_formatEach(t *testing.T) {
-	nodes := []NodeStatus{{Node: "ghost"}, {Node: "phantom"}}
-	require.Equal(t, "node \"ghost\" not found\n\nnode \"phantom\" not found", formatEach(nodes, formatNodeStatus))
-	require.Equal(t, `node "ghost" not found`, formatEach(nodes[:1], formatNodeStatus))
+func Test_humanSize(t *testing.T) {
+	require.Equal(t, "31.3Gi", humanSize("32866976Ki"))
+	require.Equal(t, "", humanSize(""))
+	require.Equal(t, "not-a-size", humanSize("not-a-size"))
+}
+
+func Test_humanCPU(t *testing.T) {
+	require.Equal(t, "277m", humanCPU("276202172n")) // MilliValue rounds up from 276.2m
+	require.Equal(t, "4000m", humanCPU("4"))
+	require.Equal(t, "", humanCPU(""))
+	require.Equal(t, "bad", humanCPU("bad"))
+}
+
+func Test_percent(t *testing.T) {
+	require.Equal(t, "25%", percent("4", "16"))
+	require.Equal(t, "", percent("4", "0"))
+	require.Equal(t, "", percent("bad", "16"))
 }

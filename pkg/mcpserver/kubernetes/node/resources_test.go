@@ -1,4 +1,4 @@
-package kubernetes
+package node
 
 import (
 	"context"
@@ -22,6 +22,8 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
+
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kubetest"
 )
 
 func fixedDisk(used, total int64) func(context.Context, string) (int64, int64, bool, error) {
@@ -176,7 +178,7 @@ func Test_getNodeResources_node_error(t *testing.T) {
 
 func Test_getNodeResources_pods_error(t *testing.T) {
 	core := fake.NewClientset(node("worker-0"))
-	core.PrependReactor("list", "pods", forbidden("list", "pods"))
+	core.PrependReactor("list", "pods", kubetest.Forbidden("list", "pods"))
 	c := clients{core: core, metrics: newMetricsFake(nodeMetrics("worker-0", "4", "8Gi")), diskUsage: fixedDisk(0, 0)}
 
 	out, err := getNodeResources(context.Background(), c, "worker-0")
@@ -189,7 +191,7 @@ func Test_getNodeResources_pods_error(t *testing.T) {
 
 func Test_handlers_surface_errors(t *testing.T) {
 	core := fake.NewClientset()
-	core.PrependReactor("list", "nodes", forbidden("list", "nodes"))
+	core.PrependReactor("list", "nodes", kubetest.Forbidden("list", "nodes"))
 	core.PrependReactor("get", "nodes", func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("boom")
 	})

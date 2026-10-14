@@ -1,42 +1,15 @@
-package kubernetes
+package kube
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/rest"
+
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kubetest"
 )
-
-const twoContextKubeconfig = `apiVersion: v1
-kind: Config
-clusters:
-- cluster: {server: https://ctx1.example:6443}
-  name: c1
-- cluster: {server: https://ctx2.example:6443}
-  name: c2
-contexts:
-- context: {cluster: c1, user: u1}
-  name: ctx1
-- context: {cluster: c2, user: u2}
-  name: ctx2
-current-context: ctx1
-users:
-- name: u1
-  user: {token: t1}
-- name: u2
-  user: {token: t2}
-`
-
-func writeKubeconfig(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "kubeconfig")
-	require.NoError(t, os.WriteFile(path, []byte(twoContextKubeconfig), 0o600))
-	return path
-}
 
 func stubInCluster(t *testing.T, cfg *rest.Config, err error) {
 	t.Helper()
@@ -45,7 +18,7 @@ func stubInCluster(t *testing.T, cfg *rest.Config, err error) {
 }
 
 func Test_restConfig_explicit_kubeconfig(t *testing.T) {
-	path := writeKubeconfig(t)
+	path := kubetest.WriteKubeconfig(t)
 	// An explicit kubeconfig must be honored even when in-cluster would otherwise win.
 	stubInCluster(t, &rest.Config{Host: "https://in-cluster"}, nil)
 
@@ -60,7 +33,7 @@ func Test_restConfig_explicit_kubeconfig_missing(t *testing.T) {
 }
 
 func Test_restConfig_context_forces_kubeconfig(t *testing.T) {
-	t.Setenv("KUBECONFIG", writeKubeconfig(t))
+	t.Setenv("KUBECONFIG", kubetest.WriteKubeconfig(t))
 	// A context takes precedence over in-cluster detection.
 	stubInCluster(t, &rest.Config{Host: "https://in-cluster"}, nil)
 
@@ -85,7 +58,7 @@ func Test_restConfig_in_cluster_error(t *testing.T) {
 }
 
 func Test_restConfig_dev_fallback(t *testing.T) {
-	t.Setenv("KUBECONFIG", writeKubeconfig(t))
+	t.Setenv("KUBECONFIG", kubetest.WriteKubeconfig(t))
 	stubInCluster(t, nil, rest.ErrNotInCluster)
 
 	cfg, err := restConfig(Config{})
@@ -93,17 +66,16 @@ func Test_restConfig_dev_fallback(t *testing.T) {
 	require.Equal(t, "https://ctx1.example:6443", cfg.Host)
 }
 
-func Test_newClients(t *testing.T) {
-	path := writeKubeconfig(t)
+func Test_NewClients(t *testing.T) {
+	path := kubetest.WriteKubeconfig(t)
 
-	c, err := newClients(Config{Kubeconfig: path}, 5*time.Second, "chatops-mcp/test")
+	c, err := NewClients(Config{Kubeconfig: path}, 5*time.Second, "chatops-mcp/test")
 	require.NoError(t, err)
-	require.NotNil(t, c.core)
-	require.NotNil(t, c.metrics)
-	require.NotNil(t, c.diskUsage) // always attempted; RBAC decides
+	require.NotNil(t, c.Core)
+	require.NotNil(t, c.Metrics)
 }
 
-func Test_newClients_bad_kubeconfig(t *testing.T) {
-	_, err := newClients(Config{Kubeconfig: "/no/such/kubeconfig"}, 5*time.Second, "chatops-mcp/test")
+func Test_NewClients_bad_kubeconfig(t *testing.T) {
+	_, err := NewClients(Config{Kubeconfig: "/no/such/kubeconfig"}, 5*time.Second, "chatops-mcp/test")
 	require.Error(t, err)
 }
