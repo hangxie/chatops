@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kubetest"
 )
@@ -38,4 +39,10 @@ func Test_Duration(t *testing.T) {
 	require.Equal(t, "0s", Duration(-time.Second))
 	require.Equal(t, "1m", Duration(90*time.Second))
 	require.Equal(t, "3d", Duration(72*time.Hour))
+}
+
+func Test_AccessModes(t *testing.T) {
+	modes := []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce, corev1.ReadOnlyMany, corev1.ReadWriteMany, corev1.ReadWriteOncePod, "Custom"}
+	require.Equal(t, "RWO,ROX,RWX,RWOP,Custom", AccessModes(modes))
+	require.Empty(t, AccessModes(nil))
 }

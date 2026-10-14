@@ -27,7 +27,12 @@ func (r ObjectRef) String() string { return r.Namespace + "/" + r.Name }
 
 // Targets validates cluster-scoped names such as nodes.
 func Targets(field string, names []string) ([]string, error) {
-	return uniqueTargets(field, names, MaxTargets, func(name string) (string, string) {
+	return CappedTargets(field, names, MaxTargets)
+}
+
+// CappedTargets validates cluster-scoped names under a tool's own cap, such as MaxDescribeTargets.
+func CappedTargets(field string, names []string, limit int) ([]string, error) {
+	return uniqueTargets(field, names, limit, func(name string) (string, string) {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			return "", "is empty"
