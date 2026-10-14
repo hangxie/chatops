@@ -19,6 +19,7 @@ The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organ
 | job | `job_list`, `job_pods`, `job_log`, `job_describe` | [below](#job) |
 | pv | `pv_list`, `pv_describe` | [below](#pv) |
 | pvc | `pvc_list`, `pvc_describe` | [below](#pvc) |
+| configmap | `configmap_list`, `configmap_describe` | [below](#configmap) |
 
 ### namespace
 
@@ -59,6 +60,10 @@ Persistent volumes are cluster-scoped, so `pv_describe` takes plain names in `pv
 ### pvc
 
 Health is the claim's phase (`Bound`, `Pending`, `Lost`); the list follows `kubectl get pvc`, with the capacity the bound volume provides rather than the request, so a pending resize shows the old size until it finishes (its condition is in `pvc_describe`). RBAC: `get`/`list` on `persistentvolumeclaims`.
+
+### configmap
+
+Configmaps hold configuration, not secrets, so values are shown rather than redacted; any value over 2 KB keeps its first 2 KB, cut at a character boundary and marked with its full size, so one embedded dashboard cannot crowd out the rest, and binary data shows its size instead of base64. A configmap has no health, so its describe header names only the object. Some workloads put credentials in configmaps anyway, and the `configmaps` grant is the boundary for those. RBAC: `get`/`list` on `configmaps`.
 
 ## One group, resource-oriented internals
 

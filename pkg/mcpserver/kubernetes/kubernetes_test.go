@@ -41,5 +41,6 @@ func Test_Register_lists_tools(t *testing.T) {
 		"job_list", "job_pods", "job_log", "job_describe",
 		"pv_list", "pv_describe",
 		"pvc_list", "pvc_describe",
+		"configmap_list", "configmap_describe",
 	}, names)
 }

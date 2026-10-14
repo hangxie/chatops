@@ -191,7 +191,7 @@ Each tool group has a design doc under [`docs/`](docs/); the overall architectur
 |---|---|---|---|
 | `ping` | `ping` | Connectivity smoke test; replies `pong` | [`docs/mcp-ping.md`](docs/mcp-ping.md) |
 | `status` | `service_status` | Public status and active incidents of external services, from their status pages | [`docs/mcp-status.md`](docs/mcp-status.md) |
-| `kubernetes` | `node_list`, `node_status`, `node_resources`, `namespace_list`, `deployment_list`, `deployment_pods`, `deployment_describe`, `pod_list`, `pod_describe`, `pod_log`, `pod_resources`, `statefulset_list`, `statefulset_pods`, `statefulset_describe`, `daemonset_list`, `daemonset_pods`, `daemonset_describe`, `replicaset_list`, `replicaset_pods`, `replicaset_describe`, `service_list`, `service_pods`, `service_describe`, `job_list`, `job_pods`, `job_log`, `job_describe`, `pv_list`, `pv_describe`, `pvc_list`, `pvc_describe` | Read-only Kubernetes inspection: node roster, health, and resource capacity/utilization; namespaces and why one is stuck terminating; deployment health, pods, and definition; pod roster, definition, logs, and resource usage; statefulset health, pods, and definition; daemonset health, pods, and definition; replicaset health, pods, and definition; service health, backing pods, and definition; job status, pods, logs, and definition; persistent volumes and their claims; persistent volume claims | [`docs/mcp-k8s.md`](docs/mcp-k8s.md) |
+| `kubernetes` | `node_list`, `node_status`, `node_resources`, `namespace_list`, `deployment_list`, `deployment_pods`, `deployment_describe`, `pod_list`, `pod_describe`, `pod_log`, `pod_resources`, `statefulset_list`, `statefulset_pods`, `statefulset_describe`, `daemonset_list`, `daemonset_pods`, `daemonset_describe`, `replicaset_list`, `replicaset_pods`, `replicaset_describe`, `service_list`, `service_pods`, `service_describe`, `job_list`, `job_pods`, `job_log`, `job_describe`, `pv_list`, `pv_describe`, `pvc_list`, `pvc_describe`, `configmap_list`, `configmap_describe` | Read-only Kubernetes inspection: node roster, health, and resource capacity/utilization; namespaces and why one is stuck terminating; deployment health, pods, and definition; pod roster, definition, logs, and resource usage; statefulset health, pods, and definition; daemonset health, pods, and definition; replicaset health, pods, and definition; service health, backing pods, and definition; job status, pods, logs, and definition; persistent volumes and their claims; persistent volume claims; configmaps | [`docs/mcp-k8s.md`](docs/mcp-k8s.md) |
 
 `node_status` and `node_resources` take a `nodes` list, so a question about several nodes is one call: `node_list` for the names, then one call with all of them. Every other per-object tool likewise takes a list named after its resource (`pods`, `deployments`, and so on), of `{namespace, name}` objects for namespaced resources. A list holds at most 50 distinct targets (5 for every `_describe` and `_log` tool, whose output is a full object or raw container output); a target that does not exist is reported as not found without failing the rest, and a namespace that does not exist is named as such.
 
@@ -242,12 +242,15 @@ rules:
 - apiGroups: [""]
   resources: [persistentvolumeclaims]
   verbs: [get, list]
+- apiGroups: [""]
+  resources: [configmaps]
+  verbs: [get, list]
 - apiGroups: ["metrics.k8s.io"]
   resources: [nodes, pods]
   verbs: [get, list]
 ```
 
-This role is read-only, but its reads are cluster-wide: the credentials can read pod metadata, workload pod templates, and container logs in every namespace. The `_describe` tools redact literal environment values before they reach chat (values of 12 or more characters keep their last 3), but secrets passed in container `command` or `args`, and anything a container writes to its logs, are not redacted, and the grant itself is the real boundary. Scope the binding or namespaces accordingly if that is broader than intended.
+This role is read-only, but its reads are cluster-wide: the credentials can read pod metadata, workload pod templates, container logs, and configmap values in every namespace. The `_describe` tools redact literal environment values before they reach chat (values of 12 or more characters keep their last 3), but secrets passed in container `command` or `args`, and anything a container writes to its logs, are not redacted, and the grant itself is the real boundary. Scope the binding or namespaces accordingly if that is broader than intended.
 
 `node_resources` reports CPU/memory/disk/pod capacity and allocatable from the node API, CPU and memory utilization from the metrics API, and the pod count from the pod API. Node disk utilization comes from the kubelet Summary API and is reported only when the credentials also have `get` on `nodes/proxy`; without it, each node notes that disk utilization is not permitted:
 

@@ -7,6 +7,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hangxie/chatops/internal/version"
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/configmap"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/daemonset"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/deployment"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kube"
@@ -44,5 +45,6 @@ func Register(server *mcp.Server, cfg Config) error {
 	job.Register(server, c)
 	pv.Register(server, c)
 	pvc.Register(server, c)
+	configmap.Register(server, c)
 	return nil
 }
