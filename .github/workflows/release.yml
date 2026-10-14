@@ -12,7 +12,7 @@ jobs:
   build:
     uses: ./.github/workflows/build.yml
   release-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: build
     steps:
       - uses: actions/checkout@v7
@@ -35,7 +35,7 @@ jobs:
           name: release-artifacts
           path: build
   github-release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: release-build
     permissions:
       contents: write
@@ -62,7 +62,7 @@ jobs:
               --notes-file ./build/CHANGELOG \
               ./build/release/*
   docker-image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: release-build
     permissions:
       contents: read
