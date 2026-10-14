@@ -13,19 +13,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type bearerRoundTripper string
-
-func (token bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	req = req.Clone(req.Context())
-	req.Header.Set("Authorization", "Bearer "+string(token))
-	return http.DefaultTransport.RoundTrip(req)
+type bearerRoundTripper struct {
+	token string
+	next  http.RoundTripper
 }
 
-func connectHTTP(endpoint, token string) (*mcp.ClientSession, error) {
-	transport := &mcp.StreamableClientTransport{Endpoint: endpoint, MaxRetries: -1}
-	if token != "" {
-		transport.HTTPClient = &http.Client{Transport: bearerRoundTripper(token)}
+func (b bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if b.token != "" {
+		req = req.Clone(req.Context())
+		req.Header.Set("Authorization", "Bearer "+b.token)
 	}
+	return b.next.RoundTrip(req)
+}
+
+func connectHTTP(t *testing.T, endpoint, token string) (*mcp.ClientSession, error) {
+	// No keep-alives: a pooled, never-used connection holds http.Server.Shutdown for 5s.
+	next := &http.Transport{DisableKeepAlives: true}
+	t.Cleanup(next.CloseIdleConnections)
+	client := &http.Client{Transport: bearerRoundTripper{token: token, next: next}}
+	transport := &mcp.StreamableClientTransport{Endpoint: endpoint, HTTPClient: client, MaxRetries: -1}
 	return newClient().Connect(context.Background(), transport, nil)
 }
 
@@ -108,7 +114,7 @@ func Test_httpHandler(t *testing.T) {
 			httpServer := httptest.NewServer(httpHandler(server, tc.serverToken))
 			defer httpServer.Close()
 
-			session, err := connectHTTP(httpServer.URL+"/mcp", tc.clientToken)
+			session, err := connectHTTP(t, httpServer.URL+"/mcp", tc.clientToken)
 			if tc.status != http.StatusOK {
 				require.ErrorContains(t, err, "Unauthorized")
 				return
@@ -130,16 +136,17 @@ func Test_serveHTTP(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- serveHTTP(ctx, listener, httpHandler(server, "")) }()
 
-	session, err := connectHTTP("http://"+listener.Addr().String()+"/mcp", "")
+	session, err := connectHTTP(t, "http://"+listener.Addr().String()+"/mcp", "")
 	require.NoError(t, err)
 	require.Equal(t, []string{"ping"}, toolNames(t, session))
-	require.NoError(t, session.Close())
+	defer func() { _ = session.Close() }()
+	// Cancel with the session's SSE stream still open: shutdown must not wait it out.
 	cancel()
 
 	select {
 	case err := <-done:
 		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(2 * time.Second):
 		t.Fatal("serve did not stop")
 	}
 }
