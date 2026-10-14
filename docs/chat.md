@@ -63,7 +63,7 @@ An interactive terminal: reads lines from stdin, writes replies to stdout, and e
 
 ### `slack`
 
-Slack Socket Mode. One conversation per Slack thread; replies post into the thread as escaped mrkdwn without link previews. Sender identity is the verified Slack user ID from the event.
+Slack Socket Mode. One conversation per Slack thread; replies post into the thread as escaped mrkdwn without link previews. Common Markdown the model emits is converted to mrkdwn. A reply with a Markdown table is posted as Block Kit blocks with the first table as a native table block (Slack allows one per message, up to 100 rows, 20 columns, and 10,000 characters); other tables, tables over those limits, and tables with empty cells become aligned code blocks; a table ends at the first row whose column count differs from its header. A block reply is not cut at the plain-text length cap; it is limited to Slack's 50 blocks instead, ending with "[reply truncated]" if longer. If Slack rejects the blocks, the reply is resent as plain mrkdwn. Sender identity is the verified Slack user ID from the event.
 
 | Parameter | Required | Meaning |
 |---|---|---|

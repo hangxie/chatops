@@ -20,7 +20,8 @@ import (
 const (
 	dedupeTTL   = time.Hour
 	dedupeLimit = 10000
-	// maxReplyRunes keeps escaped text (up to 5x longer) under Slack's 40,000-character limit.
+	// maxReplyRunes keeps escaped text (up to 5x longer) under Slack's 40,000-character limit;
+	// block replies are bounded by Block Kit limits instead.
 	maxReplyRunes = 7000
 	busyReply     = "I'm handling too many requests right now; please try again shortly."
 	busyTimeout   = 10 * time.Second
@@ -183,13 +184,24 @@ func (a *Adapter) replyBusy(ctx context.Context, log *slog.Logger, reply func(co
 }
 
 // replier posts escaped text as Slack mrkdwn without link previews, so model output cannot ping, link, or unfurl.
+// A reply with a Markdown table is sent as blocks with a native table; Slack shows the text only in notifications.
 func (a *Adapter) replier(channel, thread string) func(context.Context, string) error {
 	return func(ctx context.Context, text string) error {
-		_, _, err := a.api.PostMessageContext(ctx, channel,
+		opts := []slackapi.MsgOption{
 			slackapi.MsgOptionText(limitReply(toMrkdwn(text)), true),
 			slackapi.MsgOptionTS(thread),
 			slackapi.MsgOptionDisableLinkUnfurl(),
-			slackapi.MsgOptionDisableMediaUnfurl())
+			slackapi.MsgOptionDisableMediaUnfurl(),
+		}
+		if blocks := toBlocks(text); blocks != nil {
+			_, _, err := a.api.PostMessageContext(ctx, channel, append(opts, slackapi.MsgOptionBlocks(blocks...))...)
+			var slackErr slackapi.SlackErrorResponse
+			if !errors.As(err, &slackErr) || slackErr.Err != "invalid_blocks" {
+				return err
+			}
+			a.logger.Warn("slack rejected table blocks; replying as text", "error", err)
+		}
+		_, _, err := a.api.PostMessageContext(ctx, channel, opts...)
 		return err
 	}
 }
