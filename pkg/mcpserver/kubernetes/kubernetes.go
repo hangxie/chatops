@@ -7,6 +7,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hangxie/chatops/internal/version"
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/daemonset"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/deployment"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kube"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/namespace"
@@ -32,5 +33,6 @@ func Register(server *mcp.Server, cfg Config) error {
 	deployment.Register(server, c)
 	pod.Register(server, c)
 	statefulset.Register(server, c)
+	daemonset.Register(server, c)
 	return nil
 }

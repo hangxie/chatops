@@ -13,6 +13,7 @@ The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organ
 | deployment | `deployment_list`, `deployment_pods`, `deployment_describe` | [below](#deployment) |
 | pod | `pod_list`, `pod_describe`, `pod_log`, `pod_resources` | [below](#pod) |
 | statefulset | `statefulset_list`, `statefulset_pods`, `statefulset_describe` | [below](#statefulset) |
+| daemonset | `daemonset_list`, `daemonset_pods`, `daemonset_describe` | [below](#daemonset) |
 
 ### namespace
 
@@ -29,6 +30,10 @@ Health is the kubectl-style pod status. `pod_list` filters by namespace and by n
 ### statefulset
 
 Health follows `kubectl rollout status` for statefulsets, checked in the order `ScaledToZero`, `Progressing` (generation not observed, a rolling update not finished, or more replicas than desired), `Degraded` (fewer available than desired), `Healthy`. A partitioned rolling update is finished once every pod at or above the partition is updated, and an `OnDelete` update is never in progress, since it waits for pods to be deleted; its pods still show as `old`. A pod belongs to the statefulset when the statefulset is its controller, and its revision is its `controller-revision-hash` label compared with `status.updateRevision`. RBAC: `get`/`list` on `statefulsets`.
+
+### daemonset
+
+Counts are against the nodes that should run a pod (`desiredNumberScheduled`). Health follows `kubectl rollout status` for daemonsets, checked in the order `Progressing` (generation not observed), `NoNodes` (no node matches, rather than a scale to zero), `Progressing` (a rolling update not finished; an `OnDelete` update never is), `Degraded` (fewer available than desired), `Healthy`. A daemonset's status does not name its current revision, so it is the `controller-revision-hash` label of the newest ControllerRevision the daemonset controls, compared with each owned pod's label. RBAC: `get`/`list` on `daemonsets` and `list` on `controllerrevisions`.
 
 ## One group, resource-oriented internals
 
