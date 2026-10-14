@@ -32,6 +32,10 @@ func Test_Forbidden(t *testing.T) {
 	require.ErrorContains(t, err, "get denied")
 }
 
+func Test_Namespace(t *testing.T) {
+	require.Equal(t, "argocd", Namespace("argocd").Name)
+}
+
 type echoOutput struct {
 	Items []map[string]any `json:"items"`
 }

@@ -191,7 +191,7 @@ Each tool group has a design doc under [`docs/`](docs/); the overall architectur
 |---|---|---|---|
 | `ping` | `ping` | Connectivity smoke test; replies `pong` | [`docs/mcp-ping.md`](docs/mcp-ping.md) |
 | `status` | `service_status` | Public status and active incidents of external services, from their status pages | [`docs/mcp-status.md`](docs/mcp-status.md) |
-| `kubernetes` | `node_list`, `node_status`, `node_resources` | Read-only Kubernetes node inspection: roster, health, and resource capacity/utilization | [`docs/mcp-k8s.md`](docs/mcp-k8s.md) |
+| `kubernetes` | `node_list`, `node_status`, `node_resources`, `namespace_list` | Read-only Kubernetes inspection: node roster, health, and resource capacity/utilization; namespaces and why one is stuck terminating | [`docs/mcp-k8s.md`](docs/mcp-k8s.md) |
 
 `node_status` and `node_resources` take a `nodes` list, so a question about several nodes is one call: `node_list` for the names, then one call with all of them. A list holds at most 50 distinct names; a name that does not exist is reported as not found without failing the rest.
 
@@ -201,11 +201,14 @@ The `kubernetes` group connects with `--kubeconfig`/`--kube-context`, else in-cl
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: chatops-node-reader
+  name: chatops-reader
 rules:
 - apiGroups: [""]
   resources: [nodes, pods]
   verbs: [get, list]
+- apiGroups: [""]
+  resources: [namespaces]
+  verbs: [list]
 - apiGroups: ["metrics.k8s.io"]
   resources: [nodes]
   verbs: [get, list]

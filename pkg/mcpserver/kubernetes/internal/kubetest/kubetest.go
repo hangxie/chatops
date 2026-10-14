@@ -9,7 +9,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8stesting "k8s.io/client-go/testing"
@@ -31,6 +33,11 @@ func Forbidden(verb, resource string) k8stesting.ReactionFunc {
 	return func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: resource}, "", errors.New(verb+" denied"))
 	}
+}
+
+// Namespace builds an existing namespace.
+func Namespace(name string) *corev1.Namespace {
+	return &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 }
 
 // Connect serves the tools register adds over an in-memory transport and returns a connected client session.

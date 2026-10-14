@@ -8,6 +8,7 @@ import (
 
 	"github.com/hangxie/chatops/internal/version"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kube"
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/namespace"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/node"
 )
 
@@ -24,5 +25,6 @@ func Register(server *mcp.Server, cfg Config) error {
 		return err
 	}
 	node.Register(server, c)
+	namespace.Register(server, c)
 	return nil
 }
