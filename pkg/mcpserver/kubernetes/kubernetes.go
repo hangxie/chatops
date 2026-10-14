@@ -14,6 +14,7 @@ import (
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/node"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/pod"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/replicaset"
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/service"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/statefulset"
 )
 
@@ -36,5 +37,6 @@ func Register(server *mcp.Server, cfg Config) error {
 	statefulset.Register(server, c)
 	daemonset.Register(server, c)
 	replicaset.Register(server, c)
+	service.Register(server, c)
 	return nil
 }
