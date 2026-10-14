@@ -10,6 +10,7 @@ import (
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/configmap"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/daemonset"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/deployment"
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/event"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kube"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/job"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/namespace"
@@ -46,5 +47,6 @@ func Register(server *mcp.Server, cfg Config) error {
 	pv.Register(server, c)
 	pvc.Register(server, c)
 	configmap.Register(server, c)
+	event.Register(server, c)
 	return nil
 }

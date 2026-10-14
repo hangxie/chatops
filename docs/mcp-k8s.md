@@ -20,6 +20,7 @@ The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organ
 | pv | `pv_list`, `pv_describe` | [below](#pv) |
 | pvc | `pvc_list`, `pvc_describe` | [below](#pvc) |
 | configmap | `configmap_list`, `configmap_describe` | [below](#configmap) |
+| event | `event_list` | [below](#event) |
 
 ### namespace
 
@@ -64,6 +65,10 @@ Health is the claim's phase (`Bound`, `Pending`, `Lost`); the list follows `kube
 ### configmap
 
 Configmaps hold configuration, not secrets, so values are shown rather than redacted; any value over 2 KB keeps its first 2 KB, cut at a character boundary and marked with its full size, so one embedded dashboard cannot crowd out the rest, and binary data shows its size instead of base64. A configmap has no health, so its describe header names only the object. Some workloads put credentials in configmaps anyway, and the `configmaps` grant is the boundary for those. RBAC: `get`/`list` on `configmaps`.
+
+### event
+
+Events are one API about every kind of object, so there is one `event_list` rather than a per-resource events tool: it serves a resource's events (`kind` and `name`, such as a pod or a persistent volume), a namespace's (`namespace`), and the cluster's warnings (`type: Warning`), and covers resources added later without new tools. Filters are server-side event field selectors; `kind` is matched exactly by the API, so common lowercase and short names (`pod`, `pvc`, `sts`) are mapped to the API kind and filtered server-side, while any other kind is matched without regard to case after listing, since models often copy the lowercase kinds kubectl prints. Rows are newest first by kubectl's last-seen time and capped at 50, with the total matched reported when more exist. Cluster-scoped objects record their events in `default`, so filtering those by namespace finds nothing; and the cluster keeps events for about an hour. RBAC: `list` on `events`.
 
 ## One group, resource-oriented internals
 
@@ -152,7 +157,7 @@ A live acceptance runs the tools against a real cluster and confirms the output;
 
 ## Future work
 
-Large clusters will eventually need `list` output capped or paginated so a big roster does not overflow the model's context; the tools assume a homelab-sized cluster and return every object. Pod-level tools (`pod_status`, `pod_resources`, `pod_logs`) and events are a later diagnostics slice. Mutating operations (cordon, drain, restart, scale, delete) are deferred until Phase 4 provides per-requester authorization, Slack approval, and durable audit; they will be ordinary tools in the same group, marked non-read-only and gated by policy, not by group membership.
+Large clusters will eventually need `list` output capped or paginated so a big roster does not overflow the model's context; the tools assume a homelab-sized cluster and return every object. Mutating operations (cordon, drain, restart, scale, delete) are deferred until Phase 4 provides per-requester authorization, Slack approval, and durable audit; they will be ordinary tools in the same group, marked non-read-only and gated by policy, not by group membership.
 
 ## Decisions
 
