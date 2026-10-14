@@ -28,8 +28,8 @@ func newClient() *mcp.Client {
 	return mcp.NewClient(&mcp.Implementation{Name: "client", Version: "v0"}, nil)
 }
 
-// packagedStatus is the services file the packages install as /etc/chatops/status.yaml.
-const packagedStatus = "../../../package/systemd/status.yaml"
+// packagedStatus is the services file the packages install as /etc/chatops/mcp-status.yaml.
+const packagedStatus = "../../../package/systemd/mcp-status.yaml"
 
 func Test_newServer(t *testing.T) {
 	tests := map[string]struct {

@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// packagedConfig is the services file the packages install as /etc/chatops/status.yaml.
-const packagedConfig = "../../../package/systemd/status.yaml"
+// packagedConfig is the services file the packages install as /etc/chatops/mcp-status.yaml.
+const packagedConfig = "../../../package/systemd/mcp-status.yaml"
 
 func writeFile(t *testing.T, content string) string {
 	t.Helper()
