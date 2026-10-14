@@ -33,3 +33,9 @@ func Test_Table(t *testing.T) {
 	require.Equal(t, "A  B", Table([]string{"A", "B"}, nil))
 	require.Equal(t, "A    B\nccc", Table([]string{"A", "B"}, [][]string{{"ccc", ""}}))
 }
+
+func Test_Duration(t *testing.T) {
+	require.Equal(t, "0s", Duration(-time.Second))
+	require.Equal(t, "1m", Duration(90*time.Second))
+	require.Equal(t, "3d", Duration(72*time.Hour))
+}

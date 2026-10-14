@@ -32,29 +32,42 @@ type WorkloadPods struct {
 	Pods      []PodSummary `json:"pods,omitempty"`
 }
 
-// OwnedPods lists the pods selector matches whose controller is one of owners, since a selector match alone is
-// not ownership; revision marks each pod against the workload's current revision, or is nil when it has none.
+// OwnedPods summarizes the pods a workload controls; revision marks each pod against the workload's current
+// revision, or is nil when it has none.
 func OwnedPods(ctx context.Context, client k8s.Interface, namespace string, selector labels.Selector,
 	owners map[types.UID]bool, revision func(p *corev1.Pod, owner types.UID) string,
 ) (WorkloadPods, error) {
-	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
+	pods, err := ListOwnedPods(ctx, client, namespace, selector, owners)
 	if err != nil {
 		return WorkloadPods{}, err
 	}
-	out := WorkloadPods{Found: true, Selector: selector.String(), Pods: make([]PodSummary, 0, len(pods.Items))}
-	for i := range pods.Items {
-		p := &pods.Items[i]
-		owner := metav1.GetControllerOf(p)
-		if owner == nil || !owners[owner.UID] {
-			continue
-		}
-		s := SummarizePod(p)
+	out := WorkloadPods{Found: true, Selector: selector.String(), Pods: make([]PodSummary, 0, len(pods))}
+	for i := range pods {
+		s := SummarizePod(&pods[i])
 		if revision != nil {
-			s.Revision = revision(p, owner.UID)
+			s.Revision = revision(&pods[i], metav1.GetControllerOf(&pods[i]).UID)
 		}
 		out.Pods = append(out.Pods, s)
 	}
 	return out, nil
+}
+
+// ListOwnedPods lists the pods selector matches whose controller is one of owners, since a selector match alone
+// is not ownership.
+func ListOwnedPods(ctx context.Context, client k8s.Interface, namespace string, selector labels.Selector,
+	owners map[types.UID]bool,
+) ([]corev1.Pod, error) {
+	list, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
+	if err != nil {
+		return nil, err
+	}
+	pods := make([]corev1.Pod, 0, len(list.Items))
+	for _, p := range list.Items {
+		if owner := metav1.GetControllerOf(&p); owner != nil && owners[owner.UID] {
+			pods = append(pods, p)
+		}
+	}
+	return pods, nil
 }
 
 // Revision marks a pod's revision against the current one; unknown while the current one is not known yet.

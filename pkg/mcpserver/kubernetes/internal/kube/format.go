@@ -49,7 +49,12 @@ func Age(t time.Time) string {
 	if t.IsZero() {
 		return "<unknown>"
 	}
-	d := max(Now().Sub(t), 0)
+	return Duration(Now().Sub(t))
+}
+
+// Duration renders a span at kubectl's age granularity; a negative one clamps to zero.
+func Duration(d time.Duration) string {
+	d = max(d, 0)
 	switch {
 	case d < time.Minute:
 		return fmt.Sprintf("%ds", int(d.Seconds()))
