@@ -17,6 +17,7 @@ The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organ
 | replicaset | `replicaset_list`, `replicaset_pods`, `replicaset_describe` | [below](#replicaset) |
 | service | `service_list`, `service_pods`, `service_describe` | [below](#service) |
 | job | `job_list`, `job_pods`, `job_log`, `job_describe` | [below](#job) |
+| pv | `pv_list`, `pv_describe` | [below](#pv) |
 
 ### namespace
 
@@ -49,6 +50,10 @@ A service's pods are the ones its EndpointSlices name, which is where traffic ac
 ### job
 
 A job runs to an end rather than rolling out, so its health reads the terminal conditions first, since a finished job keeps its last counts: `Failed` (a `Failed` or `FailureTarget` condition), `Complete`, `Suspended`, `Running` (active pods), else `Pending`. The list shows succeeded over required completions, failed pods, duration (start to finish, or to now while running), and the controlling cronjob. A pod belongs to the job when the job is its controller; each pod is one attempt, so there is no revision. `job_log` reads the job's 3 newest pods, newest first, with `pod_log`'s options and limits, and says how many attempts were left out. RBAC: `get`/`list` on `jobs` in `batch`, plus the pod log grant.
+
+### pv
+
+Persistent volumes are cluster-scoped, so `pv_describe` takes plain names in `pvs` and a missing one is just `found: false`. Health is the volume's phase (`Available`, `Bound`, `Released`, `Failed`, `Pending`); the list follows `kubectl get pv`, with kubectl's short access modes and the bound claim as namespace/name. A volume's events come from `event_list` rather than a volume tool. RBAC: `get`/`list` on `persistentvolumes`.
 
 ## One group, resource-oriented internals
 

@@ -171,3 +171,12 @@ func Test_fetchAll_parent_canceled(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.Zero(t, calls.Load())
 }
+
+func Test_CappedTargets(t *testing.T) {
+	got, err := CappedTargets("pvs", []string{" a ", "b", "a"}, 2)
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b"}, got)
+
+	_, err = CappedTargets("pvs", []string{"a", "b", "c"}, 2)
+	require.EqualError(t, err, "pvs has 3 entries; at most 2 are allowed")
+}

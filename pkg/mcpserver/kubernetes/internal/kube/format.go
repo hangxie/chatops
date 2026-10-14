@@ -5,6 +5,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 // Now is a seam so age rendering is deterministic in tests.
@@ -65,4 +67,25 @@ func Duration(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
+}
+
+// accessModeAbbrev follows kubectl's short access mode names.
+var accessModeAbbrev = map[corev1.PersistentVolumeAccessMode]string{
+	corev1.ReadWriteOnce:    "RWO",
+	corev1.ReadOnlyMany:     "ROX",
+	corev1.ReadWriteMany:    "RWX",
+	corev1.ReadWriteOncePod: "RWOP",
+}
+
+// AccessModes renders volume access modes as kubectl does, e.g. RWO,RWX; unknown modes pass through.
+func AccessModes(modes []corev1.PersistentVolumeAccessMode) string {
+	out := make([]string, 0, len(modes))
+	for _, m := range modes {
+		if short, ok := accessModeAbbrev[m]; ok {
+			out = append(out, short)
+		} else {
+			out = append(out, string(m))
+		}
+	}
+	return strings.Join(out, ",")
 }
