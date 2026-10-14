@@ -61,7 +61,12 @@ func httpHandler(server *mcp.Server, token string) http.Handler {
 }
 
 func serveHTTP(ctx context.Context, listener net.Listener, handler http.Handler) error {
-	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	// Request contexts derive from ctx so long-lived SSE streams end on cancel instead of stalling Shutdown.
+	httpServer := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+	}
 	errs := make(chan error, 1)
 	go func() { errs <- httpServer.Serve(listener) }()
 

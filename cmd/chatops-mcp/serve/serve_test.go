@@ -132,9 +132,9 @@ func Test_Cmd_Run_http(t *testing.T) {
 	go func() { done <- cmd.Run(ctx) }()
 
 	endpoint := "http://" + listener.Addr().String() + "/mcp"
-	_, err = connectHTTP(endpoint, "")
+	_, err = connectHTTP(t, endpoint, "")
 	require.ErrorContains(t, err, "Unauthorized")
-	session, err := connectHTTP(endpoint, "s3cret")
+	session, err := connectHTTP(t, endpoint, "s3cret")
 	require.NoError(t, err)
 	require.Equal(t, []string{"ping"}, toolNames(t, session))
 	require.NoError(t, session.Close())
