@@ -67,6 +67,8 @@ type fakeWeb struct {
 	authOK bool
 	// hold, when set, keeps chat.postMessage from answering until it is closed.
 	hold chan struct{}
+	// postErr, when set, names the Slack error chat.postMessage returns for a form; "" succeeds.
+	postErr func(url.Values) string
 }
 
 func newFakeWeb(t *testing.T) *fakeWeb {
@@ -88,6 +90,12 @@ func newFakeWeb(t *testing.T) *fakeWeb {
 				select {
 				case <-w.hold:
 				case <-r.Context().Done():
+				}
+			}
+			if w.postErr != nil {
+				if code := w.postErr(r.PostForm); code != "" {
+					_, _ = rw.Write([]byte(`{"ok":false,"error":"` + code + `"}`))
+					return
 				}
 			}
 			_, _ = rw.Write([]byte(`{"ok":true,"channel":"C1","ts":"1.1"}`))
@@ -194,6 +202,70 @@ func Test_Adapter_Run_submits_and_replies_in_thread(t *testing.T) {
 	require.Equal(t, "pong &lt;!channel&gt; &amp; done", form.Get("text"), "replies are escaped so model output cannot ping or link")
 	require.Equal(t, "false", form.Get("unfurl_links"))
 	require.Equal(t, "false", form.Get("unfurl_media"))
+}
+
+func Test_Adapter_Run_replies_with_table_block(t *testing.T) {
+	h := run(t, nil)
+	h.send(t, eventsAPI("e1", mention(nil)))
+	msg := h.nextSubmitted(t)
+
+	require.NoError(t, msg.Reply(context.Background(), "Pods <x>:\n| NAME | READY |\n|---|---|\n| api | 1/1 |"))
+	form := h.web.nextPost(t)
+	require.Equal(t, "Pods &lt;x&gt;:\n```\nNAME  READY\napi   1/1\n```", form.Get("text"), "text stays as the notification fallback")
+	require.JSONEq(t, `[{"type":"section","text":{"type":"mrkdwn","text":"Pods &lt;x&gt;:"}},`+
+		`{"type":"table","rows":[[{"type":"raw_text","text":"NAME"},{"type":"raw_text","text":"READY"}],`+
+		`[{"type":"raw_text","text":"api"},{"type":"raw_text","text":"1/1"}]]}]`, form.Get("blocks"))
+	require.Equal(t, "false", form.Get("unfurl_links"))
+}
+
+func Test_Adapter_Run_long_table_not_truncated(t *testing.T) {
+	h := run(t, nil)
+	h.send(t, eventsAPI("e1", mention(nil)))
+	msg := h.nextSubmitted(t)
+
+	name := strings.Repeat("n", 80)
+	table := "| NAME | READY |\n|---|---|" + strings.Repeat("\n| "+name+" | 1/1 |", maxTableRows-1)
+	require.Greater(t, len(table), maxReplyRunes)
+	require.NoError(t, msg.Reply(context.Background(), table))
+	form := h.web.nextPost(t)
+	require.Equal(t, maxTableRows, strings.Count(form.Get("blocks"), `"text":"1/1"`)+1, "every row reaches the table block")
+	require.True(t, strings.HasSuffix(form.Get("text"), "[reply truncated]"), "the fallback text keeps its cap")
+}
+
+func Test_Adapter_Run_reply_block_errors(t *testing.T) {
+	const table = "| A |\n|---|\n| 1 |"
+	tests := map[string]struct {
+		code      string
+		wantErr   bool
+		wantPosts int
+	}{
+		"invalid blocks retried as text": {code: "invalid_blocks", wantPosts: 2},
+		"other errors returned":          {code: "channel_not_found", wantErr: true, wantPosts: 1},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			h := run(t, func(h *harness) {
+				h.web.postErr = func(form url.Values) string {
+					if form.Get("blocks") != "" {
+						return tc.code
+					}
+					return ""
+				}
+			})
+			h.send(t, eventsAPI("e1", mention(nil)))
+			msg := h.nextSubmitted(t)
+
+			err := msg.Reply(context.Background(), table)
+			require.Equal(t, tc.wantErr, err != nil)
+			require.NotEmpty(t, h.web.nextPost(t).Get("blocks"))
+			if tc.wantPosts == 2 {
+				retry := h.web.nextPost(t)
+				require.Empty(t, retry.Get("blocks"))
+				require.Equal(t, "```\nA\n1\n```", retry.Get("text"))
+			}
+			require.Empty(t, h.web.posts)
+		})
+	}
 }
 
 func Test_Adapter_Run_ignores_retries(t *testing.T) {
