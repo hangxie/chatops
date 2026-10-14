@@ -14,6 +14,7 @@ The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organ
 | pod | `pod_list`, `pod_describe`, `pod_log`, `pod_resources` | [below](#pod) |
 | statefulset | `statefulset_list`, `statefulset_pods`, `statefulset_describe` | [below](#statefulset) |
 | daemonset | `daemonset_list`, `daemonset_pods`, `daemonset_describe` | [below](#daemonset) |
+| replicaset | `replicaset_list`, `replicaset_pods`, `replicaset_describe` | [below](#replicaset) |
 
 ### namespace
 
@@ -21,7 +22,7 @@ The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organ
 
 ### deployment
 
-Health builds on `kubectl rollout status`, checked in the order `Paused`, `Stalled` (`ProgressDeadlineExceeded`), `ScaledToZero`, `Progressing` (generation not observed, replicas not all updated, or more replicas than desired, which kubectl ignores during a scale-down), `Degraded` (fewer available than desired, which includes a scale-up whose new pods are not ready yet), `Healthy`. A pod belongs to the deployment only when its controller is a ReplicaSet the deployment controls, so another workload's pods carrying the same labels are excluded; its revision is `current` when that ReplicaSet is at the deployment's `deployment.kubernetes.io/revision`, `old` otherwise, and `unknown` rather than guessed when no such ReplicaSet exists yet. Deployment events are omitted, since they are mostly `ScalingReplicaSet`; the useful ones are pod events. RBAC: `get`/`list` on `deployments`, `list` on `replicasets`, `list` on `pods`.
+Health builds on `kubectl rollout status`, checked in the order `Paused`, `Stalled` (`ProgressDeadlineExceeded`), `ScaledToZero`, `Progressing` (generation not observed, replicas not all updated, or more replicas than desired, which kubectl ignores during a scale-down), `Degraded` (fewer available than desired, which includes a scale-up whose new pods are not ready yet), `Healthy`. A pod belongs to the deployment only when its controller is a ReplicaSet the deployment controls, so another workload's pods carrying the same labels are excluded; its revision is `current` when that ReplicaSet is at the deployment's `deployment.kubernetes.io/revision`, `old` otherwise, and `unknown` rather than guessed when no such ReplicaSet exists yet. Deployment events are omitted, since they are mostly `ScalingReplicaSet`; the useful ones are pod events. RBAC: `get`/`list` on `deployments`, `list` on `replicasets` (widened to `get` by the replicaset tools), `list` on `pods`.
 
 ### pod
 
@@ -34,6 +35,10 @@ Health follows `kubectl rollout status` for statefulsets, checked in the order `
 ### daemonset
 
 Counts are against the nodes that should run a pod (`desiredNumberScheduled`). Health follows `kubectl rollout status` for daemonsets, checked in the order `Progressing` (generation not observed), `NoNodes` (no node matches, rather than a scale to zero), `Progressing` (a rolling update not finished; an `OnDelete` update never is), `Degraded` (fewer available than desired), `Healthy`. A daemonset's status does not name its current revision, so it is the `controller-revision-hash` label of the newest ControllerRevision the daemonset controls, compared with each owned pod's label. RBAC: `get`/`list` on `daemonsets` and `list` on `controllerrevisions`.
+
+### replicaset
+
+A replicaset is one revision with no rollout of its own, so health is `ScaledToZero` (desired and current both 0), `Progressing` (generation not observed or current not yet desired, scaling either way), `Degraded` (fewer available than desired), or `Healthy`, and its pods carry no revision. The list follows `kubectl get rs` (desired, current, ready) and names each replicaset's controller, usually a deployment whose old revisions show as `ScaledToZero`. RBAC: `get`/`list` on `replicasets`.
 
 ## One group, resource-oriented internals
 

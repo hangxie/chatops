@@ -13,6 +13,7 @@ import (
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/namespace"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/node"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/pod"
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/replicaset"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/statefulset"
 )
 
@@ -34,5 +35,6 @@ func Register(server *mcp.Server, cfg Config) error {
 	pod.Register(server, c)
 	statefulset.Register(server, c)
 	daemonset.Register(server, c)
+	replicaset.Register(server, c)
 	return nil
 }
