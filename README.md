@@ -49,7 +49,7 @@ The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.y
 |---|---|---|
 | `chat.<name>.type` | (required) | Chat backend kind: `slack`, `stdio`, or `unix`; `<name>` is a free-form id selected on the command line with `--chat` |
 | `chat.<name>.bot_token_env`, `app_token_env` | (none) | slack only: environment variables holding the Slack bot (`xoxb-`) and app-level (`xapp-`) tokens; both required |
-| `chat.<name>.reply_in_channel` | `false` | slack only: post replies directly to the channel or DM instead of a thread, including replies to messages within existing threads |
+| `chat.<name>.reply_in_channel` | `false` | slack only: reply to top-level messages directly in the channel or DM; messages in an existing thread always receive replies in that thread |
 | `chat.<name>.path`, `mode` | (none) | unix only: filesystem path of the socket to create (required) and optional octal permission bits (e.g. `0600`, the default owner-only) |
 | `llm.base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions` |
 | `llm.model` | (required) | Model name sent with each request |
@@ -161,7 +161,8 @@ How it answers:
 
 - In a channel the app has been invited to, a message must start with a mention of the bot, such as `@chatops is the builtin server up?`; a mention later in the message is ignored. Follow-ups in the thread need the mention too.
 - In a direct message to the app, every message is answered; no mention is needed.
-- Replies go into the message's thread by default. Set `reply_in_channel: true` on the Slack backend to post all replies, including busy and failed-turn replies, directly to the channel or DM instead. This changes only the reply destination: each thread is a separate conversation with its own history, so context never crosses threads; a direct message that is not in a thread starts a new conversation.
+- Replies go into the message's thread by default. Set `reply_in_channel: true` on the Slack backend to reply to top-level messages directly in the channel or DM. Messages sent within an existing thread always receive replies in that thread, regardless of this setting. The same routing applies to busy and failed-turn replies. Each thread is a separate conversation with its own history, so context never crosses threads; a top-level message starts a new conversation.
+- Channel replies work poorly with `agent.history_turns > 0`: separate top-level messages do not share history, so a follow-up such as `@chatops check again` cannot refer to the previous top-level request. Prefer `agent.history_turns: 0` for channel replies, or keep follow-ups in the original thread when using history.
 - Messages in one thread are answered one at a time, in order; different threads are answered concurrently up to `agent.max_concurrent_turns`. When `agent.max_pending_messages` is reached, new messages get a short "try again shortly" reply; at most four such replies are posted at a time, and further refused messages are only logged.
 - Slack retries and duplicate deliveries of an accepted message are answered once; a message refused as busy may be accepted if Slack delivers it again.
 - A failed turn gets a short apology at the configured reply destination; the details, which may include internal endpoints, go only to the log.

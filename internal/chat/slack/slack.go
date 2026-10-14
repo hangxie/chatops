@@ -154,7 +154,11 @@ func (a *Adapter) handle(ctx context.Context, event socketmode.Event, submit fun
 
 func (a *Adapter) submit(ctx context.Context, in inbound, submit func(conversation.Message) error) {
 	log := a.logger.With("conversation", in.conversation(), "user", in.user)
-	reply := a.replier(in.channel, in.thread)
+	thread := in.thread
+	if a.replyInChannel && thread == in.ts {
+		thread = ""
+	}
+	reply := a.replier(in.channel, thread)
 	err := submit(conversation.Message{Conversation: in.conversation(), User: in.user, Text: in.text, Reply: reply})
 	switch {
 	case err == nil:
@@ -195,7 +199,7 @@ func (a *Adapter) replier(channel, thread string) func(context.Context, string) 
 			slackapi.MsgOptionDisableLinkUnfurl(),
 			slackapi.MsgOptionDisableMediaUnfurl(),
 		}
-		if !a.replyInChannel {
+		if thread != "" {
 			opts = append(opts, slackapi.MsgOptionTS(thread))
 		}
 		if blocks := toBlocks(text); blocks != nil {

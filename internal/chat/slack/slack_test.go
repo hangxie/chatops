@@ -424,20 +424,25 @@ func Test_New(t *testing.T) {
 func Test_Adapter_Run_reply_destination(t *testing.T) {
 	tests := []struct {
 		name                    string
+		wantReplyThread         string
 		channel                 bool
 		event                   slackevents.EventsAPIEvent
 		wantChannel, wantThread string
 		reply                   string
 	}{
-		{"default channel", false, mention(nil), "C1", "1700000000.000100", "text"},
-		{"default thread", false, mention(func(e *slackevents.AppMentionEvent) { e.ThreadTimeStamp = "1.1" }), "C1", "1.1", "text"},
-		{"default direct", false, direct(nil), "D1", "1700000000.000200", "text"},
-		{"channel", true, mention(nil), "C1", "1700000000.000100", "text"},
-		{"thread to channel", true, mention(func(e *slackevents.AppMentionEvent) { e.ThreadTimeStamp = "1.1" }), "C1", "1.1", "text"},
-		{"direct", true, direct(nil), "D1", "1700000000.000200", "text"},
-		{"table", true, mention(nil), "C1", "1700000000.000100", "table"},
-		{"fallback", true, mention(nil), "C1", "1700000000.000100", "fallback"},
-		{"busy", true, mention(nil), "C1", "1700000000.000100", "busy"},
+		{"default channel", "1700000000.000100", false, mention(nil), "C1", "1700000000.000100", "text"},
+		{"default thread", "1.1", false, mention(func(e *slackevents.AppMentionEvent) { e.ThreadTimeStamp = "1.1" }), "C1", "1.1", "text"},
+		{"default direct", "1700000000.000200", false, direct(nil), "D1", "1700000000.000200", "text"},
+		{"channel", "", true, mention(nil), "C1", "1700000000.000100", "text"},
+		{"thread stays in thread", "1.1", true, mention(func(e *slackevents.AppMentionEvent) { e.ThreadTimeStamp = "1.1" }), "C1", "1.1", "text"},
+		{"direct", "", true, direct(nil), "D1", "1700000000.000200", "text"},
+		{"table", "", true, mention(nil), "C1", "1700000000.000100", "table"},
+		{"fallback", "", true, mention(nil), "C1", "1700000000.000100", "fallback"},
+		{"busy", "", true, mention(nil), "C1", "1700000000.000100", "busy"},
+		{"direct thread", "1.1", true, direct(func(e *slackevents.MessageEvent) { e.ThreadTimeStamp = "1.1" }), "D1", "1.1", "text"},
+		{"thread table", "1.1", true, mention(func(e *slackevents.AppMentionEvent) { e.ThreadTimeStamp = "1.1" }), "C1", "1.1", "table"},
+		{"thread fallback", "1.1", true, mention(func(e *slackevents.AppMentionEvent) { e.ThreadTimeStamp = "1.1" }), "C1", "1.1", "fallback"},
+		{"thread busy", "1.1", true, mention(func(e *slackevents.AppMentionEvent) { e.ThreadTimeStamp = "1.1" }), "C1", "1.1", "busy"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -470,11 +475,7 @@ func Test_Adapter_Run_reply_destination(t *testing.T) {
 			for range posts {
 				form := h.web.nextPost(t)
 				require.Equal(t, tc.wantChannel, form.Get("channel"))
-				wantThread := tc.wantThread
-				if tc.channel {
-					wantThread = ""
-				}
-				require.Equal(t, wantThread, form.Get("thread_ts"))
+				require.Equal(t, tc.wantReplyThread, form.Get("thread_ts"))
 			}
 		})
 	}
