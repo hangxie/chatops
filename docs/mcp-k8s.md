@@ -16,6 +16,7 @@ The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organ
 | daemonset | `daemonset_list`, `daemonset_pods`, `daemonset_describe` | [below](#daemonset) |
 | replicaset | `replicaset_list`, `replicaset_pods`, `replicaset_describe` | [below](#replicaset) |
 | service | `service_list`, `service_pods`, `service_describe` | [below](#service) |
+| job | `job_list`, `job_pods`, `job_log`, `job_describe` | [below](#job) |
 
 ### namespace
 
@@ -44,6 +45,10 @@ A replicaset is one revision with no rollout of its own, so health is `ScaledToZ
 ### service
 
 A service's pods are the ones its EndpointSlices name, which is where traffic actually goes, not whatever its selector matches; this also covers services without a selector. A backend listed in several slices (a dual-stack service repeats a pod in one slice per address family) is merged into one endpoint with all its addresses, conservatively when the entries disagree: ready and serving only if every entry says so, terminating if any does, so the result never depends on slice order; terminating ones are left out of the counts but still listed, and an unset `ready` condition means ready, as the API defines. Health is `External` for an ExternalName service, otherwise `NoEndpoints`, `Unavailable` (none ready), `Degraded` (some not ready), or `Healthy`; `service_list` counts endpoints with one EndpointSlice list for the whole scope. RBAC: `get`/`list` on `services` and `list` on `endpointslices` in `discovery.k8s.io`.
+
+### job
+
+A job runs to an end rather than rolling out, so its health reads the terminal conditions first, since a finished job keeps its last counts: `Failed` (a `Failed` or `FailureTarget` condition), `Complete`, `Suspended`, `Running` (active pods), else `Pending`. The list shows succeeded over required completions, failed pods, duration (start to finish, or to now while running), and the controlling cronjob. A pod belongs to the job when the job is its controller; each pod is one attempt, so there is no revision. `job_log` reads the job's 3 newest pods, newest first, with `pod_log`'s options and limits, and says how many attempts were left out. RBAC: `get`/`list` on `jobs` in `batch`, plus the pod log grant.
 
 ## One group, resource-oriented internals
 

@@ -38,5 +38,6 @@ func Test_Register_lists_tools(t *testing.T) {
 		"daemonset_list", "daemonset_pods", "daemonset_describe",
 		"replicaset_list", "replicaset_pods", "replicaset_describe",
 		"service_list", "service_pods", "service_describe",
+		"job_list", "job_pods", "job_log", "job_describe",
 	}, names)
 }

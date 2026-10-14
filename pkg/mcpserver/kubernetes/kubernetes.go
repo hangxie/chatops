@@ -10,6 +10,7 @@ import (
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/daemonset"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/deployment"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kube"
+	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/job"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/namespace"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/node"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/pod"
@@ -38,5 +39,6 @@ func Register(server *mcp.Server, cfg Config) error {
 	daemonset.Register(server, c)
 	replicaset.Register(server, c)
 	service.Register(server, c)
+	job.Register(server, c)
 	return nil
 }
