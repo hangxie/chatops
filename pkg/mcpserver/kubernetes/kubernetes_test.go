@@ -42,5 +42,6 @@ func Test_Register_lists_tools(t *testing.T) {
 		"pv_list", "pv_describe",
 		"pvc_list", "pvc_describe",
 		"configmap_list", "configmap_describe",
+		"event_list",
 	}, names)
 }

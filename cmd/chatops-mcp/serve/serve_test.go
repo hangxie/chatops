@@ -91,7 +91,7 @@ func Test_newServer_kubernetes(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = session.Close() }()
 
-	require.ElementsMatch(t, []string{"node_list", "node_status", "node_resources", "namespace_list", "deployment_list", "deployment_pods", "deployment_describe", "pod_list", "pod_describe", "pod_log", "pod_resources", "statefulset_list", "statefulset_pods", "statefulset_describe", "daemonset_list", "daemonset_pods", "daemonset_describe", "replicaset_list", "replicaset_pods", "replicaset_describe", "service_list", "service_pods", "service_describe", "job_list", "job_pods", "job_log", "job_describe", "pv_list", "pv_describe", "pvc_list", "pvc_describe", "configmap_list", "configmap_describe"}, toolNames(t, session))
+	require.ElementsMatch(t, []string{"node_list", "node_status", "node_resources", "namespace_list", "deployment_list", "deployment_pods", "deployment_describe", "pod_list", "pod_describe", "pod_log", "pod_resources", "statefulset_list", "statefulset_pods", "statefulset_describe", "daemonset_list", "daemonset_pods", "daemonset_describe", "replicaset_list", "replicaset_pods", "replicaset_describe", "service_list", "service_pods", "service_describe", "job_list", "job_pods", "job_log", "job_describe", "pv_list", "pv_describe", "pvc_list", "pvc_describe", "configmap_list", "configmap_describe", "event_list"}, toolNames(t, session))
 }
 
 func Test_Cmd_Run_transport(t *testing.T) {
