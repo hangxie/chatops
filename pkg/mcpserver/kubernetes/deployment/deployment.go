@@ -10,7 +10,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8s "k8s.io/client-go/kubernetes"
 
@@ -53,6 +52,7 @@ type deploymentInput struct {
 	Deployments []kube.ObjectRef `json:"deployments" jsonschema:"the deployments to report on, all in one call"`
 }
 
+// Register adds the deployment tools to server.
 func Register(server *mcp.Server, c kube.Clients) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "deployment_list",
@@ -99,11 +99,11 @@ func deploymentDescribeHandler(c kube.Clients) mcp.ToolHandlerFor[deploymentInpu
 		func(in deploymentInput) ([]kube.ObjectRef, error) {
 			return kube.ObjectTargets("deployments", in.Deployments, kube.MaxDescribeTargets)
 		},
-		func(ctx context.Context, ref kube.ObjectRef) (DeploymentDescribe, error) {
+		func(ctx context.Context, ref kube.ObjectRef) (kube.Described, error) {
 			return describeDeployment(ctx, c.Core, ref)
 		},
-		formatDeploymentDescribe,
-		func(d []DeploymentDescribe) DeploymentDescribeOutput { return DeploymentDescribeOutput{Deployments: d} },
+		kube.FormatDescribed("deployment"),
+		func(d []kube.Described) DeploymentDescribeOutput { return DeploymentDescribeOutput{Deployments: d} },
 	)
 }
 
@@ -141,13 +141,9 @@ func listDeployments(ctx context.Context, client k8s.Interface, namespace string
 
 // getDeployment returns nil and a note on a miss; the note names the namespace when that is what is missing.
 func getDeployment(ctx context.Context, client k8s.Interface, ref kube.ObjectRef) (*appsv1.Deployment, string, error) {
-	d, err := client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		note, err := kube.MissingNamespace(ctx, client, ref.Namespace)
+	d, found, note, err := kube.GetNamespaced(ctx, client, ref, client.AppsV1().Deployments(ref.Namespace).Get)
+	if !found {
 		return nil, note, err
-	}
-	if err != nil {
-		return nil, "", err
 	}
 	return d, "", nil
 }

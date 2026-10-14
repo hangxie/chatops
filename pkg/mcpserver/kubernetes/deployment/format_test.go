@@ -66,9 +66,3 @@ func Test_formatDeploymentPods(t *testing.T) {
 		})
 	}
 }
-
-func Test_formatDeploymentDescribe(t *testing.T) {
-	out := DeploymentDescribe{Namespace: "argocd", Name: "server", Found: true, Health: healthHealthy, YAML: "kind: Deployment\n"}
-	require.Equal(t, "# argocd/server Healthy\nkind: Deployment", formatDeploymentDescribe(out))
-	require.Equal(t, `deployment "argocd/ghost" not found`, formatDeploymentDescribe(DeploymentDescribe{Namespace: "argocd", Name: "ghost"}))
-}

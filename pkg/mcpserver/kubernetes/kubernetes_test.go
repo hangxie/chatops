@@ -33,5 +33,6 @@ func Test_Register_lists_tools(t *testing.T) {
 	require.ElementsMatch(t, []string{
 		"node_list", "node_status", "node_resources", "namespace_list",
 		"deployment_list", "deployment_pods", "deployment_describe",
+		"pod_list", "pod_describe", "pod_log", "pod_resources",
 	}, names)
 }

@@ -20,7 +20,7 @@ type PodSummary struct {
 	Revision   string    `json:"revision,omitempty"`
 }
 
-// summarizePod counts native sidecars as containers, as kubectl get pods does; other init containers' restarts
+// SummarizePod counts native sidecars as containers, as kubectl get pods does; other init containers' restarts
 // count only while the pod is still initializing.
 func SummarizePod(p *corev1.Pod) PodSummary {
 	s := PodSummary{

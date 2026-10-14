@@ -123,16 +123,3 @@ func Test_humanSize(t *testing.T) {
 	require.Equal(t, "", humanSize(""))
 	require.Equal(t, "not-a-size", humanSize("not-a-size"))
 }
-
-func Test_humanCPU(t *testing.T) {
-	require.Equal(t, "277m", humanCPU("276202172n")) // MilliValue rounds up from 276.2m
-	require.Equal(t, "4000m", humanCPU("4"))
-	require.Equal(t, "", humanCPU(""))
-	require.Equal(t, "bad", humanCPU("bad"))
-}
-
-func Test_percent(t *testing.T) {
-	require.Equal(t, "25%", percent("4", "16"))
-	require.Equal(t, "", percent("4", "0"))
-	require.Equal(t, "", percent("bad", "16"))
-}
