@@ -43,7 +43,7 @@ type ChatBackend struct {
 	// slack: environment variables holding the bot (xoxb) and app-level (xapp) tokens.
 	BotTokenEnv string `yaml:"bot_token_env"`
 	AppTokenEnv string `yaml:"app_token_env"`
-	// ReplyInChannel posts Slack replies to the channel instead of the incoming thread.
+	// ReplyInChannel posts replies to top-level Slack messages directly to the channel.
 	ReplyInChannel bool `yaml:"reply_in_channel"`
 
 	// unix: filesystem path of the socket to create, and optional octal permission bits (e.g. "0600").
