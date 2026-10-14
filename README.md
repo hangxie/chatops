@@ -191,9 +191,9 @@ Each tool group has a design doc under [`docs/`](docs/); the overall architectur
 |---|---|---|---|
 | `ping` | `ping` | Connectivity smoke test; replies `pong` | [`docs/mcp-ping.md`](docs/mcp-ping.md) |
 | `status` | `service_status` | Public status and active incidents of external services, from their status pages | [`docs/mcp-status.md`](docs/mcp-status.md) |
-| `kubernetes` | `node_list`, `node_status`, `node_resources`, `namespace_list` | Read-only Kubernetes inspection: node roster, health, and resource capacity/utilization; namespaces and why one is stuck terminating | [`docs/mcp-k8s.md`](docs/mcp-k8s.md) |
+| `kubernetes` | `node_list`, `node_status`, `node_resources`, `namespace_list`, `deployment_list`, `deployment_pods`, `deployment_describe` | Read-only Kubernetes inspection: node roster, health, and resource capacity/utilization; namespaces and why one is stuck terminating; deployment health, pods, and definition | [`docs/mcp-k8s.md`](docs/mcp-k8s.md) |
 
-`node_status` and `node_resources` take a `nodes` list, so a question about several nodes is one call: `node_list` for the names, then one call with all of them. A list holds at most 50 distinct names; a name that does not exist is reported as not found without failing the rest.
+`node_status` and `node_resources` take a `nodes` list, so a question about several nodes is one call: `node_list` for the names, then one call with all of them. `deployment_pods` and `deployment_describe` likewise take a `deployments` list of `{namespace, name}` objects. A list holds at most 50 distinct targets (5 for `deployment_describe`, whose output is a full object); a target that does not exist is reported as not found without failing the rest, and a namespace that does not exist is named as such.
 
 The `kubernetes` group connects with `--kubeconfig`/`--kube-context`, else in-cluster credentials when running as a pod, else the default local kubeconfig. See [`docs/mcp-k8s.md`](docs/mcp-k8s.md) for the connection model. Node utilization needs metrics-server; without it, capacity and allocatable are still reported. The group needs only read-only RBAC:
 
@@ -208,13 +208,19 @@ rules:
   verbs: [get, list]
 - apiGroups: [""]
   resources: [namespaces]
+  verbs: [get, list]
+- apiGroups: ["apps"]
+  resources: [deployments]
+  verbs: [get, list]
+- apiGroups: ["apps"]
+  resources: [replicasets]
   verbs: [list]
 - apiGroups: ["metrics.k8s.io"]
   resources: [nodes]
   verbs: [get, list]
 ```
 
-This role is read-only, but note that `list` on `pods` is cluster-wide: the `node_resources` pod count lists pods in all namespaces, so the credentials can read pod metadata across the whole cluster. Scope the binding or namespaces accordingly if that is broader than intended.
+This role is read-only, but its reads are cluster-wide: the credentials can read pod metadata and deployment pod templates in every namespace. `deployment_describe` redacts literal environment values before they reach chat (values of 12 or more characters keep their last 3), but secrets passed in container `command` or `args` are not redacted, and the grant itself is the real boundary. Scope the binding or namespaces accordingly if that is broader than intended.
 
 `node_resources` reports CPU/memory/disk/pod capacity and allocatable from the node API, CPU and memory utilization from the metrics API, and the pod count from the pod API. Node disk utilization comes from the kubelet Summary API and is reported only when the credentials also have `get` on `nodes/proxy`; without it, each node notes that disk utilization is not permitted:
 
