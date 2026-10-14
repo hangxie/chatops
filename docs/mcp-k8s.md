@@ -68,7 +68,7 @@ Configmaps hold configuration, not secrets, so values are shown rather than reda
 
 ### event
 
-Events are one API about every kind of object, so there is one `event_list` rather than a per-resource events tool: it serves a resource's events (`kind` and `name`, such as a pod or a persistent volume), a namespace's (`namespace`), and the cluster's warnings (`type: Warning`), and covers resources added later without new tools. Filters are server-side event field selectors; `kind` is matched exactly by the API, so common lowercase and short names (`pod`, `pvc`, `sts`) are mapped to the API kind and filtered server-side, while any other kind is matched without regard to case after listing, since models often copy the lowercase kinds kubectl prints. Rows are newest first by kubectl's last-seen time and capped at 50, with the total matched reported when more exist. Cluster-scoped objects record their events in `default`, so filtering those by namespace finds nothing; and the cluster keeps events for about an hour. RBAC: `list` on `events`.
+Events are one API about every kind of object, so there is one `event_list` rather than a per-resource events tool: it serves a resource's events (`kind` and `name`, such as a pod or a persistent volume), a namespace's (`namespace`), and the cluster's warnings (`type: Warning`), and covers resources added later without new tools. Filters are server-side event field selectors; `kind` is matched exactly by the API, so common lowercase and short names (`pod`, `pvc`, `sts`) are mapped to the API kind and filtered server-side, while any other kind is matched without regard to case after listing, since models often copy the lowercase kinds kubectl prints. Rows are newest first by kubectl's last-seen time and the cap keeps the newest, rather than the first in API order. Cluster-scoped objects record their events in `default`, so filtering those by namespace finds nothing; and the cluster keeps events for about an hour. RBAC: `list` on `events`.
 
 ## One group, resource-oriented internals
 
@@ -90,6 +90,8 @@ Tool names are resource-first and snake_case, `<resource>_<verb>`, matching the 
 | `log` | recent container output | a target list, plus container, tail, and previous-instance options |
 
 Every tool is read-only (`ReadOnlyHint: true`, `IdempotentHint: true`, `OpenWorldHint: true`). Each returns a typed Go response, so `mcp.AddTool` derives the output schema and populates `StructuredContent`; the handler also sets `Content` to a concise human-readable summary rather than relying on the SDK's JSON fallback, because ChatOps targets small models that answer better from a compact text block. Text is kubectl-like: a `list` is an aligned table, and a per-target tool renders one block per target separated by a blank line.
+
+Every `list` tool, and each target of a `pods` tool, returns at most `max_results` rows (default 50, set in `--kubernetes-config`), so a big roster cannot overflow the model's context. The cap is applied after the full API list, not with the API's `limit`, because a server-side limit returns the first rows in storage order (wrong for `event_list`, which keeps the newest), would undercount after client-side filtering (owner references, case-insensitive kinds), and has no exact total when a selector is used. Structured output carries `total`, the count before the cap, and the text ends with `(showing the first N of M pods)`, so the model narrows the call instead of reading a partial roster as complete. Rows past the cap are dropped in API order (namespace, then name); there is no pagination. The cap bounds only what reaches the model: each call still lists, filters, and summarizes every match, so API response size and server memory grow with the cluster; that is acceptable at homelab scale, and a large cluster would need server-side pagination instead.
 
 ## Targets
 
@@ -124,7 +126,7 @@ Every non-empty literal `env[].value` in containers and init containers is redac
 
 ## Cluster connection and credentials
 
-Every setting of the group lives in one YAML file, `--kubernetes-config` (shipped as `package/systemd/mcp-kubernetes.yaml`), the same pattern as `--status-config`, so new settings add a field rather than a flag. The file is optional because every field has a working default; unknown fields are errors, and the flag is only valid with `--tools kubernetes`. Its `kubeconfig` and `context` fields drive connection resolution.
+Every setting of the group lives in one YAML file, `--kubernetes-config` (shipped as `package/systemd/mcp-kubernetes.yaml`), the same pattern as `--status-config`, so new settings add a field rather than a flag. The file is optional because every field has a working default; unknown fields are errors, and the flag is only valid with `--tools kubernetes`. Its `kubeconfig` and `context` fields drive connection resolution, and `max_results` caps result rows (see Output conventions).
 
 Connection resolution (standard client-go), in order: an explicit `kubeconfig` is honored exactly and never silently falls back (a missing or invalid file fails startup); otherwise in-cluster configuration is used when running as a pod; otherwise a local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`) is the development fallback. An optional `context` selects a context and explicitly requests kubeconfig-based resolution, taking precedence over in-cluster detection so it is never silently ignored in-cluster. A relative `kubeconfig` is resolved against the config file's directory, not the working directory, so the file means the same thing wherever the server starts.
 
@@ -159,7 +161,7 @@ A live acceptance runs the tools against a real cluster and confirms the output;
 
 ## Future work
 
-Large clusters will eventually need `list` output capped or paginated so a big roster does not overflow the model's context; the tools assume a homelab-sized cluster and return every object. Mutating operations (cordon, drain, restart, scale, delete) are deferred until Phase 4 provides per-requester authorization, Slack approval, and durable audit; they will be ordinary tools in the same group, marked non-read-only and gated by policy, not by group membership.
+Mutating operations (cordon, drain, restart, scale, delete) are deferred until Phase 4 provides per-requester authorization, Slack approval, and durable audit; they will be ordinary tools in the same group, marked non-read-only and gated by policy, not by group membership.
 
 ## Decisions
 
@@ -179,3 +181,4 @@ Large clusters will eventually need `list` output capped or paginated so a big r
 14. The `rest.Config` sets a finite request timeout and a `chatops-mcp/<version>` user agent.
 15. Network failures are runtime tool errors; only local config problems fail startup.
 16. RBAC is the only switch for features that need a powerful grant; such grants stay out of the baseline.
+17. `list` tools and each `pods` target return at most `max_results` rows (default 50), capped after listing, with the total reported; no pagination.
