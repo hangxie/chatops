@@ -59,6 +59,14 @@ type Request struct {
 // Response holds the assistant message: final text, tool calls, or both.
 type Response struct {
 	Message Message
+	// Usage is nil when the endpoint does not report token counts.
+	Usage *Usage
+}
+
+// Usage is the token count of one completion.
+type Usage struct {
+	PromptTokens     int
+	CompletionTokens int
 }
 
 // maxResponseBytes bounds memory spent on an untrusted endpoint's reply.
@@ -147,7 +155,7 @@ func (c *Client) Complete(ctx context.Context, req Request) (_ Response, err err
 	if err != nil {
 		return Response{}, fmt.Errorf("llm: %w", err)
 	}
-	return Response{Message: msg}, nil
+	return Response{Message: msg, Usage: wire.usage()}, nil
 }
 
 // refuseRedirect keeps the API key from reaching another origin or a downgraded scheme.

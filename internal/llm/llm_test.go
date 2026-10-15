@@ -60,7 +60,7 @@ func Test_Client_Complete(t *testing.T) {
 		gotContentType = r.Header.Get("Content-Type")
 		data, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(data, &gotBody)
-		_, _ = io.WriteString(w, textResponse)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"hi"}}],"usage":{"prompt_tokens":7,"completion_tokens":2}}`)
 	}))
 	defer server.Close()
 
@@ -70,7 +70,7 @@ func Test_Client_Complete(t *testing.T) {
 
 	resp, err := client.Complete(context.Background(), Request{Messages: []Message{{Role: RoleUser, Content: "hello"}}})
 	require.NoError(t, err)
-	require.Equal(t, Response{Message: Message{Role: RoleAssistant, Content: "hi"}}, resp)
+	require.Equal(t, Response{Message: Message{Role: RoleAssistant, Content: "hi"}, Usage: &Usage{PromptTokens: 7, CompletionTokens: 2}}, resp)
 	require.Equal(t, "/v1/chat/completions", gotPath)
 	require.Equal(t, "Bearer k", gotAuth)
 	require.Equal(t, "application/json", gotContentType)

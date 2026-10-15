@@ -174,3 +174,23 @@ func Test_fromWireResponse(t *testing.T) {
 		})
 	}
 }
+
+func Test_wireResponse_usage(t *testing.T) {
+	tests := map[string]struct {
+		body string
+		want *Usage
+	}{
+		"reported": {body: `{"usage":{"prompt_tokens":1200,"completion_tokens":45,"total_tokens":1245}}`, want: &Usage{PromptTokens: 1200, CompletionTokens: 45}},
+		"zero":     {body: `{"usage":{"prompt_tokens":0,"completion_tokens":0}}`, want: &Usage{}},
+		"absent":   {body: `{}`},
+		"null":     {body: `{"usage":null}`},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			var resp wireResponse
+			require.NoError(t, json.Unmarshal([]byte(tc.body), &resp))
+			require.Equal(t, tc.want, resp.usage())
+		})
+	}
+}
