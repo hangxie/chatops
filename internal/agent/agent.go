@@ -13,6 +13,9 @@ import (
 	"github.com/hangxie/chatops/internal/mcp"
 )
 
+// maxRepeatedFailures is how often one exact call may fail in a row before the turn stops instead of running it again.
+const maxRepeatedFailures = 2
+
 // Model completes one model request.
 type Model interface {
 	Complete(ctx context.Context, req llm.Request) (llm.Response, error)
@@ -80,6 +83,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 	userMessage := llm.Message{Role: llm.RoleUser, Content: input}
 	messages = append(messages, userMessage)
 	steps := &turn.Stats.Steps
+	failures := map[llm.ToolCall]int{}
 
 	for iteration := 1; ; iteration++ {
 		start := time.Now()
@@ -107,6 +111,13 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 			a.logger.Warn("agent iteration limit reached", "iterations", iteration)
 			return turn, nil
 		}
+		if repeatsFailure(failures, resp.Message.ToolCalls) {
+			(*steps)[len(*steps)-1].Outcome = OutcomeStopped
+			turn.Reply = "I stopped because the same tool call kept failing. Try rephrasing the request."
+			turn.Messages = []llm.Message{userMessage}
+			a.logger.Warn("agent stopped on a repeated failing tool call", "iterations", iteration)
+			return turn, nil
+		}
 
 		messages = append(messages, resp.Message)
 		for _, call := range resp.Message.ToolCalls {
@@ -114,6 +125,12 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 			*steps = append(*steps, step)
 			if ctx.Err() != nil {
 				return turn, context.Cause(ctx)
+			}
+			switch step.Outcome {
+			case OutcomeError:
+				failures[failureKey(call)]++
+			case OutcomeOK:
+				delete(failures, failureKey(call))
 			}
 			messages = append(messages, llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: content})
 		}
@@ -129,11 +146,27 @@ func (a *Agent) logStats(stats Stats) {
 	a.logger.Info("turn completed", attrs...)
 }
 
+// repeatsFailure reports whether any call already failed maxRepeatedFailures times, which a model that
+// ignores the error would otherwise retry until max_iterations.
+func repeatsFailure(failures map[llm.ToolCall]int, calls []llm.ToolCall) bool {
+	for _, call := range calls {
+		if failures[failureKey(call)] >= maxRepeatedFailures {
+			return true
+		}
+	}
+	return false
+}
+
+// failureKey ignores the call ID, which differs on every retry.
+func failureKey(call llm.ToolCall) llm.ToolCall {
+	return llm.ToolCall{Name: call.Name, Arguments: call.Arguments}
+}
+
 func toolSpecs(catalog *mcp.Catalog) []llm.ToolSpec {
 	tools := catalog.Tools()
 	specs := make([]llm.ToolSpec, 0, len(tools))
 	for _, tool := range tools {
-		specs = append(specs, llm.ToolSpec{Name: tool.Name, Description: tool.Description, Parameters: tool.InputSchema})
+		specs = append(specs, llm.ToolSpec{Name: tool.Name, Description: tool.Description, Parameters: modelSchema(tool.InputSchema)})
 	}
 	return specs
 }

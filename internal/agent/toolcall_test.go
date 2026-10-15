@@ -60,3 +60,30 @@ func Test_runTool_logs_arguments_at_debug(t *testing.T) {
 		})
 	}
 }
+
+func Test_runTool_warns_on_rejection(t *testing.T) {
+	tests := map[string]struct {
+		call llm.ToolCall
+		want string
+	}{
+		"unknown-tool":      {call: llm.ToolCall{Name: "builtin__rm", Arguments: `{}`}, want: `"msg":"tool call rejected","tool":"builtin__rm","reason":"unknown tool"`},
+		"invalid-arguments": {call: llm.ToolCall{Name: "builtin__get", Arguments: `{"name":"secret"`}, want: `"msg":"tool call rejected","tool":"builtin__get","reason":"invalid arguments"`},
+		"valid":             {call: llm.ToolCall{Name: "builtin__get", Arguments: `{"name":"a"}`}},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+			tools := newFakeTools(t, pong)
+			New(&fakeModel{}, tools, testLimits(), logger).runTool(context.Background(), tools.Catalog(), tc.call)
+			if tc.want == "" {
+				require.NotContains(t, logs.String(), "tool call rejected")
+				return
+			}
+			require.Contains(t, logs.String(), tc.want)
+			// Arguments may echo user text, so warn level never repeats them.
+			require.NotContains(t, logs.String(), "secret")
+		})
+	}
+}
