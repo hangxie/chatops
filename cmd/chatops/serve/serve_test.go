@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -120,6 +122,134 @@ func Test_Cmd_Run_end_to_end(t *testing.T) {
 	require.Contains(t, logs.String(), `"msg":"chatops serving"`)
 	require.Contains(t, logs.String(), `"tools":1`)
 	require.Contains(t, logs.String(), `"level":"WARN","msg":"authorization is not enabled: every user who can message the bot can call every tool"`)
+}
+
+// scrapeBackend asks one question, then scrapes /metrics until the delivered reply is counted.
+type scrapeBackend struct {
+	addr chan string
+	body string
+}
+
+func (b *scrapeBackend) Run(ctx context.Context, submit func(conversation.Message) error) error {
+	replied := make(chan struct{})
+	err := submit(conversation.Message{Conversation: "C1", User: "U1", Text: "ping", Reply: func(context.Context, string) error {
+		close(replied)
+		return nil
+	}})
+	if err != nil {
+		return err
+	}
+	<-replied
+	url := "http://" + <-b.addr + "/metrics"
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		resp, err := http.Get(url)
+		if err != nil {
+			return err
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return err
+		}
+		if b.body = string(body); strings.Contains(b.body, "chatops_response_duration_seconds_count") {
+			return nil
+		}
+	}
+	return errors.New("delivered reply never counted")
+}
+
+func Test_Cmd_Run_metrics(t *testing.T) {
+	path := writeConfig(t, scriptedLLM(t).URL)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = f.WriteString("metrics:\n  listen: 127.0.0.1:0\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	b := &scrapeBackend{addr: make(chan string, 1)}
+	var logs bytes.Buffer
+	cmd := Cmd{
+		Config: path, Chat: []string{"slack"}, LogLevel: "info", LogFormat: "json", errOut: &logs, selectBackends: injected(b),
+		listen: func(network, address string) (net.Listener, error) {
+			ln, err := net.Listen(network, address)
+			if err == nil {
+				b.addr <- ln.Addr().String()
+			}
+			return ln, err
+		},
+	}
+
+	require.NoError(t, cmd.Run(context.Background()))
+	for _, line := range []string{
+		`chatops_questions_received_total{backend="fake"} 1`,
+		`chatops_response_duration_seconds_count{backend="fake",outcome="answered"} 1`,
+		`chatops_tool_call_duration_seconds_count{outcome="ok",server="builtin",tool="ping"} 1`,
+		`chatops_mcp_server_up{server="builtin"} 1`,
+		`chatops_mcp_tools{server="builtin"} 1`,
+		`chatops_build_info{version="(devel)"} 1`,
+	} {
+		require.Contains(t, strings.Split(b.body, "\n"), line)
+	}
+	require.Contains(t, logs.String(), `"msg":"metrics serving","address":"127.0.0.1:`)
+}
+
+// closingBackend answers one question, kills the metrics listener, then runs until cancelled.
+type closingBackend struct {
+	listener chan net.Listener
+}
+
+func (b *closingBackend) Run(ctx context.Context, submit func(conversation.Message) error) error {
+	replied := make(chan struct{})
+	err := submit(conversation.Message{Conversation: "C1", User: "U1", Text: "ping", Reply: func(context.Context, string) error {
+		close(replied)
+		return nil
+	}})
+	if err != nil {
+		return err
+	}
+	<-replied
+	if err := (<-b.listener).Close(); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-time.After(10 * time.Second):
+		return errors.New("serve kept running after the metrics server failed")
+	}
+}
+
+func Test_Cmd_Run_metrics_server_failure(t *testing.T) {
+	path := writeConfig(t, scriptedLLM(t).URL)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, append(data, []byte("metrics:\n  listen: 127.0.0.1:0\n")...), 0o600))
+
+	b := &closingBackend{listener: make(chan net.Listener, 1)}
+	cmd := Cmd{
+		Config: path, Chat: []string{"slack"}, LogLevel: "info", LogFormat: "text", errOut: io.Discard, selectBackends: injected(b),
+		listen: func(network, address string) (net.Listener, error) {
+			ln, err := net.Listen(network, address)
+			if err == nil {
+				b.listener <- ln
+			}
+			return ln, err
+		},
+	}
+	require.ErrorContains(t, cmd.Run(context.Background()), "metrics server stopped: ")
+}
+
+func Test_Cmd_Run_metrics_listen_error(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = busy.Close() })
+	path := writeConfig(t, scriptedLLM(t).URL)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, append(data, []byte("metrics:\n  listen: "+busy.Addr().String()+"\n")...), 0o600))
+
+	cmd := Cmd{Config: path, Chat: []string{"slack"}, LogLevel: "info", LogFormat: "text", errOut: io.Discard, selectBackends: injected(&fakeBackend{reply: make(chan string, 1)})}
+	require.ErrorContains(t, cmd.Run(context.Background()), "metrics: listen tcp "+busy.Addr().String())
 }
 
 func Test_Cmd_Run_backend_error(t *testing.T) {

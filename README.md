@@ -70,6 +70,7 @@ The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.y
 | `agent.history_ttl` | `24h` | When `history_turns` is positive, a conversation idle this long (since its last answered message, failed or not) starts over with no history |
 | `agent.max_concurrent_turns` | `4` | Agent turns (model and tool calls) running at once across all conversations; posting a reply does not count; turns within one conversation always run one at a time, each after the previous reply is posted |
 | `agent.max_pending_messages` | `64` | Accepted but unfinished messages across all conversations; more are refused as busy |
+| `metrics.listen` | (none) | `host:port` serving Prometheus metrics at `/metrics`, such as `127.0.0.1:9464`; unset disables the endpoint. See [Metrics](#metrics) |
 | `agent.show_stats` | `false` | Append each turn's statistics to the end of its reply, failed turns included: every model and tool step with its duration, tokens, and tool result size (raw→sent to the model when truncated), then the totals and approximate reply size. See [`docs/observability.md`](docs/observability.md) |
 
 Each model-facing tool is named `<server>__<tool>`, for example `kubernetes__pod_list`; the sample config runs each built-in group as its own server named after the group. A stdio server inherits only `PATH` and `HOME` from `chatops`, plus its configured `env` and `secret_env`, so chat and model credentials never reach tool processes unless a `secret_env` entry names them. All servers must be reachable at startup.
@@ -170,6 +171,24 @@ How it answers:
 - Replies are posted as plain text with Slack link previews turned off, so model output cannot mention `@channel` or users, or make Slack fetch a URL.
 - Every message is answered with every configured tool available; per-user permissions come in a later release, and `serve` logs a warning at startup until then. Until that release, configure only read-only tools, and only invite the app where all members may use all of its tools.
 - Stopping the daemon (SIGINT or SIGTERM) stops accepting new messages and gives in-flight turns and their replies a short grace period to finish before exiting; anything still running past it is cancelled, and conversation history is lost.
+
+### Metrics
+
+With `metrics.listen` set, `serve` exposes Prometheus metrics at `http://<listen>/metrics`: questions received, rejected, and answered per chat backend; response time from receipt to delivered reply; model call latency and tokens; tool call latency, result size, and truncation per MCP server and tool; MCP server health; and Go runtime and process metrics. The endpoint has no authentication, so bind it to loopback or a network only your Prometheus can reach. If the endpoint cannot listen at startup, or stops unexpectedly later, `serve` exits with an error so the service manager restarts it rather than running without metrics. The full list is in [`docs/observability.md`](docs/observability.md). A scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: chatops
+    static_configs:
+      - targets: ["chatops.example.internal:9464"]
+```
+
+Average response time for answered questions over five minutes:
+
+```promql
+rate(chatops_response_duration_seconds_sum{outcome="answered"}[5m])
+  / rate(chatops_response_duration_seconds_count{outcome="answered"}[5m])
+```
 
 ### Run as a service
 

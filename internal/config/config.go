@@ -20,10 +20,17 @@ const (
 
 // Config is the daemon configuration; secrets live in the environment variables named by *Env fields.
 type Config struct {
-	Chat  Chat  `yaml:"chat"`
-	LLM   LLM   `yaml:"llm"`
-	MCP   MCP   `yaml:"mcp"`
-	Agent Agent `yaml:"agent"`
+	Chat    Chat    `yaml:"chat"`
+	LLM     LLM     `yaml:"llm"`
+	MCP     MCP     `yaml:"mcp"`
+	Agent   Agent   `yaml:"agent"`
+	Metrics Metrics `yaml:"metrics"`
+}
+
+// Metrics configures the Prometheus endpoint.
+type Metrics struct {
+	// Listen is the host:port serving /metrics; empty disables the endpoint.
+	Listen string `yaml:"listen"`
 }
 
 // Chat backend types.

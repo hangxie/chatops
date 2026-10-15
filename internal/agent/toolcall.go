@@ -53,7 +53,7 @@ func (a *Agent) callTool(ctx context.Context, catalog *mcp.Catalog, call llm.Too
 	}
 	log.Info("tool call completed", "is_error", result.IsError, "bytes", len(result.Text))
 
-	step.ResultBytes = len(result.Text)
+	step.ResultBytes, step.Truncated = len(result.Text), len(result.Text) > a.limits.MaxToolResultBytes
 	text := truncate(result.Text, a.limits.MaxToolResultBytes)
 	if result.IsError {
 		return "error: " + text

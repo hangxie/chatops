@@ -1,6 +1,6 @@
 # observability
 
-Status: accepted design; step stats and the reply footer implemented, Prometheus planned ([`DESIGN.md`](DESIGN.md) §11, Phase 5).
+Status: implemented ([`DESIGN.md`](DESIGN.md) §11, Phase 5).
 
 Two consumers need to know where a turn spent its time and bytes: the person who asked, looking at one reply, and an operator, looking at trends across many turns. Both are fed from one source: the agent records every step of a turn, and the conversation manager records every question from receipt to delivered reply. A per-reply stats footer renders one turn; Prometheus aggregates all of them. Neither changes how a turn runs.
 
@@ -32,7 +32,7 @@ Tools appear as `<server>.<tool>`, using the configured server name, which is un
 
 ## Prometheus
 
-`metrics.listen` in the config (unset by default) serves `/metrics` on its own HTTP listener. Collectors live in a dedicated registry wired explicitly in `serve`, never the global default registry, which also exports Go runtime and process metrics. The endpoint is unauthenticated, like most exporters; bind it to loopback or a scrape-only network.
+`metrics.listen` in the config (unset by default) serves `/metrics` on its own HTTP listener. Collectors live in a dedicated registry wired explicitly in `serve`, never the global default registry, which also exports Go runtime and process metrics. The endpoint is unauthenticated, like most exporters; bind it to loopback or a scrape-only network. Once configured, metrics are part of the daemon's health: an unexpected server exit stops `serve` with an error, as a failed listen does at startup, so a supervisor restarts the whole process instead of it answering chat with no metrics.
 
 Labels stay low-cardinality: `backend` is the configured chat backend name, `server` and `tool` come from administrator-configured MCP servers. User, channel, conversation, and message text never become labels.
 
@@ -63,6 +63,8 @@ Step metrics are recorded from the agent's steps:
 | `chatops_build_info` | gauge (always 1) | `version` |
 
 There is no separate answered or failed counter: the `_count` series of `chatops_response_duration_seconds` by `outcome` already counts them, and its `_sum`/`_count` gives the average response time. "Answered" means a final answer was produced and delivered, not that it was correct; a scope-gate decline counts as answered because its text is indistinguishable from help without a structured signal from the model.
+
+`chatops_response_duration_seconds` observes delivered replies only; an undelivered one counts in `chatops_reply_failures_total` instead, while its turn's step metrics are still recorded. `chatops_queue_wait_seconds` runs from receipt to taking a turn slot, so it includes waiting behind earlier messages of the same conversation. A tool the model named but no server serves is labeled `(unknown)` for both `server` and `tool`, so model output never becomes a label. With no reconnect yet, `chatops_mcp_server_up` stays 0 once a session ends; the daemon logs a warning when that happens.
 
 ## Logs
 

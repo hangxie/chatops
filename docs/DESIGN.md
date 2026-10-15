@@ -160,7 +160,7 @@ There is no top-level `main.go`; `main` packages live under `cmd/<binary>/`, and
 - **Phase 2.5 — service status:** done. The `status` group.
 - **Phase 3 — Kubernetes:** node slice done (`node_list`, `node_status`, `node_resources`, read-only); deployment slice done (`deployment_list`, `deployment_pods`, `deployment_describe`). See [`mcp-k8s.md`](mcp-k8s.md).
 - **Phase 4 — policy and approval:** not started. Roles, rules, execution-time checks, suspended turns, Slack approval buttons; a startup warning is logged until policy exists, so until then deploy only read-only tools or fully trusted channels.
-- **Phase 5 — hardening:** not started. Reconnect handling, structured audit events, metrics (see [`observability.md`](observability.md)), integration tests.
+- **Phase 5 — hardening:** metrics done (per-reply stats and Prometheus, see [`observability.md`](observability.md)); reconnect handling, structured audit events, and integration tests remain.
 
 ## 12. Testing strategy
 
