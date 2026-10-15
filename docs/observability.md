@@ -25,10 +25,10 @@ A failed turn keeps the steps that completed and records the step that was runni
 
 With `agent.show_stats: true` (default `false`), the conversation manager appends the steps and totals to the end of every reply, failures included:
 
-    plan 2.3s (1.2k→45 tok) → builtin.pod_list 5.7s (123KB→16KB) → answer 6.3s (8.1k→310 tok)
+    plan 2.3s (1.2k→45 tok) → kubernetes.pod_list 5.7s (123KB→16KB) → answer 6.3s (8.1k→310 tok)
     total 14.3s · 1 tool · 9.3k→355 tok · reply 2.1KB
 
-Tools appear as `<server>.<tool>`, using the configured server name, which is unique across servers; the model-facing `<server>__<tool>` would render as bold in chat markdown. A call to an unknown tool shows the name the model asked for. The reply size is measured before sending and is approximate: platform rendering (Slack mrkdwn) changes it slightly, and the post itself cannot report its own latency. Measuring exactly would need a follow-up message or an edit, which is not worth the extra chat traffic.
+Tools appear as `<server>.<tool>`, using the configured server name, which is unique across servers (the sample config names each built-in group's server after the group); the model-facing `<server>__<tool>` would render as bold in chat markdown. A call to an unknown tool shows the name the model asked for. The reply size is measured before sending and is approximate: platform rendering (Slack mrkdwn) changes it slightly, and the post itself cannot report its own latency. Measuring exactly would need a follow-up message or an edit, which is not worth the extra chat traffic.
 
 ## Prometheus
 

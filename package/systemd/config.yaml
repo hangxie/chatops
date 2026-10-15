@@ -43,18 +43,23 @@ llm:
     # stop: ["</s>"]
 
 mcp:
+  # The server name prefixes its tools (kubernetes__pod_list for the model,
+  # kubernetes.pod_list in reply stats), so each built-in group runs as its own
+  # server named after the group. To watch two clusters, run the kubernetes group
+  # twice under different names (k8s-prod, k8s-staging), each with its own config.
   servers:
-    builtin:
+    ping:
       transport: stdio
       command: /usr/bin/chatops-mcp
-      args:
-        - serve
-        - --tools
-        - "ping,status,kubernetes"
-        - --status-config
-        - /etc/chatops/mcp-status.yaml
-        - --kubernetes-config
-        - /etc/chatops/mcp-kubernetes.yaml
+      args: [serve, --tools, ping]
+    status:
+      transport: stdio
+      command: /usr/bin/chatops-mcp
+      args: [serve, --tools, status, --status-config, /etc/chatops/mcp-status.yaml]
+    kubernetes:
+      transport: stdio
+      command: /usr/bin/chatops-mcp
+      args: [serve, --tools, kubernetes, --kubernetes-config, /etc/chatops/mcp-kubernetes.yaml]
       # Extra variables for the server process; values live in this file, so
       # never put secrets here. Only PATH and HOME are inherited otherwise.
       # env:
