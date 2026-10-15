@@ -30,6 +30,12 @@ func Test_Config_Validate(t *testing.T) {
 			c.Chat = Chat{"slack": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}}
 		}},
 		"stdio":             {mutate: func(c *Config) { c.Chat = Chat{"console": {Type: ChatStdio}} }},
+		"metrics":           {mutate: func(c *Config) { c.Metrics.Listen = "127.0.0.1:9464" }},
+		"metrics-any-host":  {mutate: func(c *Config) { c.Metrics.Listen = ":9464" }},
+		"metrics-ipv6":      {mutate: func(c *Config) { c.Metrics.Listen = "[::1]:9464" }},
+		"metrics-no-port":   {mutate: func(c *Config) { c.Metrics.Listen = "localhost" }, errs: []string{`metrics.listen: must be host:port, got "localhost"`}},
+		"metrics-bad-port":  {mutate: func(c *Config) { c.Metrics.Listen = "localhost:http" }, errs: []string{`metrics.listen: port must be a number from 0 to 65535, got "http"`}},
+		"metrics-big-port":  {mutate: func(c *Config) { c.Metrics.Listen = "localhost:70000" }, errs: []string{`metrics.listen: port must be a number from 0 to 65535, got "70000"`}},
 		"slack-missing-env": {mutate: func(c *Config) { c.Chat = Chat{"slack": {Type: ChatSlack}} }, errs: []string{"chat.slack.bot_token_env: required", "chat.slack.app_token_env: required"}},
 		"slack-bad-env": {mutate: func(c *Config) { c.Chat = Chat{"slack": {Type: ChatSlack, BotTokenEnv: "1BOT", AppTokenEnv: "A-B"}} }, errs: []string{
 			`chat.slack.bot_token_env: invalid environment variable name "1BOT"`,

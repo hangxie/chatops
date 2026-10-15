@@ -475,7 +475,7 @@ func Test_Agent_Run_stats(t *testing.T) {
 	require.Equal(t, OutcomeAnswered, turn.Stats.Outcome)
 	require.Equal(t, []Step{
 		{Phase: PhasePlan, Outcome: OutcomeOK, Usage: usage(100, 10)},
-		{Phase: PhaseTool, Name: "builtin__ping", Server: "builtin", Tool: "ping", Outcome: OutcomeOK, ResultBytes: 2000, SentBytes: len(truncate(big, 1024))},
+		{Phase: PhaseTool, Name: "builtin__ping", Server: "builtin", Tool: "ping", Outcome: OutcomeOK, ResultBytes: 2000, SentBytes: len(truncate(big, 1024)), Truncated: true},
 		{Phase: PhaseAnswer, Outcome: OutcomeOK, Usage: usage(300, 40)},
 	}, withoutDurations(turn.Stats.Steps))
 	require.Positive(t, turn.Stats.Duration)

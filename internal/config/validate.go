@@ -37,6 +37,7 @@ func (c Config) Validate() error {
 		validateServer(id, c.MCP.Servers[id], add)
 	}
 	validateAgent(c.Agent, add)
+	validateMetrics(c.Metrics, add)
 	return errors.Join(errs...)
 }
 
@@ -226,6 +227,20 @@ func validateAgent(agent Agent, add addFunc) {
 	}
 	if agent.TurnTimeout > 0 && agent.ToolTimeout > agent.TurnTimeout {
 		add("agent.tool_timeout", "must not exceed agent.turn_timeout")
+	}
+}
+
+func validateMetrics(metrics Metrics, add addFunc) {
+	if metrics.Listen == "" {
+		return
+	}
+	_, port, err := net.SplitHostPort(metrics.Listen)
+	if err != nil {
+		add("metrics.listen", "must be host:port, got %q", metrics.Listen)
+		return
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
+		add("metrics.listen", "port must be a number from 0 to 65535, got %q", port)
 	}
 }
 

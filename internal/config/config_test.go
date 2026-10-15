@@ -47,6 +47,8 @@ agent:
   max_concurrent_turns: 2
   max_pending_messages: 16
   show_stats: true
+metrics:
+  listen: 127.0.0.1:9464
 `
 
 func Test_Parse_full(t *testing.T) {
@@ -86,6 +88,7 @@ func Test_Parse_full(t *testing.T) {
 			MaxPendingMessages: 16,
 			ShowStats:          true,
 		},
+		Metrics: Metrics{Listen: "127.0.0.1:9464"},
 	}, cfg)
 }
 
@@ -217,6 +220,18 @@ func Test_Load_packaged_sample_agent_defaults(t *testing.T) {
 	want := defaultAgent()
 	want.SystemPrompt = cfg.Agent.SystemPrompt
 	require.Equal(t, want, cfg.Agent)
+}
+
+func Test_Load_packaged_sample_metrics(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "package", "systemd", "config.yaml"))
+	require.NoError(t, err)
+	// The commented-out metrics block must be valid once uncommented.
+	uncommented := regexp.MustCompile(`(?m)^# (metrics:|  listen:)`).ReplaceAll(data, []byte("$1"))
+	require.NotEqual(t, data, uncommented)
+
+	cfg, err := Parse(uncommented)
+	require.NoError(t, err)
+	require.Equal(t, Metrics{Listen: "127.0.0.1:9464"}, cfg.Metrics)
 }
 
 func Test_Parse_slack_reply_in_channel(t *testing.T) {

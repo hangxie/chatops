@@ -47,6 +47,8 @@ type Step struct {
 	// ResultBytes is what the tool returned; SentBytes is what the model saw after truncation.
 	ResultBytes int
 	SentBytes   int
+	// Truncated is set when the result exceeded max_tool_result_bytes.
+	Truncated bool
 }
 
 // Stats records where a turn spent its time, tokens, and bytes.
