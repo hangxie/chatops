@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/hangxie/chatops/internal/config"
 	"github.com/hangxie/chatops/internal/llm"
@@ -38,6 +39,8 @@ type Turn struct {
 	// Messages are this turn's cross-turn history: the user message only. Assistant answers,
 	// tool calls, and tool results are never replayed, so an earlier reply cannot bias later turns.
 	Messages []llm.Message
+	// Stats is filled in on failure too, with the steps that ran.
+	Stats Stats
 }
 
 // New builds an agent. A nil logger uses slog.Default. limits.SystemPrompt must be non-empty; config validation enforces that.
@@ -49,7 +52,20 @@ func New(model Model, tools Tools, limits config.Agent, logger *slog.Logger) *Ag
 }
 
 // Run answers input; model failures and an ended turn are errors, tool failures go back to the model.
+// A failed turn returns only its Stats alongside the error.
 func (a *Agent) Run(ctx context.Context, history []llm.Message, input string) (Turn, error) {
+	start := time.Now()
+	turn, err := a.run(ctx, history, input)
+	turn.Stats.Duration = time.Since(start)
+	turn.Stats.Outcome = turnOutcome(turn.Stats.Steps, err)
+	a.logStats(turn.Stats)
+	if err != nil {
+		return Turn{Stats: turn.Stats}, err
+	}
+	return turn, nil
+}
+
+func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (turn Turn, err error) {
 	timeout := a.limits.TurnTimeout
 	ctx, cancel := context.WithTimeoutCause(ctx, timeout, fmt.Errorf("turn exceeded %s: %w", timeout, context.DeadlineExceeded))
 	defer cancel()
@@ -63,34 +79,54 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, input string) (T
 	messages = append(messages, history...)
 	userMessage := llm.Message{Role: llm.RoleUser, Content: input}
 	messages = append(messages, userMessage)
+	steps := &turn.Stats.Steps
 
 	for iteration := 1; ; iteration++ {
+		start := time.Now()
 		resp, err := a.model.Complete(ctx, llm.Request{Messages: messages, Tools: specs})
+		step := modelStep(resp, err, time.Since(start))
 		// Dependencies may ignore ctx, so a late success must not count as an answer.
 		if ctx.Err() != nil {
-			return Turn{}, context.Cause(ctx)
+			step.Outcome = errorOutcome(context.Cause(ctx))
+		}
+		*steps = append(*steps, step)
+		if ctx.Err() != nil {
+			return turn, context.Cause(ctx)
 		}
 		if err != nil {
-			return Turn{}, fmt.Errorf("model: %w", err)
+			return turn, fmt.Errorf("model: %w", err)
 		}
 		if len(resp.Message.ToolCalls) == 0 {
-			return Turn{Reply: resp.Message.Content, Messages: []llm.Message{userMessage}}, nil
+			turn.Reply, turn.Messages = resp.Message.Content, []llm.Message{userMessage}
+			return turn, nil
 		}
 		if iteration >= a.limits.MaxIterations {
-			reply := fmt.Sprintf("I stopped after %d steps without reaching an answer. Try a narrower request.", iteration)
+			(*steps)[len(*steps)-1].Outcome = OutcomeStopped
+			turn.Reply = fmt.Sprintf("I stopped after %d steps without reaching an answer. Try a narrower request.", iteration)
+			turn.Messages = []llm.Message{userMessage}
 			a.logger.Warn("agent iteration limit reached", "iterations", iteration)
-			return Turn{Reply: reply, Messages: []llm.Message{userMessage}}, nil
+			return turn, nil
 		}
 
 		messages = append(messages, resp.Message)
 		for _, call := range resp.Message.ToolCalls {
-			content := a.runTool(ctx, catalog, call)
+			content, step := a.runTool(ctx, catalog, call)
+			*steps = append(*steps, step)
 			if ctx.Err() != nil {
-				return Turn{}, context.Cause(ctx)
+				return turn, context.Cause(ctx)
 			}
 			messages = append(messages, llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: content})
 		}
 	}
+}
+
+func (a *Agent) logStats(stats Stats) {
+	attrs := []any{"outcome", stats.Outcome, "duration", stats.Duration, "steps", len(stats.Steps), "tools", stats.ToolCalls()}
+	// Unreported usage is left out rather than logged as zero.
+	if prompt, completion, reported := stats.Tokens(); reported {
+		attrs = append(attrs, "prompt_tokens", prompt, "completion_tokens", completion)
+	}
+	a.logger.Info("turn completed", attrs...)
 }
 
 func toolSpecs(catalog *mcp.Catalog) []llm.ToolSpec {

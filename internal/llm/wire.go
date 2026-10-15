@@ -70,6 +70,17 @@ type wireResponse struct {
 		// FinishReason is optional because some local servers omit it.
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
+}
+
+func (r wireResponse) usage() *Usage {
+	if r.Usage == nil {
+		return nil
+	}
+	return &Usage{PromptTokens: r.Usage.PromptTokens, CompletionTokens: r.Usage.CompletionTokens}
 }
 
 // thinkBlock matches a leading reasoning block some servers leave even with thinking disabled.

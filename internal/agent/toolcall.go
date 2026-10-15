@@ -14,14 +14,23 @@ import (
 // maxLoggedArgumentBytes caps the arguments a debug log line repeats.
 const maxLoggedArgumentBytes = 1024
 
-// runTool runs one call and returns text for the model; failures become "error: ..." text.
-func (a *Agent) runTool(ctx context.Context, catalog *mcp.Catalog, call llm.ToolCall) string {
+// runTool runs one call and returns text for the model, failures as "error: ...", plus its step.
+func (a *Agent) runTool(ctx context.Context, catalog *mcp.Catalog, call llm.ToolCall) (string, Step) {
 	// Arguments are model output that may echo user text, so they are logged only at debug level.
 	a.logger.Debug("tool call requested", "tool", call.Name, "arguments", truncate(call.Arguments, maxLoggedArgumentBytes))
+	step := Step{Phase: PhaseTool, Name: call.Name, Outcome: OutcomeError}
+	start := time.Now()
+	content := a.callTool(ctx, catalog, call, &step)
+	step.Duration, step.SentBytes = time.Since(start), len(content)
+	return content, step
+}
+
+func (a *Agent) callTool(ctx context.Context, catalog *mcp.Catalog, call llm.ToolCall, step *Step) string {
 	tool, ok := catalog.Lookup(call.Name)
 	if !ok {
 		return fmt.Sprintf("error: unknown tool %q", call.Name)
 	}
+	step.Server, step.Tool = tool.Server, tool.MCPName
 	args := json.RawMessage(call.Arguments)
 	if err := tool.Validate(args); err != nil {
 		return "error: invalid arguments: " + err.Error()
@@ -32,7 +41,9 @@ func (a *Agent) runTool(ctx context.Context, catalog *mcp.Catalog, call llm.Tool
 	start := time.Now()
 	result, err := a.tools.Call(callCtx, tool, args)
 	log := a.logger.With("server", tool.Server, "tool", tool.MCPName, "duration", time.Since(start))
-	if err != nil && callCtx.Err() != nil && ctx.Err() == nil {
+	// Servers may ignore ctx, so a result after the deadline is discarded even on success.
+	if callCtx.Err() != nil {
+		step.Outcome = errorOutcome(callCtx.Err())
 		log.Warn("tool call timed out", "error", err)
 		return fmt.Sprintf("error: tool call timed out after %s", a.limits.ToolTimeout)
 	}
@@ -42,10 +53,12 @@ func (a *Agent) runTool(ctx context.Context, catalog *mcp.Catalog, call llm.Tool
 	}
 	log.Info("tool call completed", "is_error", result.IsError, "bytes", len(result.Text))
 
+	step.ResultBytes = len(result.Text)
 	text := truncate(result.Text, a.limits.MaxToolResultBytes)
 	if result.IsError {
 		return "error: " + text
 	}
+	step.Outcome = OutcomeOK
 	return text
 }
 
