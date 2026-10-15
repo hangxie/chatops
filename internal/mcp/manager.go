@@ -26,6 +26,7 @@ type Manager struct {
 	refreshCtx context.Context
 	cancel     context.CancelFunc
 	refreshes  sync.WaitGroup
+	watchers   sync.WaitGroup
 	// refreshMu serializes refreshes so a stale listing never overwrites a newer one.
 	refreshMu sync.Mutex
 
@@ -33,6 +34,7 @@ type Manager struct {
 	closed   bool
 	sessions map[string]*mcpsdk.ClientSession
 	listed   map[string][]*mcpsdk.Tool
+	down     map[string]bool
 }
 
 // Open connects to every configured server and fails if any is unreachable.
@@ -56,6 +58,7 @@ func connect(ctx context.Context, transports map[string]mcpsdk.Transport, logger
 		logger:   logger,
 		sessions: map[string]*mcpsdk.ClientSession{},
 		listed:   map[string][]*mcpsdk.Tool{},
+		down:     map[string]bool{},
 	}
 	m.refreshCtx, m.cancel = context.WithCancel(context.Background())
 
@@ -71,6 +74,7 @@ func connect(ctx context.Context, transports map[string]mcpsdk.Transport, logger
 			_ = m.Close()
 			return nil, fmt.Errorf("mcp server %q: connect: %w", id, err)
 		}
+		m.watch(id, session)
 		tools, err := listTools(ctx, session)
 		m.mu.Lock()
 		m.sessions[id] = session
@@ -135,6 +139,7 @@ func (m *Manager) Close() error {
 		}
 	}
 	m.refreshes.Wait()
+	m.watchers.Wait()
 	return errors.Join(errs...)
 }
 
