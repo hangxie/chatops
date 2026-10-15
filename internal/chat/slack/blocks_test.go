@@ -8,6 +8,8 @@ import (
 
 	slackapi "github.com/slack-go/slack"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hangxie/chatops/internal/conversation"
 )
 
 const blocksTable = "| NAME | READY |\n|---|---|\n| **api** | 1/1 |"
@@ -35,6 +37,27 @@ func Test_toBlocks(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			got, err := json.Marshal(toBlocks(conversation.Reply{Text: tc.in}))
+			require.NoError(t, err)
+			require.JSONEq(t, tc.want, string(got))
+		})
+	}
+}
+
+func Test_toBlocks_footer(t *testing.T) {
+	const footerJSON = `{"type":"divider"},{"type":"context","elements":[{"type":"mrkdwn","text":"answer 1.0s\ntotal 1.0s · 0 tools &lt;x&gt;"}]}`
+	const footer = "answer 1.0s\ntotal 1.0s · 0 tools <x>"
+	tests := map[string]struct {
+		in   conversation.Reply
+		want string
+	}{
+		"plain text":   {in: conversation.Reply{Text: "**ok**", Footer: footer}, want: `[{"type":"section","text":{"type":"mrkdwn","text":"*ok*"}},` + footerJSON + "]"},
+		"with table":   {in: conversation.Reply{Text: blocksTable, Footer: footer}, want: `[{"type":"table","rows":[[{"type":"raw_text","text":"NAME"},{"type":"raw_text","text":"READY"}],[{"type":"raw_text","text":"api"},{"type":"raw_text","text":"1/1"}]]},` + footerJSON + "]"},
+		"empty text":   {in: conversation.Reply{Footer: footer}, want: "[" + footerJSON + "]"},
+		"empty footer": {in: conversation.Reply{Text: "ok"}, want: "null"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
 			got, err := json.Marshal(toBlocks(tc.in))
 			require.NoError(t, err)
 			require.JSONEq(t, tc.want, string(got))
@@ -42,9 +65,30 @@ func Test_toBlocks(t *testing.T) {
 	}
 }
 
+func Test_toBlocks_footer_survives_cap(t *testing.T) {
+	long := strings.Repeat(strings.Repeat("x", maxSectionChars)+"\n", maxBlocks+5)
+	blocks := toBlocks(conversation.Reply{Text: long, Footer: "answer 1.0s"})
+	require.Len(t, blocks, maxBlocks)
+	require.Equal(t, slackapi.MBTDivider, blocks[maxBlocks-2].BlockType())
+	require.Equal(t, slackapi.MBTContext, blocks[maxBlocks-1].BlockType())
+	notice, err := json.Marshal(blocks[maxBlocks-3])
+	require.NoError(t, err)
+	require.Contains(t, string(notice), "[reply truncated]")
+}
+
+func Test_footerBlock_caps_elements(t *testing.T) {
+	long := strings.Repeat(strings.Repeat("x", maxSectionChars)+"\n", maxContextElements+3)
+	elements := footerBlock(long).ContextElements.Elements
+	require.Len(t, elements, maxContextElements)
+	for _, e := range elements {
+		require.LessOrEqual(t, utf8.RuneCountInString(e.(*slackapi.TextBlockObject).Text), maxSectionChars)
+	}
+	require.Equal(t, "[footer truncated]", elements[maxContextElements-1].(*slackapi.TextBlockObject).Text)
+}
+
 func Test_toBlocks_caps_block_count(t *testing.T) {
 	long := strings.Repeat(strings.Repeat("x", maxSectionChars)+"\n", maxBlocks+5)
-	blocks := toBlocks(long + blocksTable)
+	blocks := toBlocks(conversation.Reply{Text: long + blocksTable})
 	require.Len(t, blocks, maxBlocks)
 	require.Equal(t, "table", string(blocks[maxBlocks-2].BlockType()), "the table survives the cap")
 	last, err := json.Marshal(blocks[maxBlocks-1])
@@ -54,7 +98,7 @@ func Test_toBlocks_caps_block_count(t *testing.T) {
 
 func Test_toBlocks_keeps_long_code_fenced(t *testing.T) {
 	code := "```\n" + strings.Repeat("log line\n", maxSectionChars/5) + "```"
-	blocks := toBlocks(blocksTable + "\n" + code)
+	blocks := toBlocks(conversation.Reply{Text: blocksTable + "\n" + code})
 	require.Greater(t, len(blocks), 2, "the code spans several sections")
 	for _, b := range blocks[1:] {
 		text := b.(*slackapi.SectionBlock).Text.Text

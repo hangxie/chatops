@@ -17,7 +17,7 @@ import (
 )
 
 func echoSubmit(msg conversation.Message) error {
-	return msg.Reply(context.Background(), "pong:"+msg.Text)
+	return msg.Reply(context.Background(), conversation.Reply{Text: "pong:" + msg.Text})
 }
 
 // socketDir returns a short-named temp dir; a long t.TempDir() path overflows the Unix sun_path limit.

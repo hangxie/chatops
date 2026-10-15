@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	slackapi "github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -197,7 +198,7 @@ func Test_Adapter_Run_submits_and_replies_in_thread(t *testing.T) {
 	require.Equal(t, "ping the server", msg.Text)
 	require.Equal(t, []string{"e1"}, h.socket.ackedIDs())
 
-	require.NoError(t, msg.Reply(context.Background(), "pong <!channel> & done"))
+	require.NoError(t, msg.Reply(context.Background(), conversation.Reply{Text: "pong <!channel> & done"}))
 	form := h.web.nextPost(t)
 	require.Equal(t, "C1", form.Get("channel"))
 	require.Equal(t, "1699999999.000001", form.Get("thread_ts"))
@@ -211,13 +212,25 @@ func Test_Adapter_Run_replies_with_table_block(t *testing.T) {
 	h.send(t, eventsAPI("e1", mention(nil)))
 	msg := h.nextSubmitted(t)
 
-	require.NoError(t, msg.Reply(context.Background(), "Pods <x>:\n| NAME | READY |\n|---|---|\n| api | 1/1 |"))
+	require.NoError(t, msg.Reply(context.Background(), conversation.Reply{Text: "Pods <x>:\n| NAME | READY |\n|---|---|\n| api | 1/1 |"}))
 	form := h.web.nextPost(t)
 	require.Equal(t, "Pods &lt;x&gt;:\n```\nNAME  READY\napi   1/1\n```", form.Get("text"), "text stays as the notification fallback")
 	require.JSONEq(t, `[{"type":"section","text":{"type":"mrkdwn","text":"Pods &lt;x&gt;:"}},`+
 		`{"type":"table","rows":[[{"type":"raw_text","text":"NAME"},{"type":"raw_text","text":"READY"}],`+
 		`[{"type":"raw_text","text":"api"},{"type":"raw_text","text":"1/1"}]]}]`, form.Get("blocks"))
 	require.Equal(t, "false", form.Get("unfurl_links"))
+}
+
+func Test_Adapter_Run_replies_with_footer_blocks(t *testing.T) {
+	h := run(t, nil)
+	h.send(t, eventsAPI("e1", mention(nil)))
+	msg := h.nextSubmitted(t)
+
+	require.NoError(t, msg.Reply(context.Background(), conversation.Reply{Text: "pong", Footer: "answer 1.0s"}))
+	form := h.web.nextPost(t)
+	require.Equal(t, "pong", form.Get("text"), "notifications show the answer without the footer")
+	require.JSONEq(t, `[{"type":"section","text":{"type":"mrkdwn","text":"pong"}},{"type":"divider"},`+
+		`{"type":"context","elements":[{"type":"mrkdwn","text":"answer 1.0s"}]}]`, form.Get("blocks"))
 }
 
 func Test_Adapter_Run_long_table_not_truncated(t *testing.T) {
@@ -228,7 +241,7 @@ func Test_Adapter_Run_long_table_not_truncated(t *testing.T) {
 	name := strings.Repeat("n", 80)
 	table := "| NAME | READY |\n|---|---|" + strings.Repeat("\n| "+name+" | 1/1 |", maxTableRows-1)
 	require.Greater(t, len(table), maxReplyRunes)
-	require.NoError(t, msg.Reply(context.Background(), table))
+	require.NoError(t, msg.Reply(context.Background(), conversation.Reply{Text: table}))
 	form := h.web.nextPost(t)
 	require.Equal(t, maxTableRows, strings.Count(form.Get("blocks"), `"text":"1/1"`)+1, "every row reaches the table block")
 	require.True(t, strings.HasSuffix(form.Get("text"), "[reply truncated]"), "the fallback text keeps its cap")
@@ -257,13 +270,13 @@ func Test_Adapter_Run_reply_block_errors(t *testing.T) {
 			h.send(t, eventsAPI("e1", mention(nil)))
 			msg := h.nextSubmitted(t)
 
-			err := msg.Reply(context.Background(), table)
+			err := msg.Reply(context.Background(), conversation.Reply{Text: table, Footer: "answer 1.0s"})
 			require.Equal(t, tc.wantErr, err != nil)
 			require.NotEmpty(t, h.web.nextPost(t).Get("blocks"))
 			if tc.wantPosts == 2 {
 				retry := h.web.nextPost(t)
 				require.Empty(t, retry.Get("blocks"))
-				require.Equal(t, "```\nA\n1\n```", retry.Get("text"))
+				require.Equal(t, "```\nA\n1\n```\n\nanswer 1.0s", retry.Get("text"), "the text fallback keeps the footer")
 			}
 			require.Empty(t, h.web.posts)
 		})
@@ -399,11 +412,36 @@ func Test_Adapter_Run_exit(t *testing.T) {
 }
 
 func Test_limitReply(t *testing.T) {
-	require.Equal(t, "short", limitReply("short"))
-	long := strings.Repeat("é", maxReplyRunes+1)
-	got := limitReply(long)
-	require.True(t, strings.HasSuffix(got, "\n[reply truncated]"))
-	require.Equal(t, maxReplyRunes, len([]rune(strings.TrimSuffix(got, "\n[reply truncated]"))))
+	require.Equal(t, "short", limitReply("short", maxReplyRunes))
+	exact := strings.Repeat("é", maxReplyRunes)
+	require.Equal(t, exact, limitReply(exact, maxReplyRunes))
+	got := limitReply(exact+"é", maxReplyRunes)
+	require.True(t, strings.HasSuffix(got, truncatedNote))
+	require.Equal(t, maxReplyRunes, utf8.RuneCountInString(got), "the note fits within the limit")
+}
+
+func Test_plainText(t *testing.T) {
+	long := strings.Repeat("x", maxReplyRunes+10)
+	tests := map[string]struct {
+		in     conversation.Reply
+		prefix string
+		suffix string
+		max    int
+	}{
+		"no footer":            {in: conversation.Reply{Text: "**ok**"}, prefix: "*ok*", suffix: "*ok*", max: maxReplyRunes},
+		"footer kept":          {in: conversation.Reply{Text: "ok", Footer: "a & b"}, prefix: "ok\n\n", suffix: "a & b", max: maxReplyRunes},
+		"long text cut":        {in: conversation.Reply{Text: long, Footer: "answer 1.0s"}, prefix: "xxx", suffix: "[reply truncated]\n\nanswer 1.0s", max: maxReplyRunes},
+		"long footer cut too":  {in: conversation.Reply{Text: "ok", Footer: long}, prefix: "ok\n\n", suffix: "[reply truncated]", max: maxFooterRunes + 4},
+		"long text and footer": {in: conversation.Reply{Text: long, Footer: long}, prefix: "xxx", suffix: "[reply truncated]", max: maxReplyRunes},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := plainText(tc.in)
+			require.True(t, strings.HasPrefix(got, tc.prefix), got)
+			require.True(t, strings.HasSuffix(got, tc.suffix), got)
+			require.LessOrEqual(t, utf8.RuneCountInString(got), tc.max)
+		})
+	}
 }
 
 func Test_New(t *testing.T) {
@@ -466,7 +504,7 @@ func Test_Adapter_Run_reply_destination(t *testing.T) {
 				if tc.reply == "table" || tc.reply == "fallback" {
 					text = "| A |\n|---|\n| 1 |"
 				}
-				require.NoError(t, msg.Reply(context.Background(), text))
+				require.NoError(t, msg.Reply(context.Background(), conversation.Reply{Text: text}))
 			}
 			posts := 1
 			if tc.reply == "fallback" {

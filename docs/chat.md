@@ -13,7 +13,7 @@ A backend satisfies one interface:
         Run(ctx context.Context, submit func(conversation.Message) error) error
     }
 
-`Run` delivers each inbound message by calling `submit`; every `conversation.Message` carries a `Reply` closure that posts text back to its own thread, connection, or stream, and that closure is the entire platform abstraction. Backends are wired explicitly through a `New(name, cfg, logger) (Backend, error)` factory that switches on the configured `type`; there is no `init()` or blank-import registration. `stdio` is an ordinary backend: selected, configured, validated, and namespaced like every other, and never a default or fallback.
+`Run` delivers each inbound message by calling `submit`; every `conversation.Message` carries a `Reply` closure that posts a `conversation.Reply` back to its own thread, connection, or stream, and that closure is the entire platform abstraction. A `Reply` holds the answer `Text` and an optional stats `Footer` (see [`observability.md`](observability.md)) kept apart so a backend can set the footer off in its platform's style; a backend without rich formatting sends `Plain()`, the footer after a blank line. Backends are wired explicitly through a `New(name, cfg, logger) (Backend, error)` factory that switches on the configured `type`; there is no `init()` or blank-import registration. `stdio` is an ordinary backend: selected, configured, validated, and namespaced like every other, and never a default or fallback.
 
 ## Selecting backends
 
@@ -63,7 +63,7 @@ An interactive terminal: reads lines from stdin, writes replies to stdout, and e
 
 ### `slack`
 
-Slack Socket Mode. One conversation per Slack thread; replies post into the thread as escaped mrkdwn without link previews. Common Markdown the model emits is converted to mrkdwn. A reply with a Markdown table is posted as Block Kit blocks with the first table as a native table block (Slack allows one per message, up to 100 rows, 20 columns, and 10,000 characters); other tables, tables over those limits, and tables with empty cells become aligned code blocks; a table ends at the first row whose column count differs from its header. A block reply is not cut at the plain-text length cap; it is limited to Slack's 50 blocks instead, ending with "[reply truncated]" if longer. If Slack rejects the blocks, the reply is resent as plain mrkdwn. Sender identity is the verified Slack user ID from the event.
+Slack Socket Mode. One conversation per Slack thread; replies post into the thread as escaped mrkdwn without link previews. Common Markdown the model emits is converted to mrkdwn. A reply with a Markdown table is posted as Block Kit blocks with the first table as a native table block (Slack allows one per message, up to 100 rows, 20 columns, and 10,000 characters); other tables, tables over those limits, and tables with empty cells become aligned code blocks; a table ends at the first row whose column count differs from its header. A block reply is not cut at the plain-text length cap; it is limited to Slack's 50 blocks instead, ending with "[reply truncated]" if longer. A stats footer is posted below a divider as a context block (smaller grey text) and left out of the notification text. If Slack rejects the blocks, the reply is resent as plain mrkdwn, footer included. Sender identity is the verified Slack user ID from the event.
 
 | Parameter | Required | Meaning |
 |---|---|---|

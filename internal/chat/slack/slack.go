@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	slackapi "github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -23,8 +24,11 @@ const (
 	// maxReplyRunes keeps escaped text (up to 5x longer) under Slack's 40,000-character limit;
 	// block replies are bounded by Block Kit limits instead.
 	maxReplyRunes = 7000
-	busyReply     = "I'm handling too many requests right now; please try again shortly."
-	busyTimeout   = 10 * time.Second
+	// maxFooterRunes bounds the footer in a plain-text reply, so the answer is cut first.
+	maxFooterRunes = 2000
+	truncatedNote  = "\n[reply truncated]"
+	busyReply      = "I'm handling too many requests right now; please try again shortly."
+	busyTimeout    = 10 * time.Second
 	// maxBusyReplies bounds busy replies in flight; more are skipped rather than queued.
 	maxBusyReplies = 4
 )
@@ -173,7 +177,7 @@ func (a *Adapter) submit(ctx context.Context, in inbound, submit func(conversati
 }
 
 // replyBusy posts the busy reply in the background, skipping it when maxBusyReplies are in flight.
-func (a *Adapter) replyBusy(ctx context.Context, log *slog.Logger, reply func(context.Context, string) error) {
+func (a *Adapter) replyBusy(ctx context.Context, log *slog.Logger, reply func(context.Context, conversation.Reply) error) {
 	select {
 	case a.busySlots <- struct{}{}:
 	default:
@@ -184,41 +188,53 @@ func (a *Adapter) replyBusy(ctx context.Context, log *slog.Logger, reply func(co
 		defer func() { <-a.busySlots }()
 		ctx, cancel := context.WithTimeout(ctx, busyTimeout)
 		defer cancel()
-		if err := reply(ctx, busyReply); err != nil {
+		if err := reply(ctx, conversation.Reply{Text: busyReply}); err != nil {
 			log.Warn("slack busy reply failed", "error", err)
 		}
 	})
 }
 
 // replier posts escaped text as Slack mrkdwn without link previews, so model output cannot ping, link, or unfurl.
-// A reply with a Markdown table is sent as blocks with a native table; Slack shows the text only in notifications.
-func (a *Adapter) replier(channel, thread string) func(context.Context, string) error {
-	return func(ctx context.Context, text string) error {
+// A reply with a Markdown table or a footer is sent as blocks; Slack shows the text only in notifications.
+func (a *Adapter) replier(channel, thread string) func(context.Context, conversation.Reply) error {
+	return func(ctx context.Context, reply conversation.Reply) error {
 		opts := []slackapi.MsgOption{
-			slackapi.MsgOptionText(limitReply(toMrkdwn(text)), true),
 			slackapi.MsgOptionDisableLinkUnfurl(),
 			slackapi.MsgOptionDisableMediaUnfurl(),
 		}
 		if thread != "" {
 			opts = append(opts, slackapi.MsgOptionTS(thread))
 		}
-		if blocks := toBlocks(text); blocks != nil {
-			_, _, err := a.api.PostMessageContext(ctx, channel, append(opts, slackapi.MsgOptionBlocks(blocks...))...)
+		if blocks := toBlocks(reply); blocks != nil {
+			blockOpts := append(opts[:len(opts):len(opts)], slackapi.MsgOptionText(limitReply(toMrkdwn(reply.Text), maxReplyRunes), true), slackapi.MsgOptionBlocks(blocks...))
+			_, _, err := a.api.PostMessageContext(ctx, channel, blockOpts...)
 			var slackErr slackapi.SlackErrorResponse
 			if !errors.As(err, &slackErr) || slackErr.Err != "invalid_blocks" {
 				return err
 			}
-			a.logger.Warn("slack rejected table blocks; replying as text", "error", err)
+			a.logger.Warn("slack rejected reply blocks; replying as text", "error", err)
 		}
+		opts = append(opts, slackapi.MsgOptionText(plainText(reply), true))
 		_, _, err := a.api.PostMessageContext(ctx, channel, opts...)
 		return err
 	}
 }
 
-func limitReply(text string) string {
+// plainText fits a reply into maxReplyRunes, cutting the answer rather than the footer.
+func plainText(reply conversation.Reply) string {
+	if reply.Footer == "" {
+		return limitReply(toMrkdwn(reply.Text), maxReplyRunes)
+	}
+	footer := limitReply(toMrkdwn(reply.Footer), maxFooterRunes)
+	room := maxReplyRunes - utf8.RuneCountInString(footer) - len("\n\n")
+	return conversation.Reply{Text: limitReply(toMrkdwn(reply.Text), room), Footer: footer}.Plain()
+}
+
+// limitReply cuts text to at most limit runes, truncatedNote included.
+func limitReply(text string, limit int) string {
 	runes := []rune(text)
-	if len(runes) <= maxReplyRunes {
+	if len(runes) <= limit {
 		return text
 	}
-	return string(runes[:maxReplyRunes]) + "\n[reply truncated]"
+	return string(runes[:limit-utf8.RuneCountInString(truncatedNote)]) + truncatedNote
 }

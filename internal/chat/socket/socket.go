@@ -87,7 +87,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, submit func(conversa
 // deliver submits one message, writes its reply to conn, and reports whether this connection should stop.
 func (s *Server) deliver(ctx context.Context, conn net.Conn, submit func(conversation.Message) error, key, input string) (stop bool) {
 	replied := make(chan string, 1)
-	reply := func(_ context.Context, text string) error { replied <- text; return nil }
+	reply := func(_ context.Context, r conversation.Reply) error { replied <- r.Plain(); return nil }
 	err := submit(conversation.Message{Conversation: key, User: key, Text: input, Reply: reply})
 	switch {
 	case err == nil:

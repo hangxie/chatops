@@ -89,8 +89,8 @@ type fakeBackend struct {
 }
 
 func (b *fakeBackend) Run(ctx context.Context, submit func(conversation.Message) error) error {
-	err := submit(conversation.Message{Conversation: "C1", User: "U1", Text: "is the builtin server up?", Reply: func(_ context.Context, text string) error {
-		b.reply <- text
+	err := submit(conversation.Message{Conversation: "C1", User: "U1", Text: "is the builtin server up?", Reply: func(_ context.Context, reply conversation.Reply) error {
+		b.reply <- reply.Plain()
 		return nil
 	}})
 	if err != nil {
@@ -132,7 +132,7 @@ type scrapeBackend struct {
 
 func (b *scrapeBackend) Run(ctx context.Context, submit func(conversation.Message) error) error {
 	replied := make(chan struct{})
-	err := submit(conversation.Message{Conversation: "C1", User: "U1", Text: "ping", Reply: func(context.Context, string) error {
+	err := submit(conversation.Message{Conversation: "C1", User: "U1", Text: "ping", Reply: func(context.Context, conversation.Reply) error {
 		close(replied)
 		return nil
 	}})
@@ -200,7 +200,7 @@ type closingBackend struct {
 
 func (b *closingBackend) Run(ctx context.Context, submit func(conversation.Message) error) error {
 	replied := make(chan struct{})
-	err := submit(conversation.Message{Conversation: "C1", User: "U1", Text: "ping", Reply: func(context.Context, string) error {
+	err := submit(conversation.Message{Conversation: "C1", User: "U1", Text: "ping", Reply: func(context.Context, conversation.Reply) error {
 		close(replied)
 		return nil
 	}})
