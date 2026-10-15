@@ -28,8 +28,10 @@ const (
 type Message struct {
 	// Conversation keys history and ordering; one chat thread maps to one key.
 	Conversation string
-	User         string
-	Text         string
+	// Backend is the configured chat backend name, set by the chat runner.
+	Backend string
+	User    string
+	Text    string
 	// Reply posts text back into the message's thread.
 	Reply func(ctx context.Context, text string) error
 }
@@ -41,14 +43,15 @@ type Runner interface {
 
 // Manager queues messages per conversation and keeps each conversation's recent history.
 type Manager struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	runner Runner
-	limits config.Agent
-	logger *slog.Logger
-	now    func() time.Time
-	slots  chan struct{}
-	turns  sync.WaitGroup
+	ctx      context.Context
+	cancel   context.CancelFunc
+	runner   Runner
+	limits   config.Agent
+	logger   *slog.Logger
+	observer Observer
+	now      func() time.Time
+	slots    chan struct{}
+	turns    sync.WaitGroup
 
 	mu        sync.Mutex
 	closing   bool
@@ -59,28 +62,39 @@ type Manager struct {
 
 // thread is one conversation's queue and history; Manager.mu guards it.
 type thread struct {
-	queue   []Message
+	queue   []queued
 	running bool
 	turns   [][]llm.Message
 	// updated is the last finished attempt, failed or not; history expires history_ttl after it.
 	updated time.Time
 }
 
+// queued is a message waiting its turn, with when it arrived.
+type queued struct {
+	msg      Message
+	received time.Time
+}
+
 // New builds a manager whose turns run under ctx; call Shutdown to stop it (or cancel ctx for a hard stop).
-func New(ctx context.Context, runner Runner, limits config.Agent, logger *slog.Logger) *Manager {
+// A nil logger uses slog.Default; a nil observer discards events.
+func New(ctx context.Context, runner Runner, limits config.Agent, logger *slog.Logger, observer Observer) *Manager {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if observer == nil {
+		observer = nopObserver{}
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	return &Manager{
-		ctx:     ctx,
-		cancel:  cancel,
-		runner:  runner,
-		limits:  limits,
-		logger:  logger,
-		now:     time.Now,
-		slots:   make(chan struct{}, limits.MaxConcurrentTurns),
-		threads: map[string]*thread{},
+		ctx:      ctx,
+		cancel:   cancel,
+		runner:   runner,
+		limits:   limits,
+		logger:   logger,
+		observer: observer,
+		now:      time.Now,
+		slots:    make(chan struct{}, limits.MaxConcurrentTurns),
+		threads:  map[string]*thread{},
 	}
 }
 
@@ -88,10 +102,13 @@ func New(ctx context.Context, runner Runner, limits config.Agent, logger *slog.L
 func (m *Manager) Submit(msg Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.observer.Received(msg.Backend)
 	if m.closing || m.ctx.Err() != nil {
+		m.observer.Rejected(msg.Backend, RejectClosed)
 		return ErrClosed
 	}
 	if m.pending >= m.limits.MaxPendingMessages {
+		m.observer.Rejected(msg.Backend, RejectBusy)
 		return ErrBusy
 	}
 	now := m.now()
@@ -101,7 +118,7 @@ func (m *Manager) Submit(msg Message) error {
 		t = &thread{updated: now}
 		m.threads[msg.Conversation] = t
 	}
-	t.queue = append(t.queue, msg)
+	t.queue = append(t.queue, queued{msg: msg, received: now})
 	m.pending++
 	if !t.running {
 		t.running = true
@@ -109,6 +126,18 @@ func (m *Manager) Submit(msg Message) error {
 		go m.drain(t)
 	}
 	return nil
+}
+
+// Pending counts accepted messages not yet answered, including running ones.
+func (m *Manager) Pending() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.pending
+}
+
+// InFlight counts turns holding a slot.
+func (m *Manager) InFlight() int {
+	return len(m.slots)
 }
 
 // Wait blocks until every turn has finished; call it after cancelling the manager's context.
@@ -147,7 +176,7 @@ func (m *Manager) drain(t *thread) {
 			m.mu.Unlock()
 			return
 		}
-		msg := t.queue[0]
+		next := t.queue[0]
 		t.queue = t.queue[1:]
 		var history []llm.Message
 		if m.limits.HistoryTurns > 0 {
@@ -155,7 +184,7 @@ func (m *Manager) drain(t *thread) {
 		}
 		m.mu.Unlock()
 
-		m.answer(t, msg, history)
+		m.answer(t, next, history)
 
 		m.mu.Lock()
 		m.pending--
@@ -164,12 +193,14 @@ func (m *Manager) drain(t *thread) {
 }
 
 // answer runs one turn, then replies; drain waits for the reply, keeping the thread in order.
-func (m *Manager) answer(t *thread, msg Message, history []llm.Message) {
+func (m *Manager) answer(t *thread, next queued, history []llm.Message) {
+	msg := next.msg
 	log := m.logger.With("conversation", msg.Conversation, "user", msg.User)
-	turn, err := m.run(history, msg.Text)
+	turn, err := m.run(next, history)
 	if m.ctx.Err() != nil {
 		return
 	}
+	m.observer.Finished(msg.Backend, turn.Stats)
 	m.mu.Lock()
 	t.updated = m.now()
 	if err == nil && m.limits.HistoryTurns > 0 {
@@ -189,18 +220,22 @@ func (m *Manager) answer(t *thread, msg Message, history []llm.Message) {
 	defer cancel()
 	if err := msg.Reply(ctx, reply); err != nil {
 		log.Warn("reply failed", "error", err)
+		m.observer.ReplyFailed(msg.Backend)
+		return
 	}
+	m.observer.Delivered(msg.Backend, turn.Stats.Outcome, m.now().Sub(next.received))
 }
 
 // run holds a turn slot only while the agent works, not while the reply is delivered.
-func (m *Manager) run(history []llm.Message, input string) (agent.Turn, error) {
+func (m *Manager) run(next queued, history []llm.Message) (agent.Turn, error) {
 	select {
 	case m.slots <- struct{}{}:
 	case <-m.ctx.Done():
 		return agent.Turn{}, m.ctx.Err()
 	}
 	defer func() { <-m.slots }()
-	return m.runner.Run(m.ctx, history, input)
+	m.observer.Started(next.msg.Backend, m.now().Sub(next.received))
+	return m.runner.Run(m.ctx, history, next.msg.Text)
 }
 
 // failureReply names the failure kind only; details may hold internal URLs, so they go to the log.

@@ -62,7 +62,7 @@ func (c Cmd) Run(ctx context.Context) error {
 
 	// The manager's lifetime is independent of the backend contexts so that, once chat.Run returns (clean
 	// shutdown or a fatal backend error), Shutdown can still drain accepted turns and deliver their replies.
-	conversations := conversation.New(context.Background(), agent.New(model, tools, cfg.Agent, logger), cfg.Agent, logger)
+	conversations := conversation.New(context.Background(), agent.New(model, tools, cfg.Agent, logger), cfg.Agent, logger, nil)
 	defer conversations.Shutdown(shutdownGrace)
 
 	logger.Info("chatops serving", "backends", len(backends), "servers", len(cfg.MCP.Servers), "tools", len(tools.Catalog().Tools()))
