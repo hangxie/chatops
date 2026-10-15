@@ -71,7 +71,7 @@ Ownership boundaries:
 1. Receive a Slack event, let the Slack SDK verify it, deduplicate retries by event ID, and map it to a conversation key.
 2. Load conversation history and identify the requester (Slack user ID) and workspace/channel.
 3. Take a per-turn snapshot of the tool catalog filtered by the requester's policy; disallowed tools are never shown to the model.
-4. Send the system prompt, history, user message, and authorized tool schemas to the LLM.
+4. Send the system prompt, history, user message, and authorized tool schemas to the LLM. The schemas sent drop `null` from type lists such as `["null","array"]`, which the Go MCP SDK emits for every slice and which some models answer with a JSON-encoded string; arguments are still validated against the server's original schema. The cost is that the model no longer sees which fields accept an explicit `null`; it can still omit optional ones.
 5. Plain text from the LLM is the final answer.
 6. Tool calls are processed sequentially: resolve the model-facing name against the turn snapshot, validate arguments against the tool's JSON Schema, and enforce policy again.
 7. A call needing approval suspends the turn and posts an approval prompt showing the exact server, tool, and arguments.
@@ -79,7 +79,7 @@ Ownership boundaries:
 9. Append a truncated result and continue until the model answers or a limit is reached.
 10. Reply in the originating thread, update history, and emit audit and telemetry records.
 
-Per-turn limits bound model/tool iterations, wall-clock time, tool-result bytes, token budget, and per-tool time. Hitting a limit or a failed call produces a readable reply, not a retry loop; validation failures and policy denials are fed back to the model as tool errors so it can correct itself.
+Per-turn limits bound model/tool iterations, wall-clock time, tool-result bytes, token budget, and per-tool time. Hitting a limit or a failed call produces a readable reply, not a retry loop; validation failures and policy denials are fed back to the model as tool errors so it can correct itself. A model that ignores the error and requests an identical call (same tool and arguments) that failed twice in a row stops the turn instead of spending the remaining iterations.
 
 ## 6. MCP integration
 

@@ -19,7 +19,7 @@ A turn is a sequence of steps, recorded in order with duration and outcome. A mo
 
 A model step carries prompt and completion tokens from the response's `usage` block; an endpoint that omits `usage` leaves tokens unreported, never zero, and totals count reported tokens only. A tool step carries two sizes: the bytes the server returned and the bytes the model saw after `max_tool_result_bytes` truncation, because a truncated result often explains a poor answer.
 
-A failed turn keeps the steps that completed and records the step that was running when it stopped, with its outcome (`timeout`, `error`); `Agent.Run` returns the partial stats alongside its error. A model or tool result that arrives after its deadline is discarded and its step recorded as `timeout`, because dependencies may ignore cancellation. A tool step is timed from the model's request, so a call rejected as unknown or invalid still has a duration. A turn stopped by `max_iterations` ends with a plan marked `stopped`.
+A failed turn keeps the steps that completed and records the step that was running when it stopped, with its outcome (`timeout`, `error`); `Agent.Run` returns the partial stats alongside its error. A model or tool result that arrives after its deadline is discarded and its step recorded as `timeout`, because dependencies may ignore cancellation. A tool step is timed from the model's request, so a call rejected as unknown or invalid still has a duration. A turn stopped by `max_iterations`, or by an identical call that failed twice in a row, ends with a plan marked `stopped`. A call rejected as an unknown tool or invalid arguments logs `tool call rejected` at warn level without the arguments, which are logged only at debug level.
 
 ## Reply footer
 

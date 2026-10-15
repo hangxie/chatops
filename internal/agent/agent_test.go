@@ -184,7 +184,7 @@ func Test_Agent_Run_tool_rounds(t *testing.T) {
 		"invalid-arguments": {
 			toolCalls: []llm.ToolCall{{ID: "c1", Name: "builtin__get", Arguments: `{"name":1}`}},
 			handle:    pong,
-			results:   []llm.Message{toolMessage("c1", `error: invalid arguments: validating root: validating /properties/name: type: 1 has type "integer", want "string"`)},
+			results:   []llm.Message{toolMessage("c1", invalidNameError)},
 			steps:     []Step{{Phase: PhaseTool, Name: "builtin__get", Server: "builtin", Tool: "get", Outcome: OutcomeError}},
 		},
 		"tool-error-result": {
@@ -492,4 +492,92 @@ func Test_Agent_Run_logs_without_usage(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, logs.String(), `"msg":"turn completed","outcome":"answered"`)
 	require.NotContains(t, logs.String(), "_tokens")
+}
+
+const invalidNameError = `error: invalid arguments: validating root: validating /properties/name: type: 1 has type "integer", want "string"`
+
+func Test_Agent_Run_repeated_failure(t *testing.T) {
+	bad := llm.ToolCall{ID: "c1", Name: "builtin__get", Arguments: `{"name":1}`}
+	good := llm.ToolCall{ID: "c2", Name: "builtin__get", Arguments: `{"name":"a"}`}
+	failed := Step{Phase: PhaseTool, Name: "builtin__get", Server: "builtin", Tool: "get", Outcome: OutcomeError, SentBytes: len(invalidNameError)}
+	succeeded := Step{Phase: PhaseTool, Name: "builtin__get", Server: "builtin", Tool: "get", Outcome: OutcomeOK, ResultBytes: 4, SentBytes: 4}
+	flaked := Step{Phase: PhaseTool, Name: "builtin__get", Server: "builtin", Tool: "get", Outcome: OutcomeError, ResultBytes: 5, SentBytes: 12}
+	plan := Step{Phase: PhasePlan, Outcome: OutcomeOK}
+	answer := Step{Phase: PhaseAnswer, Outcome: OutcomeOK}
+
+	tests := map[string]struct {
+		responses []func(context.Context) (llm.Response, error)
+		flaky     bool
+		reply     string
+		outcome   Outcome
+		steps     []Step
+	}{
+		"third identical failing call is not run": {
+			responses: []func(context.Context) (llm.Response, error){calls(bad), calls(bad), calls(bad)},
+			reply:     "I stopped because the same tool call kept failing. Try rephrasing the request.",
+			outcome:   OutcomeStopped,
+			steps:     []Step{plan, failed, plan, failed, {Phase: PhasePlan, Outcome: OutcomeStopped}},
+		},
+		"a corrected call continues": {
+			responses: []func(context.Context) (llm.Response, error){calls(bad), calls(bad), calls(good), reply("done")},
+			reply:     "done",
+			outcome:   OutcomeAnswered,
+			steps:     []Step{plan, failed, plan, failed, plan, succeeded, answer},
+		},
+		"repeated successful calls are not stopped": {
+			responses: []func(context.Context) (llm.Response, error){calls(good), calls(good), calls(good), reply("done")},
+			reply:     "done",
+			outcome:   OutcomeAnswered,
+			steps:     []Step{plan, succeeded, plan, succeeded, plan, succeeded, answer},
+		},
+		"a success resets the failure count": {
+			responses: []func(context.Context) (llm.Response, error){calls(good), calls(good), calls(good), calls(good), reply("done")},
+			flaky:     true,
+			reply:     "done",
+			outcome:   OutcomeAnswered,
+			steps:     []Step{plan, flaked, plan, succeeded, plan, flaked, plan, succeeded, answer},
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			handle := pong
+			if tc.flaky {
+				// Odd-numbered calls fail, as a transient backend error would.
+				n := 0
+				handle = func(context.Context, mcp.Tool, json.RawMessage) (mcp.Result, error) {
+					n++
+					if n%2 == 1 {
+						return mcp.Result{Text: "flake", IsError: true}, nil
+					}
+					return mcp.Result{Text: "pong"}, nil
+				}
+			}
+			limits := testLimits()
+			limits.MaxIterations = 10
+			model := &fakeModel{responses: tc.responses}
+			turn, err := New(model, newFakeTools(t, handle), limits, nil).Run(context.Background(), nil, "get a")
+			require.NoError(t, err)
+			require.Equal(t, tc.reply, turn.Reply)
+			require.Equal(t, []llm.Message{{Role: llm.RoleUser, Content: "get a"}}, turn.Messages)
+			require.Equal(t, tc.outcome, turn.Stats.Outcome)
+			require.Equal(t, tc.steps, withoutDurations(turn.Stats.Steps))
+		})
+	}
+}
+
+func Test_toolSpecs_drops_null_from_types(t *testing.T) {
+	catalog, skipped := mcp.NewCatalog(map[string][]*mcpsdk.Tool{
+		"kubernetes": {{Name: "daemonset_pods", InputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"daemonsets": map[string]any{"type": []any{"null", "array"}}},
+		}}},
+	})
+	require.Empty(t, skipped)
+
+	specs := toolSpecs(catalog)
+	require.Len(t, specs, 1)
+	require.JSONEq(t, `{"type":"object","properties":{"daemonsets":{"type":"array"}}}`, string(specs[0].Parameters))
+	// Validation still uses the server's schema.
+	require.NoError(t, catalog.Tools()[0].Validate(json.RawMessage(`{"daemonsets":null}`)))
 }

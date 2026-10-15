@@ -28,11 +28,15 @@ func (a *Agent) runTool(ctx context.Context, catalog *mcp.Catalog, call llm.Tool
 func (a *Agent) callTool(ctx context.Context, catalog *mcp.Catalog, call llm.ToolCall, step *Step) string {
 	tool, ok := catalog.Lookup(call.Name)
 	if !ok {
+		a.logger.Warn("tool call rejected", "tool", call.Name, "reason", "unknown tool")
 		return fmt.Sprintf("error: unknown tool %q", call.Name)
 	}
 	step.Server, step.Tool = tool.Server, tool.MCPName
 	args := json.RawMessage(call.Arguments)
 	if err := tool.Validate(args); err != nil {
+		// The error can quote argument values, so it is logged only with them at debug level.
+		a.logger.Warn("tool call rejected", "tool", call.Name, "reason", "invalid arguments")
+		a.logger.Debug("tool call arguments invalid", "tool", call.Name, "error", err)
 		return "error: invalid arguments: " + err.Error()
 	}
 
