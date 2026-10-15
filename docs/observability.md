@@ -1,6 +1,6 @@
 # observability
 
-Status: accepted design; not implemented ([`DESIGN.md`](DESIGN.md) §11, Phase 5).
+Status: accepted design; step stats and the reply footer implemented, Prometheus planned ([`DESIGN.md`](DESIGN.md) §11, Phase 5).
 
 Two consumers need to know where a turn spent its time and bytes: the person who asked, looking at one reply, and an operator, looking at trends across many turns. Both are fed from one source: the agent records every step of a turn, and the conversation manager records every question from receipt to delivered reply. A per-reply stats footer renders one turn; Prometheus aggregates all of them. Neither changes how a turn runs.
 
@@ -23,12 +23,12 @@ A failed turn keeps the steps that completed and records the step that was runni
 
 ## Reply footer
 
-With `agent.show_stats: true` (default `false`), the conversation manager appends one line to the end of every reply, failures included:
+With `agent.show_stats: true` (default `false`), the conversation manager appends the steps and totals to the end of every reply, failures included:
 
-    plan 2.3s (1.2k→45 tok) → pod_list 5.7s (123KB→16KB) → answer 6.3s (8.1k→310 tok)
+    plan 2.3s (1.2k→45 tok) → builtin.pod_list 5.7s (123KB→16KB) → answer 6.3s (8.1k→310 tok)
     total 14.3s · 1 tool · 9.3k→355 tok · reply 2.1KB
 
-The reply size is measured before sending and is approximate: platform rendering (Slack mrkdwn) changes it slightly, and the post itself cannot report its own latency. Measuring exactly would need a follow-up message or an edit, which is not worth the extra chat traffic.
+Tools appear as `<server>.<tool>`, using the configured server name, which is unique across servers; the model-facing `<server>__<tool>` would render as bold in chat markdown. A call to an unknown tool shows the name the model asked for. The reply size is measured before sending and is approximate: platform rendering (Slack mrkdwn) changes it slightly, and the post itself cannot report its own latency. Measuring exactly would need a follow-up message or an edit, which is not worth the extra chat traffic.
 
 ## Prometheus
 

@@ -113,6 +113,8 @@ type Agent struct {
 	MaxConcurrentTurns int `yaml:"max_concurrent_turns"`
 	// MaxPendingMessages bounds accepted but unfinished messages; more are refused as busy.
 	MaxPendingMessages int `yaml:"max_pending_messages"`
+	// ShowStats appends each turn's step timings, tokens, and sizes to its reply.
+	ShowStats bool `yaml:"show_stats"`
 }
 
 func defaultAgent() Agent {
