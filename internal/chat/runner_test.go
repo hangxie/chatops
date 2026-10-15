@@ -66,5 +66,6 @@ func Test_prefixed(t *testing.T) {
 	wrapped := prefixed("console", func(msg conversation.Message) error { got = msg; return nil })
 	require.NoError(t, wrapped(conversation.Message{Conversation: "stdin", User: "local"}))
 	require.Equal(t, "console:stdin", got.Conversation)
+	require.Equal(t, "console", got.Backend)
 	require.Equal(t, "local", got.User)
 }

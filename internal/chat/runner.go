@@ -21,7 +21,7 @@ func Run(ctx context.Context, backends []Named, submit func(conversation.Message
 // prefixed namespaces a backend's conversation keys with its name so keys from different backends cannot collide.
 func prefixed(name string, submit func(conversation.Message) error) func(conversation.Message) error {
 	return func(msg conversation.Message) error {
-		msg.Conversation = name + ":" + msg.Conversation
+		msg.Conversation, msg.Backend = name+":"+msg.Conversation, name
 		return submit(msg)
 	}
 }

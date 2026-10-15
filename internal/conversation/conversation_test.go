@@ -45,7 +45,7 @@ func (r *fakeRunner) Run(ctx context.Context, history []llm.Message, input strin
 	return agent.Turn{Reply: reply, Messages: []llm.Message{
 		{Role: llm.RoleUser, Content: input},
 		{Role: llm.RoleAssistant, Content: reply},
-	}}, nil
+	}, Stats: agent.Stats{Outcome: agent.OutcomeAnswered}}, nil
 }
 
 func (r *fakeRunner) next(t *testing.T) *call {
@@ -114,12 +114,36 @@ func testLimits() config.Agent {
 func start(t *testing.T, runner Runner, limits config.Agent) (*Manager, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	m := New(ctx, runner, limits, nil)
+	m := New(ctx, runner, limits, nil, nil)
 	t.Cleanup(func() {
 		cancel()
 		m.Wait()
 	})
 	return m, cancel
+}
+
+// fakeClock replaces the manager's clock; it is locked because the manager reads it from its goroutines.
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func newFakeClock(m *Manager) *fakeClock {
+	c := &fakeClock{now: time.Unix(1000, 0)}
+	m.now = c.time
+	return c
+}
+
+func (c *fakeClock) time() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(d)
+	c.mu.Unlock()
 }
 
 func turnMessages(inputs ...string) []llm.Message {
@@ -233,15 +257,14 @@ func Test_Manager_history_bounds(t *testing.T) {
 			limits := testLimits()
 			limits.HistoryTurns = tc.turns
 			m, _ := start(t, runner, limits)
-			now := time.Unix(1000, 0)
-			m.now = func() time.Time { return now }
+			clock := newFakeClock(m)
 
 			for _, input := range []string{"t1", "t2", "t3"} {
 				require.NoError(t, m.Submit(out.message("a", input)))
 				runner.next(t).release <- nil
 				out.wait(t)
 			}
-			now = now.Add(tc.advance)
+			clock.advance(tc.advance)
 			require.NoError(t, m.Submit(out.message("a", "t4")))
 			last := runner.next(t)
 			require.Equal(t, tc.want, last.history)
@@ -269,18 +292,17 @@ func Test_Manager_history_disabled(t *testing.T) {
 func Test_Manager_failed_turn_counts_as_activity(t *testing.T) {
 	runner, out := newFakeRunner(), newReplies()
 	m, _ := start(t, runner, testLimits())
-	now := time.Unix(1000, 0)
-	m.now = func() time.Time { return now }
+	clock := newFakeClock(m)
 
 	require.NoError(t, m.Submit(out.message("a", "t1")))
 	runner.next(t).release <- nil
 	out.wait(t)
-	now = now.Add(50 * time.Minute)
+	clock.advance(50 * time.Minute)
 	require.NoError(t, m.Submit(out.message("a", "fails")))
 	runner.next(t).release <- errors.New("model: 503")
 	out.wait(t)
 
-	now = now.Add(50 * time.Minute)
+	clock.advance(50 * time.Minute)
 	require.NoError(t, m.Submit(out.message("a", "t3")))
 	last := runner.next(t)
 	require.Equal(t, turnMessages("t1"), last.history, "idle time counts from the failed attempt, not the last success")
@@ -359,7 +381,7 @@ func Test_Manager_busy(t *testing.T) {
 func Test_Manager_shutdown(t *testing.T) {
 	runner, out := newFakeRunner(), newReplies()
 	ctx, cancel := context.WithCancel(context.Background())
-	m := New(ctx, runner, testLimits(), nil)
+	m := New(ctx, runner, testLimits(), nil, nil)
 
 	require.NoError(t, m.Submit(out.message("a", "in-flight")))
 	require.NoError(t, m.Submit(out.message("a", "queued")))
@@ -375,7 +397,7 @@ func Test_Manager_shutdown(t *testing.T) {
 
 func Test_Manager_Shutdown_drains(t *testing.T) {
 	runner, out := newFakeRunner(), newReplies()
-	m := New(context.Background(), runner, testLimits(), nil)
+	m := New(context.Background(), runner, testLimits(), nil, nil)
 
 	require.NoError(t, m.Submit(out.message("a", "hi")))
 	call := runner.next(t)
@@ -393,14 +415,14 @@ func Test_Manager_Shutdown_drains(t *testing.T) {
 }
 
 func Test_Manager_Shutdown_refuses_new(t *testing.T) {
-	m := New(context.Background(), newFakeRunner(), testLimits(), nil)
+	m := New(context.Background(), newFakeRunner(), testLimits(), nil, nil)
 	m.Shutdown(time.Second) // no work in flight, returns at once
 	require.ErrorIs(t, m.Submit(newReplies().message("a", "late")), ErrClosed)
 }
 
 func Test_Manager_Shutdown_grace_timeout(t *testing.T) {
 	runner, out := newFakeRunner(), newReplies()
-	m := New(context.Background(), runner, testLimits(), nil)
+	m := New(context.Background(), runner, testLimits(), nil, nil)
 
 	require.NoError(t, m.Submit(out.message("a", "stuck")))
 	call := runner.next(t)
@@ -413,8 +435,7 @@ func Test_Manager_Shutdown_grace_timeout(t *testing.T) {
 func Test_Manager_sweeps_idle_conversations(t *testing.T) {
 	runner, out := newFakeRunner(), newReplies()
 	m, _ := start(t, runner, testLimits())
-	now := time.Unix(1000, 0)
-	m.now = func() time.Time { return now }
+	clock := newFakeClock(m)
 
 	require.NoError(t, m.Submit(out.message("old", "x")))
 	runner.next(t).release <- nil
@@ -427,7 +448,7 @@ func Test_Manager_sweeps_idle_conversations(t *testing.T) {
 		th, ok := m.threads["old"]
 		return ok && !th.running
 	}, time.Second, time.Millisecond)
-	now = now.Add(time.Hour)
+	clock.advance(time.Hour)
 	require.NoError(t, m.Submit(out.message("new", "y")))
 	running := runner.next(t)
 
