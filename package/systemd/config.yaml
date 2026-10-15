@@ -60,13 +60,16 @@ mcp:
       transport: stdio
       command: /usr/bin/chatops-mcp
       args: [serve, --tools, kubernetes, --kubernetes-config, /etc/chatops/mcp-kubernetes.yaml]
-      # Extra variables for the server process; values live in this file, so
-      # never put secrets here. Only PATH and HOME are inherited otherwise.
-      # env:
-      #   KUBECONFIG: /etc/chatops/kubeconfig
-      # Maps a server variable to the chatops variable holding its secret value.
-      # secret_env:
-      #   API_TOKEN: CHATOPS_API_TOKEN
+    # A third-party stdio server. env values live in this file, so never put
+    # secrets there; secret_env maps a server variable to the chatops variable
+    # holding its value. Only PATH and HOME are inherited otherwise.
+    # other:
+    #   transport: stdio
+    #   command: /usr/local/bin/other-mcp
+    #   env:
+    #     LOG_LEVEL: info
+    #   secret_env:
+    #     API_TOKEN: OTHER_MCP_TOKEN
     # A remote MCP server over streamable HTTP; a bearer token requires an
     # https url unless the host is loopback.
     # remote:
