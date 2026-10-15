@@ -46,6 +46,7 @@ agent:
   history_ttl: 1h
   max_concurrent_turns: 2
   max_pending_messages: 16
+  show_stats: true
 `
 
 func Test_Parse_full(t *testing.T) {
@@ -83,6 +84,7 @@ func Test_Parse_full(t *testing.T) {
 			HistoryTTL:         time.Hour,
 			MaxConcurrentTurns: 2,
 			MaxPendingMessages: 16,
+			ShowStats:          true,
 		},
 	}, cfg)
 }

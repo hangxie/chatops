@@ -84,6 +84,7 @@ agent:
   # history_ttl: 24h               # idle conversations start over with no history
   # max_concurrent_turns: 4        # turns running at once across all conversations
   # max_pending_messages: 64       # accepted but unfinished messages; more are refused as busy
+  # show_stats: false              # append step timings, tokens, and sizes to every reply
   # Required: the agent's instructions, prepended to every turn. Edit and restart
   # to tune behavior without rebuilding. The trailing /no_think backs up
   # llm.disable_thinking for Qwen3 templates that ignore the request flag.

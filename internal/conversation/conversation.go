@@ -181,6 +181,9 @@ func (m *Manager) answer(t *thread, msg Message, history []llm.Message) {
 		log.Error("turn failed", "error", err)
 		reply = failureReply(err)
 	}
+	if m.limits.ShowStats {
+		reply += "\n\n" + footer(turn.Stats, len(reply))
+	}
 
 	ctx, cancel := context.WithTimeout(m.ctx, replyTimeout)
 	defer cancel()

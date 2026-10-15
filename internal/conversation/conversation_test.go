@@ -440,3 +440,44 @@ func Test_Manager_sweeps_idle_conversations(t *testing.T) {
 	running.release <- nil
 	out.wait(t)
 }
+
+// statsRunner answers every turn at once with fixed stats and error.
+type statsRunner struct {
+	stats agent.Stats
+	err   error
+}
+
+func (r statsRunner) Run(context.Context, []llm.Message, string) (agent.Turn, error) {
+	if r.err != nil {
+		return agent.Turn{Stats: r.stats}, r.err
+	}
+	return agent.Turn{Reply: "pong", Stats: r.stats}, nil
+}
+
+func Test_Manager_show_stats(t *testing.T) {
+	answered := agent.Stats{Outcome: agent.OutcomeAnswered, Duration: time.Second, Steps: []agent.Step{{Phase: agent.PhaseAnswer, Outcome: agent.OutcomeOK, Duration: time.Second}}}
+	failed := agent.Stats{Outcome: agent.OutcomeError, Duration: time.Second, Steps: []agent.Step{{Phase: agent.PhaseModel, Outcome: agent.OutcomeError, Duration: time.Second}}}
+	failure := "Sorry, I couldn't complete that request; the error has been logged."
+	tests := map[string]struct {
+		show   bool
+		runner statsRunner
+		want   string
+	}{
+		"off":        {runner: statsRunner{stats: answered}, want: "pong"},
+		"answered":   {show: true, runner: statsRunner{stats: answered}, want: "pong\n\nanswer 1.0s\ntotal 1.0s · 0 tools · reply 4B"},
+		"failed":     {show: true, runner: statsRunner{stats: failed, err: errors.New("model: 503")}, want: fmt.Sprintf("%s\n\nmodel 1.0s (error)\ntotal 1.0s · 0 tools · reply %dB · failed", failure, len(failure))},
+		"failed-off": {runner: statsRunner{stats: failed, err: errors.New("model: 503")}, want: failure},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			limits := testLimits()
+			limits.ShowStats = tc.show
+			out := newReplies()
+			m, _ := start(t, tc.runner, limits)
+
+			require.NoError(t, m.Submit(out.message("a", "ping")))
+			require.Equal(t, tc.want, out.wait(t))
+		})
+	}
+}
