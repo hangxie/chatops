@@ -72,7 +72,7 @@ The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.y
 | `agent.max_pending_messages` | `64` | Accepted but unfinished messages across all conversations; more are refused as busy |
 | `agent.show_stats` | `false` | Append each turn's statistics to the end of its reply, failed turns included: every model and tool step with its duration, tokens, and tool result size (raw→sent to the model when truncated), then the totals and approximate reply size. See [`docs/observability.md`](docs/observability.md) |
 
-Each model-facing tool is named `<server>__<tool>`, for example `builtin__ping`. A stdio server inherits only `PATH` and `HOME` from `chatops`, plus its configured `env` and `secret_env`, so chat and model credentials never reach tool processes unless a `secret_env` entry names them. All servers must be reachable at startup.
+Each model-facing tool is named `<server>__<tool>`, for example `kubernetes__pod_list`; the sample config runs each built-in group as its own server named after the group. A stdio server inherits only `PATH` and `HOME` from `chatops`, plus its configured `env` and `secret_env`, so chat and model credentials never reach tool processes unless a `secret_env` entry names them. All servers must be reachable at startup.
 
 ### Conversation history
 
@@ -121,8 +121,8 @@ make build
 ```
 
 ```text
-> is the builtin server reachable?
-Yes, the builtin server replied pong.
+> is the MCP server reachable?
+The MCP server is reachable.
 >
 ```
 
@@ -153,14 +153,14 @@ nc -U /run/chatops/ops.sock                                      # then talk to 
 At `--log-level debug`, `serve` logs a `tool call requested` line with the arguments the model passed to each tool, up to 1 KiB, which shows which tool and inputs the model chose:
 
 ```text
-level=DEBUG msg="tool call requested" tool=builtin__service_status arguments="{\"service\": \"openai\"}"
+level=DEBUG msg="tool call requested" tool=status__service_status arguments="{\"service\": \"openai\"}"
 ```
 
 Turn it on only while troubleshooting. Credentials never appear there: Slack tokens, the LLM API key, and MCP tokens and `secret_env` values are read by the processes themselves and never reach the model. The arguments can, however, repeat anything the model has seen, including what users typed (such as a password pasted into a question) and earlier tool results. At `info` and above, `serve` logs Slack user and conversation IDs but never message text. Under systemd, logs go to the journal, which is usually readable by the `adm` and `systemd-journal` groups, a wider audience than `/etc/chatops/chatops.env`.
 
 How it answers:
 
-- In a channel the app has been invited to, a message must start with a mention of the bot, such as `@chatops is the builtin server up?`; a mention later in the message is ignored. Follow-ups in the thread need the mention too.
+- In a channel the app has been invited to, a message must start with a mention of the bot, such as `@chatops is the MCP server reachable?`; a mention later in the message is ignored. Follow-ups in the thread need the mention too.
 - In a direct message to the app, every message is answered; no mention is needed.
 - Replies go into the message's thread by default. Set `reply_in_channel: true` on the Slack backend to reply to top-level messages directly in the channel or DM. Messages sent within an existing thread always receive replies in that thread, regardless of this setting. The same routing applies to busy and failed-turn replies. Each thread is a separate conversation with its own history, so context never crosses threads; a top-level message starts a new conversation.
 - Channel replies work poorly with `agent.history_turns > 0`: separate top-level messages do not share history, so a follow-up such as `@chatops check again` cannot refer to the previous top-level request. Prefer `agent.history_turns: 0` for channel replies, or keep follow-ups in the original thread when using history.

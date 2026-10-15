@@ -189,7 +189,13 @@ func Test_Load_packaged_sample(t *testing.T) {
 	cfg, err := Load(filepath.Join("..", "..", "package", "systemd", "config.yaml"))
 	require.NoError(t, err)
 	require.Equal(t, Chat{"homelab": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}}, cfg.Chat)
-	require.Equal(t, "/usr/bin/chatops-mcp", cfg.MCP.Servers["builtin"].Command)
+	// Each built-in group runs as its own server named after the group, so tool prefixes name the group.
+	require.Len(t, cfg.MCP.Servers, 3)
+	for _, group := range []string{"ping", "status", "kubernetes"} {
+		server := cfg.MCP.Servers[group]
+		require.Equal(t, "/usr/bin/chatops-mcp", server.Command, group)
+		require.Equal(t, []string{"serve", "--tools", group}, server.Args[:3], group)
+	}
 	// The shipped prompt must carry the behavioral guard, and thinking is disabled by both config and prompt.
 	require.Contains(t, cfg.Agent.SystemPrompt, "Answer only the latest user request")
 	require.Contains(t, cfg.Agent.SystemPrompt, "/no_think")
