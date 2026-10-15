@@ -71,7 +71,7 @@ The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.y
 | `agent.max_concurrent_turns` | `4` | Agent turns (model and tool calls) running at once across all conversations; posting a reply does not count; turns within one conversation always run one at a time, each after the previous reply is posted |
 | `agent.max_pending_messages` | `64` | Accepted but unfinished messages across all conversations; more are refused as busy |
 | `metrics.listen` | (none) | `host:port` serving Prometheus metrics at `/metrics`, such as `127.0.0.1:9464`; unset disables the endpoint. See [Metrics](#metrics) |
-| `agent.show_stats` | `false` | Append each turn's statistics to the end of its reply, failed turns included: every model and tool step with its duration, tokens, and tool result size (raw→sent to the model when truncated), then the totals and approximate reply size. See [`docs/observability.md`](docs/observability.md) |
+| `agent.show_stats` | `false` | Append each turn's statistics to the end of its reply, failed turns included: every model and tool step with its duration, tokens, and tool result size (raw→sent to the model when truncated), then the totals and approximate reply size. Slack shows it as smaller grey text below a divider. See [`docs/observability.md`](docs/observability.md) |
 
 Each model-facing tool is named `<server>__<tool>`, for example `kubernetes__pod_list`; the sample config runs each built-in group as its own server named after the group. A stdio server inherits only `PATH` and `HOME` from `chatops`, plus its configured `env` and `secret_env`, so chat and model credentials never reach tool processes unless a `secret_env` entry names them. All servers must be reachable at startup.
 

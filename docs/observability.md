@@ -30,6 +30,8 @@ With `agent.show_stats: true` (default `false`), the conversation manager append
 
 Tools appear as `<server>.<tool>`, using the configured server name, which is unique across servers (the sample config names each built-in group's server after the group); the model-facing `<server>__<tool>` would render as bold in chat markdown. A call to an unknown tool shows the name the model asked for. The reply size is measured before sending and is approximate: platform rendering (Slack mrkdwn) changes it slightly, and the post itself cannot report its own latency. Measuring exactly would need a follow-up message or an edit, which is not worth the extra chat traffic.
 
+The footer travels to the chat backend separately from the answer, so each backend can set it apart: Slack shows it below a divider as a context block (smaller grey text), and its notification text omits it; plain-text backends print it after a blank line.
+
 ## Prometheus
 
 `metrics.listen` in the config (unset by default) serves `/metrics` on its own HTTP listener. Collectors live in a dedicated registry wired explicitly in `serve`, never the global default registry, which also exports Go runtime and process metrics. The endpoint is unauthenticated, like most exporters; bind it to loopback or a scrape-only network. Once configured, metrics are part of the daemon's health: an unexpected server exit stops `serve` with an error, as a failed listen does at startup, so a supervisor restarts the whole process instead of it answering chat with no metrics.

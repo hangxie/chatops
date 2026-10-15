@@ -81,7 +81,8 @@ type replies struct {
 func newReplies() *replies { return &replies{got: map[string][]string{}, sent: make(chan string, 16)} }
 
 func (r *replies) message(key, text string) Message {
-	return Message{Conversation: key, User: "U1", Text: text, Reply: func(ctx context.Context, reply string) error {
+	return Message{Conversation: key, User: "U1", Text: text, Reply: func(ctx context.Context, out Reply) error {
+		reply := out.Plain()
 		r.mu.Lock()
 		r.got[key] = append(r.got[key], reply)
 		r.mu.Unlock()
@@ -482,23 +483,29 @@ func Test_Manager_show_stats(t *testing.T) {
 	tests := map[string]struct {
 		show   bool
 		runner statsRunner
-		want   string
+		want   Reply
 	}{
-		"off":        {runner: statsRunner{stats: answered}, want: "pong"},
-		"answered":   {show: true, runner: statsRunner{stats: answered}, want: "pong\n\nanswer 1.0s\ntotal 1.0s · 0 tools · reply 4B"},
-		"failed":     {show: true, runner: statsRunner{stats: failed, err: errors.New("model: 503")}, want: fmt.Sprintf("%s\n\nmodel 1.0s (error)\ntotal 1.0s · 0 tools · reply %dB · failed", failure, len(failure))},
-		"failed-off": {runner: statsRunner{stats: failed, err: errors.New("model: 503")}, want: failure},
+		"off":        {runner: statsRunner{stats: answered}, want: Reply{Text: "pong"}},
+		"answered":   {show: true, runner: statsRunner{stats: answered}, want: Reply{Text: "pong", Footer: "answer 1.0s\ntotal 1.0s · 0 tools · reply 4B"}},
+		"failed":     {show: true, runner: statsRunner{stats: failed, err: errors.New("model: 503")}, want: Reply{Text: failure, Footer: fmt.Sprintf("model 1.0s (error)\ntotal 1.0s · 0 tools · reply %dB · failed", len(failure))}},
+		"failed-off": {runner: statsRunner{stats: failed, err: errors.New("model: 503")}, want: Reply{Text: failure}},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			limits := testLimits()
 			limits.ShowStats = tc.show
-			out := newReplies()
+			sent := make(chan Reply, 1)
 			m, _ := start(t, tc.runner, limits)
 
-			require.NoError(t, m.Submit(out.message("a", "ping")))
-			require.Equal(t, tc.want, out.wait(t))
+			msg := Message{Conversation: "a", User: "U1", Text: "ping", Reply: func(_ context.Context, r Reply) error { sent <- r; return nil }}
+			require.NoError(t, m.Submit(msg))
+			select {
+			case got := <-sent:
+				require.Equal(t, tc.want, got)
+			case <-time.After(5 * time.Second):
+				t.Fatal("timed out waiting for a reply")
+			}
 		})
 	}
 }

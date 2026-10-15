@@ -39,7 +39,7 @@ func (r *recorder) submit(msg conversation.Message) error {
 	if err != nil {
 		return err
 	}
-	return msg.Reply(context.Background(), out)
+	return msg.Reply(context.Background(), conversation.Reply{Text: out})
 }
 
 func echo(text string) (string, error) { return "pong:" + text, nil }
@@ -158,7 +158,7 @@ func Test_Run_drain_delivers_reply(t *testing.T) {
 
 	msg := <-rec.captured // the server accepted the message and is waiting for its reply
 	cancel()              // shutdown begins; the connection stays open through the drain
-	require.NoError(t, msg.Reply(context.Background(), "finished during drain"))
+	require.NoError(t, msg.Reply(context.Background(), conversation.Reply{Text: "finished during drain"}))
 	line, err := r.ReadString('\n')
 	require.NoError(t, err)
 	require.Equal(t, "finished during drain\n", line)

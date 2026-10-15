@@ -32,8 +32,8 @@ type Message struct {
 	Backend string
 	User    string
 	Text    string
-	// Reply posts text back into the message's thread.
-	Reply func(ctx context.Context, text string) error
+	// Reply posts the answer back into the message's thread.
+	Reply func(ctx context.Context, reply Reply) error
 }
 
 // Runner runs one turn; *agent.Agent satisfies it.
@@ -207,13 +207,13 @@ func (m *Manager) answer(t *thread, next queued, history []llm.Message) {
 		t.record(turn.Messages, m.limits.HistoryTurns)
 	}
 	m.mu.Unlock()
-	reply := turn.Reply
+	reply := Reply{Text: turn.Reply}
 	if err != nil {
 		log.Error("turn failed", "error", err)
-		reply = failureReply(err)
+		reply.Text = failureReply(err)
 	}
 	if m.limits.ShowStats {
-		reply += "\n\n" + footer(turn.Stats, len(reply))
+		reply.Footer = footer(turn.Stats, len(reply.Text))
 	}
 
 	ctx, cancel := context.WithTimeout(m.ctx, replyTimeout)

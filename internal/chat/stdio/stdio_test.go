@@ -23,7 +23,7 @@ func newTest(in string) (*Adapter, *bytes.Buffer) {
 
 // echo acts like the manager: it answers every message by invoking its Reply closure.
 func echo(_ context.Context, msg conversation.Message) {
-	_ = msg.Reply(context.Background(), "pong:"+msg.Text)
+	_ = msg.Reply(context.Background(), conversation.Reply{Text: "pong:" + msg.Text})
 }
 
 func Test_New(t *testing.T) {
@@ -100,7 +100,7 @@ func Test_Run_reply_during_drain(t *testing.T) {
 		cancel()
 		go func() {
 			time.Sleep(10 * time.Millisecond)
-			_ = msg.Reply(context.Background(), "late:"+msg.Text)
+			_ = msg.Reply(context.Background(), conversation.Reply{Text: "late:" + msg.Text})
 		}()
 		return nil
 	}

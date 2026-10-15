@@ -6,20 +6,35 @@ import (
 
 	slackapi "github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackutilsx"
+
+	"github.com/hangxie/chatops/internal/conversation"
 )
 
-// Slack Block Kit limits for a message and its table and section blocks.
+// Slack Block Kit limits for a message and its table, section, and context blocks.
 const (
-	maxBlocks       = 50
-	maxTableRows    = 100
-	maxTableCols    = 20
-	maxTableChars   = 10000
-	maxSectionChars = 3000
+	maxBlocks          = 50
+	maxTableRows       = 100
+	maxTableCols       = 20
+	maxTableChars      = 10000
+	maxSectionChars    = 3000
+	maxContextElements = 10
 )
 
-// toBlocks renders text as Block Kit with the first fitting Markdown table as a native table block, since
-// Slack allows one table per message; it returns nil when no table qualifies so the reply stays plain text.
-func toBlocks(text string) []slackapi.Block {
+// toBlocks renders a reply as Block Kit with one native table and the footer below a divider; nil means plain text.
+func toBlocks(reply conversation.Reply) []slackapi.Block {
+	blocks, native := bodyBlocks(reply.Text)
+	if reply.Footer == "" {
+		if !native {
+			return nil
+		}
+		return capBlocks(blocks, maxBlocks)
+	}
+	blocks = capBlocks(blocks, maxBlocks-2)
+	return append(blocks, slackapi.NewDividerBlock(), footerBlock(reply.Footer))
+}
+
+// bodyBlocks renders text as section blocks around at most one native table, reporting whether it has one.
+func bodyBlocks(text string) ([]slackapi.Block, bool) {
 	var blocks []slackapi.Block
 	var prose []string
 	flush := func() {
@@ -43,11 +58,21 @@ func toBlocks(text string) []slackapi.Block {
 			prose = append(prose, codeBlock(s.table))
 		}
 	}
-	if !native {
-		return nil
-	}
 	flush()
-	return capBlocks(blocks, maxBlocks)
+	return blocks, native
+}
+
+// footerBlock renders the footer as a context block, which Slack shows in smaller grey text.
+func footerBlock(footer string) *slackapi.ContextBlock {
+	chunks := chunkEscaped(footer, maxSectionChars)
+	if len(chunks) > maxContextElements {
+		chunks = append(chunks[:maxContextElements-1], "[footer truncated]")
+	}
+	elements := make([]slackapi.MixedElement, len(chunks))
+	for i, chunk := range chunks {
+		elements[i] = slackapi.NewTextBlockObject(slackapi.MarkdownType, chunk, false, false)
+	}
+	return slackapi.NewContextBlock("", elements...)
 }
 
 // capBlocks trims blocks to limit, keeping the table and ending with a truncation notice.

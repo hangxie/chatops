@@ -70,7 +70,7 @@ func (a *Adapter) Run(ctx context.Context, submit func(conversation.Message) err
 // deliver submits one message, prints its reply, and reports whether the session should stop.
 func (a *Adapter) deliver(ctx context.Context, submit func(conversation.Message) error, input string) (stop bool) {
 	replied := make(chan string, 1)
-	reply := func(_ context.Context, text string) error { replied <- text; return nil }
+	reply := func(_ context.Context, r conversation.Reply) error { replied <- r.Plain(); return nil }
 	err := submit(conversation.Message{Conversation: conversationKey, User: "local", Text: input, Reply: reply})
 	switch {
 	case err == nil:
