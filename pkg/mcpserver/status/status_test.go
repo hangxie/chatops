@@ -44,9 +44,9 @@ func Test_Register_lists_service_status(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []any{"service"}, schema["required"])
 	service := schema["properties"].(map[string]any)["service"].(map[string]any)
-	require.Equal(t, []any{"all", "github", "anthropic", "cloudflare", "openai", "gemini", "google-workspace", "slack", "docker-hub"}, service["enum"])
-	require.Contains(t, service["description"], "anthropic (Claude, claude.ai, the Claude API, Claude Code)")
-	require.Contains(t, service["description"], "openai (ChatGPT, Codex, the OpenAI API)")
+	require.Equal(t, []any{"all", "github", "anthropic", "cloudflare", "openai", "openrouter", "gemini", "google-workspace", "slack", "docker-hub"}, service["enum"])
+	require.Contains(t, service["description"], "anthropic (Claude, claude.ai, Claude Console, the Claude API, Claude Code, Claude Cowork)")
+	require.Contains(t, service["description"], "openrouter (OpenRouter, openrouter.ai, the OpenRouter API, OpenRouter activity logs and usage)")
 	require.NotNil(t, tool.OutputSchema)
 }
 

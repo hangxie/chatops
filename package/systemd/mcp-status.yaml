@@ -3,7 +3,7 @@
 #   name:    tool argument value; lowercase letters, digits, and "-"
 #   display: name shown in results
 #   covers:  products users may ask about, so the model can map "is codex down?" to openai
-#   type:    statuspage (Atlassian Statuspage /api/v2/summary.json), statusio, slack, or google
+#   type:    statuspage (Atlassian Statuspage /api/v2/summary.json), statusio, slack, datadog (Datadog Status Pages config.json), or google
 #   url:     status endpoint, for every type but google
 #   feeds:   google only; incident feeds to combine, each optionally narrowed to product IDs
 # Services are reported in this order. Restart chatops serve after editing.
@@ -11,27 +11,33 @@
 services:
   - name: github
     display: GitHub
-    covers: [GitHub, GitHub Actions, Copilot, Codespaces]
+    covers: [GitHub, git push and pull, GitHub API, Issues, Pull Requests, GitHub Actions, Webhooks, GitHub Packages, GitHub Pages, Copilot, Codespaces]
     type: statuspage
     url: https://www.githubstatus.com/api/v2/summary.json
 
   - name: anthropic
     display: Anthropic
-    covers: [Claude, claude.ai, the Claude API, Claude Code]
+    covers: [Claude, claude.ai, Claude Console, the Claude API, Claude Code, Claude Cowork]
     type: statuspage
     url: https://status.claude.com/api/v2/summary.json
 
   - name: cloudflare
     display: Cloudflare
-    covers: [Cloudflare CDN, DNS, Workers]
+    covers: [Cloudflare CDN, Cloudflare DNS, 1.1.1.1, Cloudflare Dashboard, Cloudflare API, Workers, Cloudflare Pages, R2, D1, Workers AI, Cloudflare Zero Trust, Cloudflare Access, Cloudflare Tunnel, WARP, Turnstile]
     type: statuspage
     url: https://www.cloudflarestatus.com/api/v2/summary.json
 
   - name: openai
     display: OpenAI
-    covers: [ChatGPT, Codex, the OpenAI API]
+    covers: [ChatGPT, Codex, Sora, the OpenAI API, OpenAI Responses and Realtime APIs, OpenAI embeddings, image generation, and fine-tuning]
     type: statuspage
     url: https://status.openai.com/api/v2/summary.json
+
+  - name: openrouter
+    display: OpenRouter
+    covers: [OpenRouter, openrouter.ai, the OpenRouter API, OpenRouter activity logs and usage]
+    type: datadog
+    url: https://status.openrouter.ai/config.json
 
   - name: gemini
     display: Google Gemini
@@ -58,6 +64,6 @@ services:
 
   - name: docker-hub
     display: Docker Hub
-    covers: [Docker Hub image pulls and pushes]
+    covers: [Docker Hub image pulls and pushes, Docker login, Docker Desktop, Docker Build Cloud, Docker Scout]
     type: statusio
     url: https://api.status.io/1.0/status/533c6539221ae15e3f000031
