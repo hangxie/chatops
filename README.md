@@ -70,7 +70,7 @@ The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.y
 | `agent.history_ttl` | `24h` | When `history_turns` is positive, a conversation idle this long (since its last answered message, failed or not) starts over with no history |
 | `agent.max_concurrent_turns` | `4` | Agent turns (model and tool calls) running at once across all conversations; posting a reply does not count; turns within one conversation always run one at a time, each after the previous reply is posted |
 | `agent.max_pending_messages` | `64` | Accepted but unfinished messages across all conversations; more are refused as busy |
-| `metrics.listen` | (none) | `host:port` serving Prometheus metrics at `/metrics`, such as `127.0.0.1:9464`; unset disables the endpoint. See [Metrics](#metrics) |
+| `metrics.listen` | (none) | `host:port` serving Prometheus metrics at `/metrics` and health probes at `/healthz` and `/readyz`, such as `127.0.0.1:9464`; unset disables the endpoint. See [Metrics](#metrics) and [Health checks](#health-checks) |
 | `agent.show_stats` | `false` | Append each turn's statistics to the end of its reply, failed turns included: every model and tool step with its duration, tokens, and tool result size (raw→sent to the model when truncated), then the totals and approximate reply size. Slack shows it as smaller grey text below a divider. See [`docs/observability.md`](docs/observability.md) |
 
 Each model-facing tool is named `<server>__<tool>`, for example `kubernetes__pod_list`; the sample config runs each built-in group as its own server named after the group. A stdio server inherits only `PATH` and `HOME` from `chatops`, plus its configured `env` and `secret_env`, so chat and model credentials never reach tool processes unless a `secret_env` entry names them. All servers must be reachable at startup.
@@ -174,7 +174,7 @@ How it answers:
 
 ### Metrics
 
-With `metrics.listen` set, `serve` exposes Prometheus metrics at `http://<listen>/metrics`: questions received, rejected, and answered per chat backend; response time from receipt to delivered reply; model call latency and tokens; tool call latency, result size, and truncation per MCP server and tool; MCP server health; and Go runtime and process metrics. The endpoint has no authentication, so bind it to loopback or a network only your Prometheus can reach. If the endpoint cannot listen at startup, or stops unexpectedly later, `serve` exits with an error so the service manager restarts it rather than running without metrics. The full list is in [`docs/observability.md`](docs/observability.md). A scrape config:
+With `metrics.listen` set, `serve` exposes Prometheus metrics at `http://<listen>/metrics`: questions received, rejected, and answered per chat backend; response time from receipt to delivered reply; model call latency and tokens; tool call latency, result size, and truncation per MCP server and tool; chat backend and MCP server health; and Go runtime and process metrics. The endpoint has no authentication, so bind it to loopback or a network only your Prometheus can reach. If the endpoint cannot listen at startup, or stops unexpectedly later, `serve` exits with an error so the service manager restarts it rather than running without metrics. The full list is in [`docs/observability.md`](docs/observability.md). A scrape config:
 
 ```yaml
 scrape_configs:
@@ -188,6 +188,21 @@ Average response time for answered questions over five minutes:
 ```promql
 rate(chatops_response_duration_seconds_sum{outcome="answered"}[5m])
   / rate(chatops_response_duration_seconds_count{outcome="answered"}[5m])
+```
+
+### Health checks
+
+The `metrics.listen` endpoint also serves two probes that answer in plain text, for a Kubernetes probe, a container health check, or an uptime monitor:
+
+| Path | `200 ok` when | Otherwise |
+|---|---|---|
+| `/healthz` | the daemon is serving HTTP | no answer |
+| `/readyz` | startup has finished, the daemon accepts questions, every chat backend can receive messages, and every MCP server is up | `503` listing each failure: `starting`, `shutting down`, `chat backend <name>: not connected`, or `mcp server <name>: down` |
+
+Use `/healthz` for liveness and `/readyz` for readiness or alerting. A Slack backend counts as connected once Socket Mode connects and is briefly not connected while it reconnects. A disconnected MCP server stays down until `serve` restarts, so a `/readyz` that keeps failing on one means a restart is needed. The probes check only cached state and never call the model or a tool, so a slow model endpoint does not fail them. For example:
+
+```sh
+curl -fsS http://127.0.0.1:9464/readyz
 ```
 
 ### Run as a service

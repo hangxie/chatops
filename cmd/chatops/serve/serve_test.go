@@ -106,6 +106,8 @@ func (b *fakeBackend) Run(ctx context.Context, submit func(conversation.Message)
 	return b.err
 }
 
+func (b *fakeBackend) Connected() bool { return true }
+
 func injected(b chat.Backend) func(config.Chat, []string, *slog.Logger) ([]chat.Named, error) {
 	return func(config.Chat, []string, *slog.Logger) ([]chat.Named, error) {
 		return []chat.Named{{Name: "fake", Backend: b}}, nil
@@ -124,10 +126,11 @@ func Test_Cmd_Run_end_to_end(t *testing.T) {
 	require.Contains(t, logs.String(), `"level":"WARN","msg":"authorization is not enabled: every user who can message the bot can call every tool"`)
 }
 
-// scrapeBackend asks one question, then scrapes /metrics until the delivered reply is counted.
+// scrapeBackend asks one question, scrapes /metrics until the delivered reply is counted, then probes /readyz.
 type scrapeBackend struct {
-	addr chan string
-	body string
+	addr  chan string
+	body  string
+	ready int
 }
 
 func (b *scrapeBackend) Run(ctx context.Context, submit func(conversation.Message) error) error {
@@ -140,7 +143,8 @@ func (b *scrapeBackend) Run(ctx context.Context, submit func(conversation.Messag
 		return err
 	}
 	<-replied
-	url := "http://" + <-b.addr + "/metrics"
+	base := "http://" + <-b.addr
+	url := base + "/metrics"
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		resp, err := http.Get(url)
 		if err != nil {
@@ -152,10 +156,22 @@ func (b *scrapeBackend) Run(ctx context.Context, submit func(conversation.Messag
 			return err
 		}
 		if b.body = string(body); strings.Contains(b.body, "chatops_response_duration_seconds_count") {
-			return nil
+			return b.probeReady(base + "/readyz")
 		}
 	}
 	return errors.New("delivered reply never counted")
+}
+
+func (b *scrapeBackend) Connected() bool { return true }
+
+func (b *scrapeBackend) probeReady(url string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	b.ready = resp.StatusCode
+	_, err = io.Copy(io.Discard, resp.Body)
+	return errors.Join(err, resp.Body.Close())
 }
 
 func Test_Cmd_Run_metrics(t *testing.T) {
@@ -190,6 +206,7 @@ func Test_Cmd_Run_metrics(t *testing.T) {
 	} {
 		require.Contains(t, strings.Split(b.body, "\n"), line)
 	}
+	require.Equal(t, http.StatusOK, b.ready)
 	require.Contains(t, logs.String(), `"msg":"metrics serving","address":"127.0.0.1:`)
 }
 
@@ -218,6 +235,8 @@ func (b *closingBackend) Run(ctx context.Context, submit func(conversation.Messa
 		return errors.New("serve kept running after the metrics server failed")
 	}
 }
+
+func (b *closingBackend) Connected() bool { return true }
 
 func Test_Cmd_Run_metrics_server_failure(t *testing.T) {
 	path := writeConfig(t, scriptedLLM(t).URL)

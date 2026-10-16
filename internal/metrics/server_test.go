@@ -16,7 +16,7 @@ func Test_Serve(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, ln, New("v9").Handler()) }()
+	go func() { done <- Serve(ctx, ln, New("v9")) }()
 
 	base := "http://" + ln.Addr().String()
 	resp, err := http.Get(base + "/metrics")
@@ -27,10 +27,14 @@ func Test_Serve(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, string(body), `chatops_build_info{version="v9"} 1`)
 
-	resp, err = http.Get(base + "/other")
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	for path, code := range map[string]int{"/healthz": http.StatusOK, "/readyz": http.StatusServiceUnavailable, "/other": http.StatusNotFound} {
+		resp, err = http.Get(base + path)
+		require.NoError(t, err)
+		_, err = io.Copy(io.Discard, resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		require.Equal(t, code, resp.StatusCode, path)
+	}
 
 	cancel()
 	select {
@@ -45,5 +49,5 @@ func Test_Serve_closed_listener(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	require.NoError(t, ln.Close())
-	require.Error(t, Serve(context.Background(), ln, New("v0").Handler()))
+	require.Error(t, Serve(context.Background(), ln, New("v0")))
 }

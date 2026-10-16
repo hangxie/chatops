@@ -135,6 +135,13 @@ func (m *Manager) Pending() int {
 	return m.pending
 }
 
+// Accepting reports whether Submit would take new messages, ignoring the pending limit.
+func (m *Manager) Accepting() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return !m.closing && m.ctx.Err() == nil
+}
+
 // InFlight counts turns holding a slot.
 func (m *Manager) InFlight() int {
 	return len(m.slots)

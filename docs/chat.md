@@ -11,9 +11,10 @@ A backend satisfies one interface:
     // internal/chat
     type Backend interface {
         Run(ctx context.Context, submit func(conversation.Message) error) error
+        Connected() bool
     }
 
-`Run` delivers each inbound message by calling `submit`; every `conversation.Message` carries a `Reply` closure that posts a `conversation.Reply` back to its own thread, connection, or stream, and that closure is the entire platform abstraction. A `Reply` holds the answer `Text` and an optional stats `Footer` (see [`observability.md`](observability.md)) kept apart so a backend can set the footer off in its platform's style; a backend without rich formatting sends `Plain()`, the footer after a blank line. Backends are wired explicitly through a `New(name, cfg, logger) (Backend, error)` factory that switches on the configured `type`; there is no `init()` or blank-import registration. `stdio` is an ordinary backend: selected, configured, validated, and namespaced like every other, and never a default or fallback.
+`Run` delivers each inbound message by calling `submit`; every `conversation.Message` carries a `Reply` closure that posts a `conversation.Reply` back to its own thread, connection, or stream, and that closure is the entire platform abstraction. `Connected` reports whether the backend can receive messages right now, for readiness and the `chatops_chat_backend_up` gauge: Slack between Socket Mode's connected and disconnect events, `unix` while listening, `stdio` while reading. A `Reply` holds the answer `Text` and an optional stats `Footer` (see [`observability.md`](observability.md)) kept apart so a backend can set the footer off in its platform's style; a backend without rich formatting sends `Plain()`, the footer after a blank line. Backends are wired explicitly through a `New(name, cfg, logger) (Backend, error)` factory that switches on the configured `type`; there is no `init()` or blank-import registration. `stdio` is an ordinary backend: selected, configured, validated, and namespaced like every other, and never a default or fallback.
 
 ## Selecting backends
 

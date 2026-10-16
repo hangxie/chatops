@@ -1,19 +1,22 @@
-// Package metrics exports question, turn, and MCP metrics in the Prometheus format.
+// Package metrics exports question, turn, and MCP metrics in the Prometheus format, plus liveness and readiness probes.
 package metrics
 
 import (
 	"net/http"
+	"sync/atomic"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/hangxie/chatops/internal/chat"
 	"github.com/hangxie/chatops/internal/mcp"
 )
 
 // Metrics owns a dedicated registry; it implements conversation.Observer.
 type Metrics struct {
 	registry *prometheus.Registry
+	sources  atomic.Pointer[Sources] // nil until Watch, so readiness reports starting
 
 	received      *prometheus.CounterVec
 	rejected      *prometheus.CounterVec
@@ -29,11 +32,13 @@ type Metrics struct {
 	truncated  *prometheus.CounterVec
 }
 
-// Sources are read at scrape time.
+// Sources are read at scrape and probe time.
 type Sources struct {
-	Pending  func() int
-	InFlight func() int
-	MCP      func() []mcp.ServerHealth
+	Pending   func() int
+	InFlight  func() int
+	Accepting func() bool
+	Chat      func() []chat.BackendHealth
+	MCP       func() []mcp.ServerHealth
 }
 
 // New registers every collector, plus Go runtime, process, and build info metrics.
@@ -82,8 +87,10 @@ func (m *Metrics) Watch(s Sources) {
 	m.registry.MustRegister(
 		gaugeFunc("chatops_questions_pending", "Accepted questions not yet answered.", s.Pending),
 		gaugeFunc("chatops_turns_in_flight", "Turns holding a slot.", s.InFlight),
+		chatCollector(s.Chat),
 		mcpCollector(s.MCP),
 	)
+	m.sources.Store(&s)
 }
 
 // Handler serves the registry in the Prometheus exposition format.
@@ -103,6 +110,19 @@ func gaugeFunc(name, help string, read func() int) prometheus.GaugeFunc {
 	return prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: name, Help: help}, func() float64 { return float64(read()) })
 }
 
+var backendUpDesc = prometheus.NewDesc("chatops_chat_backend_up", "1 while the chat backend can receive messages.", []string{"backend"}, nil)
+
+// chatCollector reports chat backend health at scrape time.
+type chatCollector func() []chat.BackendHealth
+
+func (c chatCollector) Describe(ch chan<- *prometheus.Desc) { ch <- backendUpDesc }
+
+func (c chatCollector) Collect(ch chan<- prometheus.Metric) {
+	for _, backend := range c() {
+		ch <- prometheus.MustNewConstMetric(backendUpDesc, prometheus.GaugeValue, gaugeBool(backend.Up), backend.Name)
+	}
+}
+
 var (
 	serverUpDesc = prometheus.NewDesc("chatops_mcp_server_up", "1 while the MCP server's session is up.", []string{"server"}, nil)
 	toolsDesc    = prometheus.NewDesc("chatops_mcp_tools", "Tools the catalog holds from the MCP server.", []string{"server"}, nil)
@@ -118,11 +138,14 @@ func (c mcpCollector) Describe(ch chan<- *prometheus.Desc) {
 
 func (c mcpCollector) Collect(ch chan<- prometheus.Metric) {
 	for _, server := range c() {
-		up := 0.0
-		if server.Up {
-			up = 1
-		}
-		ch <- prometheus.MustNewConstMetric(serverUpDesc, prometheus.GaugeValue, up, server.ID)
+		ch <- prometheus.MustNewConstMetric(serverUpDesc, prometheus.GaugeValue, gaugeBool(server.Up), server.ID)
 		ch <- prometheus.MustNewConstMetric(toolsDesc, prometheus.GaugeValue, float64(server.Tools), server.ID)
 	}
+}
+
+func gaugeBool(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
 }

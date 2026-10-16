@@ -17,12 +17,31 @@ import (
 // backend stops (nil on a clean stop, an error on an unrecoverable failure).
 type Backend interface {
 	Run(ctx context.Context, submit func(conversation.Message) error) error
+	// Connected reports whether the backend can receive messages right now.
+	Connected() bool
 }
 
 // Named pairs a backend with its configured name, which prefixes the backend's conversation keys.
 type Named struct {
 	Name    string
 	Backend Backend
+}
+
+// BackendHealth is one chat backend's connection state.
+type BackendHealth struct {
+	Name string
+	Up   bool
+}
+
+// Health returns a reader of every backend's connection state, in the given order.
+func Health(backends []Named) func() []BackendHealth {
+	return func() []BackendHealth {
+		health := make([]BackendHealth, 0, len(backends))
+		for _, b := range backends {
+			health = append(health, BackendHealth{Name: b.Name, Up: b.Backend.Connected()})
+		}
+		return health
+	}
 }
 
 // New builds one backend from its definition, switching on the configured type.

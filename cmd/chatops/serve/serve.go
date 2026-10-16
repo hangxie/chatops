@@ -88,7 +88,10 @@ func (c Cmd) Run(ctx context.Context) error {
 	conversations := conversation.New(context.Background(), agent.New(model, tools, cfg.Agent, logger), cfg.Agent, logger, observer)
 	defer conversations.Shutdown(shutdownGrace)
 	if exporter != nil {
-		exporter.Watch(metrics.Sources{Pending: conversations.Pending, InFlight: conversations.InFlight, MCP: tools.Health})
+		exporter.Watch(metrics.Sources{
+			Pending: conversations.Pending, InFlight: conversations.InFlight, Accepting: conversations.Accepting,
+			Chat: chat.Health(backends), MCP: tools.Health,
+		})
 	}
 
 	logger.Info("chatops serving", "backends", len(backends), "servers", len(cfg.MCP.Servers), "tools", len(tools.Catalog().Tools()))
@@ -116,7 +119,7 @@ func (c Cmd) serveMetrics(address string, exporter *metrics.Metrics, logger *slo
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		err := metrics.Serve(ctx, ln, exporter.Handler())
+		err := metrics.Serve(ctx, ln, exporter)
 		switch {
 		case err == nil:
 		case ctx.Err() == nil:
