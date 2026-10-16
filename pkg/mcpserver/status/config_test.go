@@ -10,14 +10,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// packagedConfig is the services file the packages install as /etc/chatops/mcp-status.yaml.
-const packagedConfig = "../../../package/systemd/mcp-status.yaml"
+// packagedConfig is the directory the packages install as /etc/chatops/mcp-status.d.
+const packagedConfig = "../../../package/systemd/mcp-status.d"
 
-func writeFile(t *testing.T, content string) string {
+// writeDir writes files into a new config directory and returns it.
+func writeDir(t *testing.T, files map[string]string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "status.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
-	return path
+	dir := t.TempDir()
+	for name, content := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
+	}
+	return dir
 }
 
 func Test_Load_packaged(t *testing.T) {
@@ -35,24 +38,50 @@ func Test_Load_packaged(t *testing.T) {
 	}, cfg.Services[5].Feeds)
 }
 
-func Test_Load_errors(t *testing.T) {
+func svc(name string) string {
+	return "services:\n  - name: " + name + "\n    display: " + name + "\n    type: slack\n    url: https://" + name + ".example\n"
+}
+
+func Test_Load(t *testing.T) {
 	tests := map[string]struct {
-		path   string
+		files  map[string]string
+		want   []string
 		errMsg string
 	}{
-		"missing":       {path: filepath.Join(t.TempDir(), "none.yaml"), errMsg: "read status config: open"},
-		"bad-yaml":      {path: writeFile(t, "services: [\n"), errMsg: "parse status config"},
-		"unknown-field": {path: writeFile(t, "services:\n  - name: x\n    display: X\n    type: slack\n    url: https://x.example\n    timeout: 5s\n"), errMsg: "field timeout not found"},
-		"empty-file":    {path: writeFile(t, ""), errMsg: "at least one service is required"},
-		"invalid":       {path: writeFile(t, "services:\n  - name: X\n"), errMsg: `services[0]: name "X" must be lowercase`},
+		"file-name-order":  {files: map[string]string{"20-b.yaml": svc("b"), "00-default.yaml": svc("default"), "10-a.yaml": svc("a")}, want: []string{"default", "a", "b"}},
+		"empty-default":    {files: map[string]string{"00-default.yaml": "", "homelab.yaml": svc("a")}, want: []string{"a"}},
+		"empty-dir":        {errMsg: "at least one service is required"},
+		"nothing-in-files": {files: map[string]string{"empty.yaml": ""}, errMsg: "at least one service is required"},
+		"duplicate-across": {files: map[string]string{"00-default.yaml": svc("a"), "homelab.yaml": svc("a")}, errMsg: `services[1]: duplicate name "a"`},
+		"invalid":          {files: map[string]string{"00-default.yaml": svc("a"), "homelab.yaml": "services:\n  - name: B\n"}, errMsg: `services[1]: name "B" must be lowercase`},
+		"bad-yaml":         {files: map[string]string{"a.yaml": "services: [\n"}, errMsg: "parse status config"},
+		"unknown-field":    {files: map[string]string{"homelab.yaml": "include: [x.yaml]\n"}, errMsg: "homelab.yaml: yaml: unmarshal errors:\n  line 1: field include not found"},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, err := Load(tc.path)
-			require.ErrorContains(t, err, tc.errMsg)
+			dir := writeDir(t, tc.files)
+			cfg, err := Load(dir)
+			if tc.errMsg != "" {
+				require.ErrorContains(t, err, tc.errMsg)
+				return
+			}
+			require.NoError(t, err)
+			var names []string
+			for _, s := range cfg.Services {
+				names = append(names, s.Name)
+			}
+			require.Equal(t, tc.want, names)
 		})
 	}
+}
+
+func Test_Load_errors(t *testing.T) {
+	_, err := Load(filepath.Join(t.TempDir(), "none.d"))
+	require.ErrorContains(t, err, "read status config directory: open")
+	dir := writeDir(t, nil)
+	_, err = Load(dir)
+	require.EqualError(t, err, "status config "+dir+": at least one service is required")
 }
 
 func Test_Config_validate(t *testing.T) {

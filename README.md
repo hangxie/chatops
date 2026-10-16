@@ -212,12 +212,12 @@ The deb and rpm packages install both binaries, a `chatops` system user, and a s
 | Path | Purpose |
 |---|---|
 | `/etc/chatops/config.yaml` | Config file; set `llm.base_url` and `llm.model` before starting |
-| `/etc/chatops/mcp-status.yaml` | Services the `status` tool group checks; edit to add services or product names |
-| `/etc/chatops/mcp-kubernetes.yaml` | Settings for the `kubernetes` tool group, such as the kubeconfig at `/etc/chatops/kubeconfig` |
+| `/etc/chatops/mcp-status.d/` | Config directory of the `status` tool group; `00-default.yaml` is the shipped service list, and your own services go in files of your own beside it |
+| `/etc/chatops/mcp-kubernetes.d/` | Config directory of the `kubernetes` tool group; `00-default.yaml` points at the kubeconfig at `/etc/chatops/kubeconfig` (which you provide; make it `root:chatops` `0640`) |
 | `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `LLM_API_KEY`) and `LOG_LEVEL`/`LOG_FORMAT`; readable only by root and the `chatops` group |
 | `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml --chat ${CHAT}` (default `homelab`, the backend named in the sample config) with JSON logs to the journal; restarts on failure |
 
-Both files are kept across upgrades. The service is not started on install; once both files are filled in:
+Edited config files are kept across upgrades; see [Configuration directories](#configuration-directories). The service is not started on install; once both files are filled in:
 
 ```bash
 sudo systemctl enable --now chatops
@@ -230,10 +230,9 @@ journalctl -u chatops -f
 
 | Flag | Default | Description |
 |---|---|---|
-| `--tools` | `ping` | Comma-separated tool groups to serve |
+| `--tool` | `ping` | Tool group to serve; each process serves one group |
+| `--config` | (none) | Config directory of the group; every `*.yaml` in it is merged in file name order (see [Configuration directories](#configuration-directories)); required by `status`, optional for `kubernetes`, rejected by `ping` |
 | `--http` | (stdio) | Serve Streamable HTTP at `/mcp` on this address instead of stdio |
-| `--status-config` | (none) | YAML file listing the services the `status` group checks; required with `--tools status` |
-| `--kubernetes-config` | (none) | YAML file configuring the `kubernetes` group; optional, requires `--tools kubernetes` |
 | `--token-env` | (none) | Environment variable holding the bearer token HTTP clients must send; required when `--http` is not a loopback address |
 
 ### Built-in MCPs
@@ -246,9 +245,9 @@ Each tool group has a design doc under [`docs/`](docs/); the overall architectur
 | `status` | `service_status` | Status and active incidents of external services from their status pages, and of self-hosted services from their health endpoints | [`docs/mcp-status.md`](docs/mcp-status.md) |
 | `kubernetes` | `node_list`, `node_status`, `node_resources`, `namespace_list`, `deployment_list`, `deployment_pods`, `deployment_describe`, `pod_list`, `pod_describe`, `pod_log`, `pod_resources`, `statefulset_list`, `statefulset_pods`, `statefulset_describe`, `daemonset_list`, `daemonset_pods`, `daemonset_describe`, `replicaset_list`, `replicaset_pods`, `replicaset_describe`, `service_list`, `service_pods`, `service_describe`, `job_list`, `job_pods`, `job_log`, `job_describe`, `pv_list`, `pv_describe`, `pvc_list`, `pvc_describe`, `configmap_list`, `configmap_describe`, `event_list` | Read-only Kubernetes inspection: node roster, health, and resource capacity/utilization; namespaces and why one is stuck terminating; deployment health, pods, and definition; pod roster, definition, logs, and resource usage; statefulset health, pods, and definition; daemonset health, pods, and definition; replicaset health, pods, and definition; service health, backing pods, and definition; job status, pods, logs, and definition; persistent volumes and their claims; persistent volume claims; configmaps; recent events and warnings | [`docs/mcp-k8s.md`](docs/mcp-k8s.md) |
 
-`node_status` and `node_resources` take a `nodes` list, so a question about several nodes is one call: `node_list` for the names, then one call with all of them. Every other per-object tool likewise takes a list named after its resource (`pods`, `deployments`, and so on), of `{namespace, name}` objects for namespaced resources. A list holds at most 50 distinct targets (5 for every `_describe` and `_log` tool, whose output is a full object or raw container output); a target that does not exist is reported as not found without failing the rest, and a namespace that does not exist is named as such. Every `_list` tool, and each target of a `_pods` tool, returns at most `max_results` rows (default 50, set in `--kubernetes-config`), with the total matched in `total` and a "showing the first N of M" note, so the model narrows the call (for example by namespace) instead of assuming it saw everything.
+`node_status` and `node_resources` take a `nodes` list, so a question about several nodes is one call: `node_list` for the names, then one call with all of them. Every other per-object tool likewise takes a list named after its resource (`pods`, `deployments`, and so on), of `{namespace, name}` objects for namespaced resources. A list holds at most 50 distinct targets (5 for every `_describe` and `_log` tool, whose output is a full object or raw container output); a target that does not exist is reported as not found without failing the rest, and a namespace that does not exist is named as such. Every `_list` tool, and each target of a `_pods` tool, returns at most `max_results` rows (default 50, set in `--config`), with the total matched in `total` and a "showing the first N of M" note, so the model narrows the call (for example by namespace) instead of assuming it saw everything.
 
-Every `kubernetes` group setting lives in the `--kubernetes-config` file, shipped as `package/systemd/mcp-kubernetes.yaml` and installed as `/etc/chatops/mcp-kubernetes.yaml`; every field is optional, and without the file the group uses its defaults. `kubeconfig` names a kubeconfig honored exactly with no fallback (a relative path follows the config file) `context` selects a kubeconfig context, and `max_results` caps the rows of list and pods tools; without them the group uses in-cluster credentials when running as a pod, else the default local kubeconfig. See [`docs/mcp-k8s.md`](docs/mcp-k8s.md) for the connection model. Node utilization needs metrics-server; without it, capacity and allocatable are still reported. The group needs only read-only RBAC:
+Every `kubernetes` group setting lives in its `--config` directory, shipped as `package/systemd/mcp-kubernetes.d/` and installed as `/etc/chatops/mcp-kubernetes.d/`; every field is optional, and without `--config` the group uses its defaults. `kubeconfig` names a kubeconfig honored exactly with no fallback (a relative path follows the config directory), `context` selects a kubeconfig context, and `max_results` caps the rows of list and pods tools; without them the group uses in-cluster credentials when running as a pod, else the default local kubeconfig. See [`docs/mcp-k8s.md`](docs/mcp-k8s.md) for the connection model. Node utilization needs metrics-server; without it, capacity and allocatable are still reported. The group needs only read-only RBAC:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -318,7 +317,7 @@ This role is read-only, but its reads are cluster-wide: the credentials can read
 
 `nodes/proxy` is a powerful permission that reaches every kubelet endpoint, not just the Summary API, so grant it only when node disk reporting is wanted. The Summary API reports the kubelet's own filesystem usage, not arbitrary host-mounted disks (a separate data disk or Ceph OSD will not appear); use Prometheus with node-exporter for comprehensive host disk monitoring.
 
-The `status` group has no built-in services: every service comes from the `--status-config` file. `package/systemd/mcp-status.yaml` is the shipped list, installed as `/etc/chatops/mcp-status.yaml` and kept across upgrades; edit it to add services or product names and restart the server. See [`docs/mcp-status.md`](docs/mcp-status.md) for the entry schema and supported page types.
+The `status` group has no built-in services: every service comes from its `--config` directory. `package/systemd/mcp-status.d/00-default.yaml` is the shipped list, installed as `/etc/chatops/mcp-status.d/00-default.yaml`. Add your own services, such as self-hosted ones, in a file of your own in the same directory (for example `10-homelab.yaml`, same schema) rather than editing the shipped one; [Configuration directories](#configuration-directories) explains how the files merge and how upgrades treat them. Restart the server after a change. See [`docs/mcp-status.md`](docs/mcp-status.md) for the entry schema and supported page types.
 
 To exercise the server by hand over stdio, send an MCP `initialize` handshake followed by a tool call. The trailing `sleep` keeps stdin open until the replies are written:
 
@@ -336,7 +335,7 @@ The second reply carries the result:
 {"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"pong"}],"structuredContent":{"reply":"pong"}}}
 ```
 
-Per-object Kubernetes tools take their targets as a list; with `--tools kubernetes`, this third line reports several nodes in one call:
+Per-object Kubernetes tools take their targets as a list; with `--tool kubernetes`, this third line reports several nodes in one call:
 
 ```text
 '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"node_resources","arguments":{"nodes":["master-0","master-1"]}}}'
@@ -352,6 +351,41 @@ export MCP_TOKEN=$(openssl rand -hex 32)
 ```
 
 The token only authenticates the caller; use a TLS-terminating proxy when the endpoint is reachable beyond a trusted network.
+
+### Configuration directories
+
+A tool group's `--config` names a directory, not a file: every `*.yaml` in it is read in file name order and merged, so prefixes such as `00-` and `10-` set the order. Only files whose name ends in `.yaml` and does not start with `.` are loaded; nothing else in the directory is read, including `.yml` files, hidden files, package-manager leftovers such as `.dpkg-dist` and `.rpmnew`, editor backups, and subdirectories. Other files, such as a kubeconfig, may therefore sit in the directory as long as their names do not end in `.yaml`: a `kubeconfig.yaml` there would be loaded as group config and rejected for its unknown fields. An empty directory means no settings. The daemon's own `config.yaml` is a single file.
+
+The packages install `/etc/chatops/mcp-status.d/` and `/etc/chatops/mcp-kubernetes.d/` (owned `root:chatops`, mode `0755`), each holding the shipped `00-default.yaml` (mode `0640`). A shipped file is updated on upgrade only while it is unedited; an edited copy is kept, with the new version saved beside it as `.dpkg-dist` or `.rpmnew`, which is skipped. Files you add are never touched by the packages, so keep local settings in your own file (mode `0640`, readable by the `chatops` group) and leave `00-default.yaml` unedited to keep receiving the shipped defaults.
+
+What a later file does depends on the kind of node it sets:
+
+| Node in the later file | Result |
+|---|---|
+| mapping | Merged key by key: a key only in the later file is added, and a key in both is merged by these same rules. |
+| list | Appended after the earlier items. Items are never matched or merged, so an entry repeating an earlier `name` is a second entry, which the group rejects as a duplicate. |
+| scalar (string, number, boolean) | Replaces the earlier value: the last file wins. |
+| empty or `null` | Ignored; the earlier value stays, so a later file cannot unset a value. |
+
+For example, the shipped status list plus a file of your own, and a kubernetes setting overridden by another:
+
+```yaml
+# /etc/chatops/mcp-status.d/00-default.yaml        # /etc/chatops/mcp-status.d/10-homelab.yaml
+services:                                          services:
+  - name: github                                     - name: harbor
+  - name: slack                                        display: Harbor
+    ...                                                ...
+# merged: github, slack, harbor (in that order)
+
+# /etc/chatops/mcp-kubernetes.d/00-default.yaml    # /etc/chatops/mcp-kubernetes.d/10-site.yaml
+kubeconfig: /etc/chatops/kubeconfig                max_results: 100
+max_results: 50
+# merged: kubeconfig: /etc/chatops/kubeconfig, max_results: 100
+```
+
+To change a shipped list entry, edit it in `00-default.yaml`; redefining it in another file adds a duplicate instead of replacing it.
+
+Each file must be valid on its own: an unknown field or a wrong type stops `chatops-mcp` at startup with that file's name, and so does a key that is a list in one file and a mapping or scalar in another. Checks that need the merged result, such as duplicate names, run after merging and report the directory, with the index counted across the merged list in file name order: `status config /etc/chatops/mcp-status.d: services[9]: duplicate name "slack"` (a file of your own redefining the shipped `slack` entry); search the files for the quoted name. A relative path, such as `kubeconfig`, resolves against the config directory, and YAML anchors and aliases work only within one file.
 
 ## Version
 

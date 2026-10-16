@@ -17,7 +17,7 @@ func Test_cli_parse(t *testing.T) {
 		command string
 	}{
 		"serve":         {args: []string{"serve"}, command: "serve"},
-		"serve-flags":   {args: []string{"serve", "--tools", "ping", "--http", "127.0.0.1:8080"}, command: "serve"},
+		"serve-flags":   {args: []string{"serve", "--tool", "ping", "--http", "127.0.0.1:8080"}, command: "serve"},
 		"version":       {args: []string{"version"}, command: "version"},
 		"version-json":  {args: []string{"version", "--json"}, command: "version"},
 		"no-args":       {args: nil, errMsg: "expected"},

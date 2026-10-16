@@ -117,7 +117,7 @@ Default deny. The effective tool set is the intersection of configured servers, 
 - **Policy rules:** a rule names a server, a tool (exact or `*`), the allowed roles, and whether approval is required. Matching is on stable server/tool identity. A destructive annotation forces approval regardless of the rule.
 - **Approval:** a call needing approval suspends the turn and posts Approve/Deny buttons. An approval is bound to server ID, MCP tool name, SHA-256 of canonical JSON arguments, requester, conversation key, and expiry; changing any argument invalidates it. On a click the daemon verifies the clicker's identity and approver role, checks expiry and binding, rechecks policy, then resumes. Self-approval is off by default. Suspended turns are lost on restart.
 - **General controls:** the model can never add a server, launch a command, choose an endpoint, or alter credentials — those come only from config. Downstream controls (Kubernetes RBAC, Vault policies) remain enforced independently. Authoritative instructions and authorization stay outside untrusted content (chat text, tool metadata, tool results). Secrets are redacted from logs.
-- `chatops-mcp` HTTP bearer tokens authenticate callers but do not authorize them. Tool-group selection (`--tools`), downstream RBAC, and the credentials a deployment hands the process are three separate controls, each scoped on its own; ChatOps policy sits in front of all of them. Unauthenticated loopback HTTP trusts every local process on the host, so privileged groups on shared hosts must use `--token-env` or stdio.
+- `chatops-mcp` HTTP bearer tokens authenticate callers but do not authorize them. Tool-group selection (`--tool`), downstream RBAC, and the credentials a deployment hands the process are three separate controls, each scoped on its own; ChatOps policy sits in front of all of them. Unauthenticated loopback HTTP trusts every local process on the host, so privileged groups on shared hosts must use `--token-env` or stdio.
 
 ## 9. Configuration
 
@@ -178,6 +178,7 @@ There is no top-level `main.go`; `main` packages live under `cmd/<binary>/`, and
 5. Approval happens in Slack via buttons, by users holding the rule's approver role; self-approval is off by default.
 6. No streaming; final replies in thread.
 7. First deployment target is systemd using the rpm/deb packaging covering both binaries.
+8. `chatops-mcp serve` runs one tool group per process (`--tool`), and that group's `--config` is a directory whose `*.yaml` files merge in file name order by one shared rule (mappings by key, lists appended, later scalars win, `null` ignored), so local settings live in their own file and never require editing a packaged one. The daemon's `config.yaml` stays a single file, since a second file silently overriding LLM or credential settings is too surprising.
 
 ## 14. References
 

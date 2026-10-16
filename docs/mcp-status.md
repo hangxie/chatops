@@ -9,11 +9,11 @@ The `status` group reports the status and active incidents of services, from the
 - Health labels: `OK`, `MAINTENANCE`, `DEGRADED`, `PARTIAL OUTAGE`, `MAJOR OUTAGE`, `UNKNOWN`. A status page that cannot be read is reported as `UNKNOWN` health rather than failing the call, since the vendor's service may well be up; an `http` health endpoint that cannot be reached is reported as `MAJOR OUTAGE`, since the endpoint is the service itself.
 - Annotations: `ReadOnlyHint: true`, `IdempotentHint: true`, `OpenWorldHint: true` (it reaches external pages).
 
-No service, URL, or product name is hardcoded: the code knows only the page formats, and every service comes from the config file. The tool description tells the model that only the listed services are covered.
+No service, URL, or product name is hardcoded: the code knows only the page formats, and every service comes from the config directory. The tool description tells the model that only the listed services are covered.
 
 ## Configuration
 
-Services are listed in the `--status-config` YAML file (required with `--tools status`), shipped as `package/systemd/mcp-status.yaml` and installed at `/etc/chatops/mcp-status.yaml`. Services are reported in file order; restart the server after editing. Each entry has:
+Services are listed in the `*.yaml` files of the `--config` directory (required with `--tool status`), shipped as `package/systemd/mcp-status.d/00-default.yaml` and installed at `/etc/chatops/mcp-status.d/00-default.yaml`. Services are reported in file name order, then list order; restart the server after a change. Each entry has:
 
 - `name` — the tool argument value (lowercase letters, digits, `-`).
 - `display` — the name shown in results.
@@ -31,4 +31,6 @@ Services are listed in the `--status-config` YAML file (required with `--tools s
 
 An `http` entry is `OK` on any 2xx response, unless its JSON body reports a problem; then it is `PARTIAL OUTAGE`. A `status` field reports one when it is present and is neither `true` nor `ok`, `healthy`, `up`, or `pass` (case-insensitive), so `false` or `500` counts while a missing or `null` one leaves the verdict to the HTTP code. A `components` list (as Harbor reports) reports one for each member whose `status` is not one of those words, listed as an incident, and the summary counts them when the top-level status is healthy. Fields are read one by one, so a malformed component or a `components` value that is not a list never hides the top-level `status`. A non-2xx response, or none at all, is `MAJOR OUTAGE`, and the summary quotes the start of the response body so the reason a service gives for failing reaches the user.
 
-Unknown fields, duplicate names, and URLs that are not absolute `http`/`https` stop `chatops-mcp` at startup.
+Site-specific services go in a file of your own in the same directory (for example `10-homelab.yaml`, same `services:` schema) rather than edits to the shipped list; the lists are joined in file name order, by the merge rule in the README's [Configuration directories](../README.md#configuration-directories). Any file may be empty as long as some service is listed, and a later file cannot replace or remove a shipped entry, since list items are never merged. The deb and rpm packages install `00-default.yaml` as a configuration file: an unedited copy is updated on upgrade, while an edited one is kept and the new list is saved beside it (`.dpkg-dist` if dpkg is told to keep it, `.rpmnew`, both skipped) for a manual merge. The packages never touch files they did not install, so local services survive upgrades and leave `00-default.yaml` unedited to keep receiving the shipped list.
+
+Unknown fields, duplicate names (also across files), and URLs that are not absolute `http`/`https` stop `chatops-mcp` at startup.
