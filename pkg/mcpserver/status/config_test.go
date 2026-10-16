@@ -66,13 +66,13 @@ func Test_Config_validate(t *testing.T) {
 		services []Service
 		errMsg   string
 	}{
-		"valid":          {services: []Service{valid, google, with(valid, func(s *Service) { s.Name, s.Type, s.URL = "io", TypeStatusIO, "http://io.local/status" }), with(valid, func(s *Service) { s.Name, s.Type = "dd", TypeDatadog })}},
+		"valid":          {services: []Service{valid, google, with(valid, func(s *Service) { s.Name, s.Type, s.URL = "io", TypeStatusIO, "http://io.local/status" }), with(valid, func(s *Service) { s.Name, s.Type = "dd", TypeDatadog }), with(valid, func(s *Service) { s.Name, s.Type, s.URL = "llm", TypeHTTP, "http://ai.local:8080/health" })}},
 		"empty":          {errMsg: "at least one service is required"},
 		"duplicate":      {services: []Service{valid, valid}, errMsg: `services[1]: duplicate name "svc-1"`},
 		"bad-name":       {services: []Service{with(valid, func(s *Service) { s.Name = "Svc 1" })}, errMsg: `services[0]: name "Svc 1" must be lowercase letters, digits, and "-", and not "all"`},
 		"reserved-name":  {services: []Service{with(valid, func(s *Service) { s.Name = "all" })}, errMsg: `name "all" must be`},
 		"no-display":     {services: []Service{with(valid, func(s *Service) { s.Display = "" })}, errMsg: `service "svc-1": display is required`},
-		"bad-type":       {services: []Service{with(valid, func(s *Service) { s.Type = "rss" })}, errMsg: `service "svc-1": type "rss" must be statuspage, statusio, slack, datadog, or google`},
+		"bad-type":       {services: []Service{with(valid, func(s *Service) { s.Type = "rss" })}, errMsg: `service "svc-1": type "rss" must be statuspage, statusio, slack, datadog, google, or http`},
 		"no-url":         {services: []Service{with(valid, func(s *Service) { s.URL = "" })}, errMsg: `service "svc-1": url "" must be an absolute http or https URL`},
 		"relative-url":   {services: []Service{with(valid, func(s *Service) { s.URL = "/api" })}, errMsg: `url "/api" must be an absolute`},
 		"ftp-url":        {services: []Service{with(valid, func(s *Service) { s.URL = "ftp://svc.example/x" })}, errMsg: `url "ftp://svc.example/x" must be an absolute`},
@@ -104,6 +104,7 @@ func Test_Service_check(t *testing.T) {
 		"statusio":   {service: Service{Type: TypeStatusIO, URL: serveJSON(t, http.StatusOK, `{"result":{"status_overall":{"status_code":500}}}`)}, want: HealthMajorOutage},
 		"slack":      {service: Service{Type: TypeSlack, URL: serveJSON(t, http.StatusOK, `{"status":"ok"}`)}, want: HealthOperational},
 		"datadog":    {service: Service{Type: TypeDatadog, URL: serveJSON(t, http.StatusOK, `{"components":[{"name":"Web","status":"degraded"}]}`)}, want: HealthDegraded},
+		"http":       {service: Service{Type: TypeHTTP, URL: serveText(t, http.StatusOK, `{"status":"ok"}`)}, want: HealthOperational},
 		"google":     {service: Service{Type: TypeGoogle, Display: "G", Feeds: []Feed{{URL: serveJSON(t, http.StatusOK, `[{"end":"","affected_products":[{"id":"p"}],"most_recent_update":{"status":"SERVICE_OUTAGE"}}]`)}}}, want: HealthMajorOutage},
 	}
 

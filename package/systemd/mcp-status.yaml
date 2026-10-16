@@ -3,8 +3,9 @@
 #   name:    tool argument value; lowercase letters, digits, and "-"
 #   display: name shown in results
 #   covers:  products users may ask about, so the model can map "is codex down?" to openai
-#   type:    statuspage (Atlassian Statuspage /api/v2/summary.json), statusio, slack, datadog (Datadog Status Pages config.json), or google
-#   url:     status endpoint, for every type but google
+#   type:    statuspage (Atlassian Statuspage /api/v2/summary.json), statusio, slack, datadog (Datadog Status Pages config.json), google,
+#            or http (a self-hosted health endpoint such as llama.cpp /health; no answer or a non-2xx reply means down)
+#   url:     status or health endpoint, for every type but google
 #   feeds:   google only; incident feeds to combine, each optionally narrowed to product IDs
 # Services are reported in this order. Restart chatops serve after editing.
 
@@ -67,3 +68,10 @@ services:
     covers: [Docker Hub image pulls and pushes, Docker login, Docker Desktop, Docker Build Cloud, Docker Scout]
     type: statusio
     url: https://api.status.io/1.0/status/533c6539221ae15e3f000031
+
+  # A self-hosted service, checked through its own health endpoint:
+  # - name: local-llm
+  #   display: Local LLM
+  #   covers: [the local LLM server, llama.cpp]
+  #   type: http
+  #   url: http://llm.example.lan:8080/health
