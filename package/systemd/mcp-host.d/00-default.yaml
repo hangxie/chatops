@@ -1,0 +1,22 @@
+# Hosts checked by chatops-mcp's host_status tool (serve --tool host --config <this directory>).
+# Each host:
+#   name:     tool argument value; lowercase letters, digits, and "-"
+#   display:  name shown in results
+#   covers:   what users may call the host, so the model can map "is the media box up?" to media
+#   address:  DNS name or IP address, without a scheme or port
+#   checks:   ping, ssh, or both (default both); the name is always resolved first
+#   ssh_port: SSH port (default 22); only with the ssh check
+# Only *.yaml files in this directory are read, in file name order, and their hosts lists are joined in that
+# order. Every host is site-specific, so this file ships examples only: put your hosts in a file of your own
+# here (e.g. 10-homelab.yaml). Restart chatops serve after a change.
+
+# hosts:
+#   - name: media
+#     display: media
+#     covers: [the media server, the Harbor and LLM host]
+#     address: media.example.lan
+#   - name: nas
+#     display: NAS
+#     covers: [the file server]
+#     address: 192.168.1.20
+#     checks: [ping]          # no SSH on this one
