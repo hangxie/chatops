@@ -174,7 +174,7 @@ How it answers:
 
 ### Metrics
 
-With `metrics.listen` set, `serve` exposes Prometheus metrics at `http://<listen>/metrics`: questions received, rejected, and answered per chat backend; response time from receipt to delivered reply; model call latency and tokens; tool call latency, result size, and truncation per MCP server and tool; chat backend and MCP server health; and Go runtime and process metrics. The endpoint has no authentication, so bind it to loopback or a network only your Prometheus can reach. If the endpoint cannot listen at startup, or stops unexpectedly later, `serve` exits with an error so the service manager restarts it rather than running without metrics. The full list is in [`docs/observability.md`](docs/observability.md). A scrape config:
+With `metrics.listen` set, `serve` exposes Prometheus metrics at `http://<listen>/metrics`: questions received, rejected, and answered per chat backend; response time from receipt to delivered reply; model call latency and tokens; tool call latency, result size, and truncation per MCP server and tool; chat backend and MCP server health; and Go runtime and process metrics. The packaged `config.yaml` sets `metrics.listen: 127.0.0.1:9464`, so the endpoint is on but reachable only from the host; to scrape from another machine, bind it to an address that machine can reach. The endpoint has no authentication, so bind it to loopback or a network only your Prometheus can reach. If the endpoint cannot listen at startup, or stops unexpectedly later, `serve` exits with an error so the service manager restarts it rather than running without metrics. The full list is in [`docs/observability.md`](docs/observability.md). A scrape config:
 
 ```yaml
 scrape_configs:

@@ -77,10 +77,10 @@ mcp:
     #   url: https://mcp.example.com/mcp
     #   bearer_token_env: MCP_TOKEN
 
-# Prometheus metrics at http://<listen>/metrics and health probes at /healthz and /readyz; unset disables the endpoint.
+# Prometheus metrics at http://<listen>/metrics and health probes at /healthz and /readyz; remove to disable the endpoint.
 # It has no authentication, so keep it on loopback or a scrape-only network.
-# metrics:
-#   listen: 127.0.0.1:9464
+metrics:
+  listen: 127.0.0.1:9464
 
 agent:
   # Earlier user messages replayed as context. 0 (stateless) answers each
