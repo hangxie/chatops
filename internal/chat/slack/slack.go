@@ -113,7 +113,9 @@ func (a *Adapter) consume(ctx context.Context, runErr <-chan error, submit func(
 	for {
 		select {
 		case <-ctx.Done():
-			<-runErr
+			if err := <-runErr; err != nil {
+				a.logger.Debug("slack socket mode stopped", "error", err)
+			}
 			return nil
 		case err := <-runErr:
 			switch {

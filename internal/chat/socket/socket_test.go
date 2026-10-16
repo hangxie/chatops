@@ -56,7 +56,8 @@ func start(t *testing.T, submit func(conversation.Message) error) (string, conte
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-done:
+		case err := <-done:
+			require.NoError(t, err)
 		case <-time.After(5 * time.Second):
 			t.Error("server did not shut down")
 		}
