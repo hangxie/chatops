@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hangxie/chatops/internal/version"
+	"github.com/hangxie/chatops/pkg/mcpserver/host"
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes"
 	"github.com/hangxie/chatops/pkg/mcpserver/ping"
 	"github.com/hangxie/chatops/pkg/mcpserver/status"
@@ -22,14 +23,15 @@ var groups = map[string]func(*mcp.Server, string) error{
 	"ping":       registerPing,
 	"status":     registerStatus,
 	"kubernetes": registerKubernetes,
+	"host":       registerHost,
 }
 
 // Cmd is the kong command for serve.
 type Cmd struct {
-	Tool     string `help:"Tool group to serve; one group per process (available: kubernetes, ping, status)." default:"ping"`
+	Tool     string `help:"Tool group to serve; one group per process (available: host, kubernetes, ping, status)." default:"ping"`
 	HTTP     string `help:"Serve Streamable HTTP at /mcp on this address (e.g. 127.0.0.1:8080) instead of stdio." placeholder:"ADDR"`
 	TokenEnv string `help:"Environment variable holding the bearer token HTTP clients must send; required when --http is not a loopback address." placeholder:"NAME"`
-	Config   string `help:"Config directory of the tool group: only its *.yaml files are loaded, merged in file name order. Required by status, optional for kubernetes, not taken by ping." placeholder:"DIR" type:"path"`
+	Config   string `help:"Config directory of the tool group: only its *.yaml files are loaded, merged in file name order. Required by status and host, optional for kubernetes, not taken by ping." placeholder:"DIR" type:"path"`
 
 	// transport overrides stdio and listener overrides --http listening in tests.
 	transport mcp.Transport
@@ -116,6 +118,17 @@ func registerKubernetes(server *mcp.Server, dir string) error {
 		}
 	}
 	return kubernetes.Register(server, cfg)
+}
+
+func registerHost(server *mcp.Server, dir string) error {
+	if dir == "" {
+		return errors.New("--config is required")
+	}
+	cfg, err := host.Load(dir)
+	if err != nil {
+		return err
+	}
+	return host.Register(server, cfg)
 }
 
 func availableGroups() string {

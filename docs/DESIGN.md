@@ -2,7 +2,7 @@
 
 Status: accepted design. Repository: https://github.com/hangxie/chatops.
 
-This is the conclusions-only design of record. It describes the accepted target architecture, not only what is built today; features not yet implemented are identified in the Status section (§11). Per-MCP designs live beside it: [`mcp-ping.md`](mcp-ping.md), [`mcp-status.md`](mcp-status.md), [`mcp-k8s.md`](mcp-k8s.md), [`mcp-host.md`](mcp-host.md) (planned); the chat backend design is [`chat.md`](chat.md); per-reply stats and Prometheus metrics are in [`observability.md`](observability.md). Usage lives in [`../README.md`](../README.md).
+This is the conclusions-only design of record. It describes the accepted target architecture, not only what is built today; features not yet implemented are identified in the Status section (§11). Per-MCP designs live beside it: [`mcp-ping.md`](mcp-ping.md), [`mcp-status.md`](mcp-status.md), [`mcp-k8s.md`](mcp-k8s.md), [`mcp-host.md`](mcp-host.md); the chat backend design is [`chat.md`](chat.md); per-reply stats and Prometheus metrics are in [`observability.md`](observability.md). Usage lives in [`../README.md`](../README.md).
 
 ## 1. Summary
 
@@ -101,7 +101,7 @@ Tool descriptions, schemas, annotations, and outputs from any server are untrust
 
 `chatops-mcp` is a standalone MCP server built with the same SDK. It serves stdio by default and Streamable HTTP when asked. Over HTTP, `--token-env NAME` requires a static bearer token and `serve` refuses a non-loopback bind without one; TLS is left to a fronting proxy. Tool groups live under `pkg/mcpserver/<group>` as public packages, wired explicitly in `cmd/chatops-mcp` (no `init()` or blank-import registration). Each group declares honest `readOnlyHint`/`destructiveHint` annotations even though the daemon does not trust them for granting access.
 
-Implemented groups: [`ping`](mcp-ping.md), [`status`](mcp-status.md), and [`kubernetes`](mcp-k8s.md) (read-only node and deployment tools; Phase 3). Planned: [`host`](mcp-host.md), reachability (resolve, ping, SSH banner) of configured hosts.
+Implemented groups: [`ping`](mcp-ping.md), [`status`](mcp-status.md), [`kubernetes`](mcp-k8s.md) (read-only node and deployment tools; Phase 3), and [`host`](mcp-host.md), reachability (resolve, ping, SSH banner) of configured hosts.
 
 ## 7. LLM and conversation
 

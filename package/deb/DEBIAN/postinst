@@ -7,12 +7,12 @@ if ! getent passwd chatops >/dev/null; then
 fi
 
 # dpkg never restores a conffile the admin deleted, so skip missing paths.
-for path in /etc/chatops /etc/chatops/mcp-status.d /etc/chatops/mcp-kubernetes.d; do
+for path in /etc/chatops /etc/chatops/mcp-status.d /etc/chatops/mcp-kubernetes.d /etc/chatops/mcp-host.d; do
     [ -e "$path" ] || continue
     chown root:chatops "$path"
     chmod 0755 "$path"
 done
-for path in /etc/chatops/chatops.env /etc/chatops/config.yaml /etc/chatops/mcp-status.d/00-default.yaml /etc/chatops/mcp-kubernetes.d/00-default.yaml; do
+for path in /etc/chatops/chatops.env /etc/chatops/config.yaml /etc/chatops/mcp-status.d/00-default.yaml /etc/chatops/mcp-kubernetes.d/00-default.yaml /etc/chatops/mcp-host.d/00-default.yaml; do
     [ -e "$path" ] || continue
     chown root:chatops "$path"
     chmod 0640 "$path"

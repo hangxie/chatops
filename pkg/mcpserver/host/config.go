@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/hangxie/chatops/internal/confdir"
 )
@@ -121,4 +122,17 @@ func (h Host) sshPort() int {
 		return defaultSSHPort
 	}
 	return h.SSHPort
+}
+
+// choices describes each host for the tool schema, with what it covers.
+func (c Config) choices() string {
+	var choices []string
+	for _, h := range c.Hosts {
+		choice := h.Name
+		if len(h.Covers) != 0 {
+			choice += " (" + strings.Join(h.Covers, ", ") + ")"
+		}
+		choices = append(choices, choice)
+	}
+	return strings.Join(choices, "; ")
 }

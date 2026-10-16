@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -120,10 +121,10 @@ func replyType(to netip.Addr) icmp.Type {
 	return ipv6.ICMPTypeEchoReply
 }
 
-// answer replies to every echo with seq-th echoes selected by keep.
-func answer(keep func(seq int) bool) func(*icmp.Echo, netip.Addr) []fakePacket {
+// answer replies to the echoes keep selects, sent to one of only, or to any address when only is empty.
+func answer(keep func(seq int) bool, only ...netip.Addr) func(*icmp.Echo, netip.Addr) []fakePacket {
 	return func(echo *icmp.Echo, to netip.Addr) []fakePacket {
-		if !keep(echo.Seq) {
+		if !keep(echo.Seq) || (len(only) != 0 && !slices.Contains(only, to)) {
 			return nil
 		}
 		return []fakePacket{packet(replyType(to), echo.ID, echo.Seq, to)}

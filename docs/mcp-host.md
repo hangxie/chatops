@@ -1,6 +1,6 @@
 # host MCP tool group
 
-Status: planned. Selectable with `--tool host` once implemented.
+Status: implemented. Selectable with `--tool host`.
 
 The `host` group answers "is this machine reachable?" for hosts the administrator lists: it resolves the name, pings it, and checks that SSH answers. It complements `status`, which checks the services running on those hosts through their health endpoints ([`mcp-status.md`](mcp-status.md)); reachability does not belong there because it is not HTTP and a host has no status page. Package: `pkg/mcpserver/host`.
 
