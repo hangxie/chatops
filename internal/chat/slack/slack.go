@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -59,6 +60,7 @@ type Adapter struct {
 
 	busySlots chan struct{}
 	busy      sync.WaitGroup
+	connected atomic.Bool
 }
 
 // New builds an adapter from the bot and app-level tokens named in cfg.
@@ -91,6 +93,9 @@ func newAdapter(socket socketClient, api *slackapi.Client, logger *slog.Logger) 
 	}
 }
 
+// Connected reports whether Socket Mode holds a live connection.
+func (a *Adapter) Connected() bool { return a.connected.Load() }
+
 // Run hands each new message to submit until ctx ends; Socket Mode reconnects on its own.
 func (a *Adapter) Run(ctx context.Context, submit func(conversation.Message) error) error {
 	auth, err := a.api.AuthTestContext(ctx)
@@ -99,6 +104,7 @@ func (a *Adapter) Run(ctx context.Context, submit func(conversation.Message) err
 	}
 	a.botID = auth.UserID
 
+	defer a.connected.Store(false)
 	ctx, cancel := context.WithCancel(ctx)
 	runErr := make(chan error, 1)
 	go func() { runErr <- a.socket.RunContext(ctx) }()
@@ -142,8 +148,12 @@ func (a *Adapter) handle(ctx context.Context, event socketmode.Event, submit fun
 	}
 	switch event.Type {
 	case socketmode.EventTypeConnected:
+		a.connected.Store(true)
 		a.logger.Info("slack connected")
+	case socketmode.EventTypeConnecting, socketmode.EventTypeDisconnect:
+		a.connected.Store(false)
 	case socketmode.EventTypeConnectionError, socketmode.EventTypeInvalidAuth:
+		a.connected.Store(false)
 		a.logger.Warn("slack connection problem", "type", event.Type)
 	case socketmode.EventTypeEventsAPI:
 		outer, ok := event.Data.(slackevents.EventsAPIEvent)

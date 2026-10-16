@@ -27,9 +27,9 @@ type Config struct {
 	Metrics Metrics `yaml:"metrics"`
 }
 
-// Metrics configures the Prometheus endpoint.
+// Metrics configures the Prometheus and health probe endpoint.
 type Metrics struct {
-	// Listen is the host:port serving /metrics; empty disables the endpoint.
+	// Listen is the host:port serving /metrics, /healthz, and /readyz; empty disables the endpoint.
 	Listen string `yaml:"listen"`
 }
 

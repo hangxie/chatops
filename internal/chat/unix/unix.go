@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -31,6 +32,8 @@ type Adapter struct {
 	logger *slog.Logger
 	listen func(string) (net.Listener, error)
 	chmod  func(string, os.FileMode) error
+
+	listening atomic.Bool
 }
 
 // New builds the backend from the socket path and optional octal mode.
@@ -72,8 +75,13 @@ func (a *Adapter) Run(ctx context.Context, submit func(conversation.Message) err
 		return fmt.Errorf("chmod unix %s: %w", a.path, err)
 	}
 	a.logger.Info("unix chat backend listening", "path", a.path)
+	a.listening.Store(true)
+	defer a.listening.Store(false)
 	return socket.New(ln, a.logger).Run(ctx, submit)
 }
+
+// Connected reports whether the socket is accepting clients.
+func (a *Adapter) Connected() bool { return a.listening.Load() }
 
 func listenUnix(path string) (net.Listener, error) { return net.Listen("unix", path) }
 

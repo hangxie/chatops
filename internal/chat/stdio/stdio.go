@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hangxie/chatops/internal/config"
@@ -28,6 +29,8 @@ type Adapter struct {
 	out    io.Writer
 	logger *slog.Logger
 	drain  time.Duration
+
+	reading atomic.Bool
 }
 
 // New builds a terminal backend reading stdin and writing stdout.
@@ -38,9 +41,14 @@ func New(_ config.ChatBackend, logger *slog.Logger) *Adapter {
 	return &Adapter{in: os.Stdin, out: os.Stdout, logger: logger, drain: replyDrain}
 }
 
+// Connected reports whether Run is reading input.
+func (a *Adapter) Connected() bool { return a.reading.Load() }
+
 // Run answers one message per line until EOF, /quit, /exit, or cancellation, waiting for each reply in turn.
 func (a *Adapter) Run(ctx context.Context, submit func(conversation.Message) error) error {
 	a.logger.Debug("stdio chat backend started")
+	a.reading.Store(true)
+	defer a.reading.Store(false)
 	lines, ended := a.readLines(ctx)
 	for {
 		_, _ = fmt.Fprint(a.out, "> ")

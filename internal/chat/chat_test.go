@@ -48,3 +48,21 @@ func Test_Select(t *testing.T) {
 	_, err = Select(config.Chat{"bad": {Type: "irc"}}, []string{"bad"}, nil)
 	require.EqualError(t, err, `chat backend "bad": unknown type "irc"`)
 }
+
+func Test_Health(t *testing.T) {
+	tests := map[string]struct {
+		backends []Named
+		want     []BackendHealth
+	}{
+		"none": {nil, []BackendHealth{}},
+		"mixed": {
+			[]Named{{Name: "slack", Backend: blocker{}}, {Name: "console", Backend: oneShot{}}},
+			[]BackendHealth{{Name: "slack", Up: true}, {Name: "console"}},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, Health(tc.backends)())
+		})
+	}
+}

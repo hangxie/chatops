@@ -33,6 +33,8 @@ func (b oneShot) Run(ctx context.Context, submit func(conversation.Message) erro
 	return b.err
 }
 
+func (oneShot) Connected() bool { return false }
+
 // blocker submits nothing and blocks until the context ends, then returns its error.
 type blocker struct{ err error }
 
@@ -40,6 +42,8 @@ func (b blocker) Run(ctx context.Context, _ func(conversation.Message) error) er
 	<-ctx.Done()
 	return b.err
 }
+
+func (blocker) Connected() bool { return true }
 
 func Test_Run_prefixes_keys(t *testing.T) {
 	s := &submitter{}

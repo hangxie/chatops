@@ -126,6 +126,7 @@ func (w *fakeWeb) nextPost(t *testing.T) url.Values {
 type harness struct {
 	replyInChannel bool
 	socket         *fakeSocket
+	adapter        *Adapter
 	web            *fakeWeb
 	submitted      chan conversation.Message
 	// submitErrs supplies submit's results in order; nil once drained.
@@ -143,6 +144,7 @@ func run(t *testing.T, mutate func(*harness)) *harness {
 	}
 	adapter := newAdapter(h.socket, h.web.client(), nil)
 	adapter.replyInChannel = h.replyInChannel
+	h.adapter = adapter
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel = cancel
 	submit := func(msg conversation.Message) error {
@@ -409,6 +411,27 @@ func Test_Adapter_Run_exit(t *testing.T) {
 		h := run(t, func(h *harness) { h.web.authOK = false })
 		require.ErrorContains(t, h.result(), "slack: identify bot: invalid_auth")
 	})
+}
+
+func Test_Adapter_Connected(t *testing.T) {
+	for _, down := range []socketmode.EventType{
+		socketmode.EventTypeConnecting, socketmode.EventTypeConnectionError,
+		socketmode.EventTypeInvalidAuth, socketmode.EventTypeDisconnect,
+	} {
+		t.Run(string(down), func(t *testing.T) {
+			h := run(t, nil)
+			require.False(t, h.adapter.Connected(), "not connected before Socket Mode says so")
+			h.send(t, socketmode.Event{Type: socketmode.EventTypeConnected})
+			require.Eventually(t, h.adapter.Connected, 5*time.Second, time.Millisecond)
+			h.send(t, socketmode.Event{Type: down})
+			require.Eventually(t, func() bool { return !h.adapter.Connected() }, 5*time.Second, time.Millisecond)
+			h.send(t, socketmode.Event{Type: socketmode.EventTypeConnected})
+			require.Eventually(t, h.adapter.Connected, 5*time.Second, time.Millisecond)
+			h.cancel()
+			require.NoError(t, h.result())
+			require.False(t, h.adapter.Connected(), "not connected once Run returns")
+		})
+	}
 }
 
 func Test_limitReply(t *testing.T) {

@@ -47,11 +47,14 @@ func Test_Run(t *testing.T) {
 	a, err := New(config.ChatBackend{Type: config.ChatUnix, Path: path, Mode: "0600"}, nil)
 	require.NoError(t, err)
 
+	require.False(t, a.Connected())
+
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.Run(ctx, echoSubmit) }()
 
 	conn := dialWhenReady(t, path)
+	require.Eventually(t, a.Connected, 5*time.Second, time.Millisecond)
 	require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
 	_, err = conn.Write([]byte("hi\n"))
 	require.NoError(t, err)
@@ -65,6 +68,7 @@ func Test_Run(t *testing.T) {
 
 	cancel()
 	require.NoError(t, <-done)
+	require.False(t, a.Connected(), "not connected once Run returns")
 	_, err = os.Stat(path)
 	require.True(t, os.IsNotExist(err), "socket file is removed on exit")
 }

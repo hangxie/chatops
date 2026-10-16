@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hangxie/chatops/internal/chat"
 	"github.com/hangxie/chatops/internal/mcp"
 )
 
@@ -43,6 +44,9 @@ func Test_Metrics_Watch(t *testing.T) {
 	m.Watch(Sources{
 		Pending:  func() int { return 3 },
 		InFlight: func() int { return 2 },
+		Chat: func() []chat.BackendHealth {
+			return []chat.BackendHealth{{Name: "slack", Up: true}, {Name: "console"}}
+		},
 		MCP: func() []mcp.ServerHealth {
 			return []mcp.ServerHealth{{ID: "kubernetes", Up: true, Tools: 34}, {ID: "status", Tools: 1}}
 		},
@@ -50,6 +54,8 @@ func Test_Metrics_Watch(t *testing.T) {
 	requireLines(t, scrape(t, m),
 		`chatops_questions_pending 3`,
 		`chatops_turns_in_flight 2`,
+		`chatops_chat_backend_up{backend="slack"} 1`,
+		`chatops_chat_backend_up{backend="console"} 0`,
 		`chatops_mcp_server_up{server="kubernetes"} 1`,
 		`chatops_mcp_server_up{server="status"} 0`,
 		`chatops_mcp_tools{server="kubernetes"} 34`,

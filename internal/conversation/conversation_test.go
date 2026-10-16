@@ -417,8 +417,16 @@ func Test_Manager_Shutdown_drains(t *testing.T) {
 
 func Test_Manager_Shutdown_refuses_new(t *testing.T) {
 	m := New(context.Background(), newFakeRunner(), testLimits(), nil, nil)
+	require.True(t, m.Accepting())
 	m.Shutdown(time.Second) // no work in flight, returns at once
+	require.False(t, m.Accepting())
 	require.ErrorIs(t, m.Submit(newReplies().message("a", "late")), ErrClosed)
+}
+
+func Test_Manager_Accepting_cancelled(t *testing.T) {
+	m, cancel := start(t, newFakeRunner(), testLimits())
+	cancel()
+	require.False(t, m.Accepting())
 }
 
 func Test_Manager_Shutdown_grace_timeout(t *testing.T) {

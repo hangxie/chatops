@@ -13,10 +13,12 @@ const (
 	shutdownTimeout   = 5 * time.Second
 )
 
-// Serve answers /metrics on ln until ctx ends, then shuts down; it returns nil after a clean shutdown.
-func Serve(ctx context.Context, ln net.Listener, handler http.Handler) error {
+// Serve answers /metrics, /healthz, and /readyz on ln until ctx ends, then shuts down; it returns nil after a clean shutdown.
+func Serve(ctx context.Context, ln net.Listener, m *Metrics) error {
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", handler)
+	mux.Handle("/metrics", m.Handler())
+	mux.Handle("/healthz", m.Live())
+	mux.Handle("/readyz", m.Ready())
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: readHeaderTimeout}
 
 	done := make(chan error, 1)

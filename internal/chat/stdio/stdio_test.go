@@ -37,11 +37,14 @@ func Test_Run_replies_in_order(t *testing.T) {
 	a, out := newTest("hello\nworld\n")
 	var keys []string
 	submit := func(msg conversation.Message) error {
+		require.True(t, a.Connected(), "connected while reading")
 		keys = append(keys, msg.Conversation)
 		echo(context.Background(), msg)
 		return nil
 	}
+	require.False(t, a.Connected())
 	require.NoError(t, a.Run(context.Background(), submit))
+	require.False(t, a.Connected(), "not connected once Run returns")
 	require.Equal(t, []string{"stdin", "stdin"}, keys)
 	require.Contains(t, out.String(), "pong:hello")
 	require.Contains(t, out.String(), "pong:world")

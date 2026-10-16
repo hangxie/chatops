@@ -60,6 +60,7 @@ Step metrics are recorded from the agent's steps:
 | `chatops_tool_call_duration_seconds` | histogram | `server`, `tool`, `outcome` (`ok`, `error`, `timeout`) |
 | `chatops_tool_result_bytes` | histogram | `server`, `tool` |
 | `chatops_tool_result_truncated_total` | counter | `server`, `tool` |
+| `chatops_chat_backend_up` | gauge | `backend` |
 | `chatops_mcp_server_up` | gauge | `server` |
 | `chatops_mcp_tools` | gauge | `server` |
 | `chatops_build_info` | gauge (always 1) | `version` |
@@ -67,6 +68,14 @@ Step metrics are recorded from the agent's steps:
 There is no separate answered or failed counter: the `_count` series of `chatops_response_duration_seconds` by `outcome` already counts them, and its `_sum`/`_count` gives the average response time. "Answered" means a final answer was produced and delivered, not that it was correct; a scope-gate decline counts as answered because its text is indistinguishable from help without a structured signal from the model.
 
 `chatops_response_duration_seconds` observes delivered replies only; an undelivered one counts in `chatops_reply_failures_total` instead, while its turn's step metrics are still recorded. `chatops_queue_wait_seconds` runs from receipt to taking a turn slot, so it includes waiting behind earlier messages of the same conversation. A tool the model named but no server serves is labeled `(unknown)` for both `server` and `tool`, so model output never becomes a label. With no reconnect yet, `chatops_mcp_server_up` stays 0 once a session ends; the daemon logs a warning when that happens.
+
+## Health probes
+
+The metrics listener also serves `/healthz` and `/readyz`, so probes need no second port or setting. `/healthz` checks nothing beyond answering HTTP, so a liveness probe never restarts a daemon that is merely busy or waiting on a slow model. `/readyz` reports `starting` until the conversation manager is wired, `shutting down` once it stops accepting questions, each chat backend that is not connected, and each MCP server that is down; it reads the same cached state as the gauges and never calls the model or a tool, because a probe that depends on the model endpoint would flap with it. A chat backend counts as connected only once it can receive messages (for Slack, after Socket Mode connects), so a fresh daemon stays unready until then, and a Slack reconnect makes it briefly unready.
+
+### Readiness vs. activity
+
+Readiness is independent of conversation activity: an in-flight model call or MCP tool call, or a full pending queue, does not make the daemon unready. When the daemon checks its own status through a conversation, that conversation's turn is counted in `chatops_turns_in_flight`, so `chatops_turns_in_flight >= 1` is expected during a self-check and does not indicate an unhealthy daemon. `/readyz` answers 503 only when a readiness dependency fails: startup has not finished, shutdown is in progress, a chat backend is not connected, or a configured MCP server is down.
 
 ## Logs
 
