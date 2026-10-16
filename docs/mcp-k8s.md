@@ -1,6 +1,6 @@
 # kubernetes MCP tool group
 
-Status: implemented ([`DESIGN.md`](DESIGN.md) Phase 3). Selectable with `--tools kubernetes`.
+Status: implemented ([`DESIGN.md`](DESIGN.md) Phase 3). Selectable with `--tool kubernetes`.
 
 The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organized internally by resource, exposing read-only tools. This document holds the conventions every resource follows, plus a short note per resource on what is specific to it; a resource whose design needs more than that gets its own document. All mutation is out of scope until the Phase 4 authorization and approval framework exists. Package: `pkg/mcpserver/kubernetes`.
 
@@ -74,7 +74,7 @@ Events are one API about every kind of object, so there is one `event_list` rath
 
 Kubernetes is exposed as one `kubernetes` tool group whose code is organized by resource module. Kubernetes is one external system with one client, one credential context, and one set of error conventions, so the MCP server boundary matches the integration boundary.
 
-Tool grouping is not an authorization boundary. Three controls stay independent: tool exposure (`--tools`), ChatOps authorization (Phase 4: roles, rules, approval, enforced at execution time), and Kubernetes RBAC (enforced by the API server). Selecting a group only affects exposure, and `ReadOnlyHint` is advisory, so the read/destructive and per-requester decisions belong to the other two controls.
+Tool grouping is not an authorization boundary. Three controls stay independent: tool exposure (`--tool`), ChatOps authorization (Phase 4: roles, rules, approval, enforced at execution time), and Kubernetes RBAC (enforced by the API server). Selecting a group only affects exposure, and `ReadOnlyHint` is advisory, so the read/destructive and per-requester decisions belong to the other two controls.
 
 ## Tool conventions
 
@@ -91,7 +91,7 @@ Tool names are resource-first and snake_case, `<resource>_<verb>`, matching the 
 
 Every tool is read-only (`ReadOnlyHint: true`, `IdempotentHint: true`, `OpenWorldHint: true`). Each returns a typed Go response, so `mcp.AddTool` derives the output schema and populates `StructuredContent`; the handler also sets `Content` to a concise human-readable summary rather than relying on the SDK's JSON fallback, because ChatOps targets small models that answer better from a compact text block. Text is kubectl-like: a `list` is an aligned table, and a per-target tool renders one block per target separated by a blank line.
 
-Every `list` tool, and each target of a `pods` tool, returns at most `max_results` rows (default 50, set in `--kubernetes-config`), so a big roster cannot overflow the model's context. The cap is applied after the full API list, not with the API's `limit`, because a server-side limit returns the first rows in storage order (wrong for `event_list`, which keeps the newest), would undercount after client-side filtering (owner references, case-insensitive kinds), and has no exact total when a selector is used. Structured output carries `total`, the count before the cap, and the text ends with `(showing the first N of M pods)`, so the model narrows the call instead of reading a partial roster as complete. Rows past the cap are dropped in API order (namespace, then name); there is no pagination. The cap bounds only what reaches the model: each call still lists, filters, and summarizes every match, so API response size and server memory grow with the cluster; that is acceptable at homelab scale, and a large cluster would need server-side pagination instead.
+Every `list` tool, and each target of a `pods` tool, returns at most `max_results` rows (default 50, set in `--config`), so a big roster cannot overflow the model's context. The cap is applied after the full API list, not with the API's `limit`, because a server-side limit returns the first rows in storage order (wrong for `event_list`, which keeps the newest), would undercount after client-side filtering (owner references, case-insensitive kinds), and has no exact total when a selector is used. Structured output carries `total`, the count before the cap, and the text ends with `(showing the first N of M pods)`, so the model narrows the call instead of reading a partial roster as complete. Rows past the cap are dropped in API order (namespace, then name); there is no pagination. The cap bounds only what reaches the model: each call still lists, filters, and summarizes every match, so API response size and server memory grow with the cluster; that is acceptable at homelab scale, and a large cluster would need server-side pagination instead.
 
 ## Targets
 
@@ -126,9 +126,9 @@ Every non-empty literal `env[].value` in containers and init containers is redac
 
 ## Cluster connection and credentials
 
-Every setting of the group lives in one YAML file, `--kubernetes-config` (shipped as `package/systemd/mcp-kubernetes.yaml`), the same pattern as `--status-config`, so new settings add a field rather than a flag. The file is optional because every field has a working default; unknown fields are errors, and the flag is only valid with `--tools kubernetes`. Its `kubeconfig` and `context` fields drive connection resolution, and `max_results` caps result rows (see Output conventions).
+Every setting of the group lives in its `--config` directory (shipped as `package/systemd/mcp-kubernetes.d/`), the same pattern as `status`, so new settings add a field rather than a flag. The directory is optional because every field has a working default; unknown fields are errors. A file of your own beside the shipped `00-default.yaml` overrides single fields, with a later file winning (see the README's [Configuration directories](../README.md#configuration-directories)). Its `kubeconfig` and `context` fields drive connection resolution, and `max_results` caps result rows (see Output conventions).
 
-Connection resolution (standard client-go), in order: an explicit `kubeconfig` is honored exactly and never silently falls back (a missing or invalid file fails startup); otherwise in-cluster configuration is used when running as a pod; otherwise a local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`) is the development fallback. An optional `context` selects a context and explicitly requests kubeconfig-based resolution, taking precedence over in-cluster detection so it is never silently ignored in-cluster. A relative `kubeconfig` is resolved against the config file's directory, not the working directory, so the file means the same thing wherever the server starts.
+Connection resolution (standard client-go), in order: an explicit `kubeconfig` is honored exactly and never silently falls back (a missing or invalid file fails startup); otherwise in-cluster configuration is used when running as a pod; otherwise a local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`) is the development fallback. An optional `context` selects a context and explicitly requests kubeconfig-based resolution, taking precedence over in-cluster detection so it is never silently ignored in-cluster. A relative `kubeconfig` is resolved against the config directory, not the working directory, so the setting means the same thing wherever the server starts.
 
 When the `rest.Config` is built, two client-level defaults are set: a finite request timeout as a backstop to the per-call context deadline, and a `chatops-mcp/<version>` user agent so requests are identifiable in the API server's audit logs. Every API client is built from this one config. The HTTP bearer token (`--token-env`) only authenticates the MCP client to `chatops-mcp`; it says nothing about what the Kubernetes credentials may do.
 
@@ -136,7 +136,7 @@ Every tool is read-only, so RBAC reduces to `get`/`list` grants. Each resource l
 
 ## Package layout
 
-One Go package per resource under `pkg/mcpserver/kubernetes/` (`node/`, `namespace/`, `deployment/`), each exporting `Register(server, kube.Clients)` and holding its types, tools, and text rendering, with a one-to-one `_test.go` per file. The root package only resolves the connection and calls each resource's `Register`, explicitly. Code every resource shares lives in `internal/kube` (clients, target validation and bounded parallel fetch, the generic per-target handler, the namespaced lookup and missing-namespace check, the workload list row and owned-pods lookup with revision marking, the pod summary, log fetching, describe cleaning and redaction, table, age, and quantity helpers), and fixtures shared by more than one resource's tests live in `internal/kubetest`; `internal/` keeps both private to the group. Wiring in `cmd/chatops-mcp/serve/serve.go` adds `"kubernetes"` to the `groups` map and the `--kubernetes-config` flag, loaded by the root package's `Load`.
+One Go package per resource under `pkg/mcpserver/kubernetes/` (`node/`, `namespace/`, `deployment/`), each exporting `Register(server, kube.Clients)` and holding its types, tools, and text rendering, with a one-to-one `_test.go` per file. The root package only resolves the connection and calls each resource's `Register`, explicitly. Code every resource shares lives in `internal/kube` (clients, target validation and bounded parallel fetch, the generic per-target handler, the namespaced lookup and missing-namespace check, the workload list row and owned-pods lookup with revision marking, the pod summary, log fetching, describe cleaning and redaction, table, age, and quantity helpers), and fixtures shared by more than one resource's tests live in `internal/kubetest`; `internal/` keeps both private to the group. Wiring in `cmd/chatops-mcp/serve/serve.go` adds `"kubernetes"` to the `groups` map, whose `--config` directory is loaded by the root package's `Load`.
 
 ## Adding a resource
 
@@ -149,7 +149,7 @@ A change to a convention in this document is a design change of its own, not par
 
 ## Error handling
 
-Local configuration errors fail `chatops-mcp serve` fast, consistent with how `status` validates its config at load: a missing or malformed `--kubernetes-config`, an unknown field in it, a bad kubeconfig path, a malformed kubeconfig, or an unknown `context`. Everything network-dependent is a runtime tool error the model can relay, because a cluster can become unreachable at any time: cluster unreachable or TLS failure, API-call timeout, and RBAC-forbidden (naming the verb and resource, e.g. `get nodes`, so the operator can fix the role). A missing object is a normal result, not an error. Error messages never echo bearer tokens or raw kubeconfig contents. There is no startup connectivity probe gate, because it would say nothing about whether a later call succeeds.
+Local configuration errors fail `chatops-mcp serve` fast, consistent with how `status` validates its config at load: a missing `--config` directory or a malformed file in it, an unknown field in it, a bad kubeconfig path, a malformed kubeconfig, or an unknown `context`. Everything network-dependent is a runtime tool error the model can relay, because a cluster can become unreachable at any time: cluster unreachable or TLS failure, API-call timeout, and RBAC-forbidden (naming the verb and resource, e.g. `get nodes`, so the operator can fix the role). A missing object is a normal result, not an error. Error messages never echo bearer tokens or raw kubeconfig contents. There is no startup connectivity probe gate, because it would say nothing about whether a later call succeeds.
 
 ## Testing
 
@@ -177,7 +177,7 @@ Mutating operations (cordon, drain, restart, scale, delete) are deferred until P
 10. A resource with an overall state reports one derived health word, consistent across its tools.
 11. `pods` tools list only pods the workload controls (selector, then owner reference) with kubectl-style status, marking rollout revision where the resource has one.
 12. `describe` tools return cleaned YAML with literal environment values redacted, keeping the last 3 characters only for values of at least 12; `command`/`args` are not redacted.
-13. Connection: explicit `kubeconfig` never silently falls back, in-cluster config when running as a pod, local kubeconfig as the development fallback; an explicit `context` forces kubeconfig resolution. Every group setting lives in the optional `--kubernetes-config` file.
+13. Connection: explicit `kubeconfig` never silently falls back, in-cluster config when running as a pod, local kubeconfig as the development fallback; an explicit `context` forces kubeconfig resolution. Every group setting lives in the optional `--config` directory.
 14. The `rest.Config` sets a finite request timeout and a `chatops-mcp/<version>` user agent.
 15. Network failures are runtime tool errors; only local config problems fail startup.
 16. RBAC is the only switch for features that need a powerful grant; such grants stay out of the baseline.

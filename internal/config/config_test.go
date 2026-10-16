@@ -27,7 +27,7 @@ mcp:
     builtin:
       transport: stdio
       command: /usr/bin/chatops-mcp
-      args: [serve, --tools, ping]
+      args: [serve, --tool, ping]
       env:
         KUBECONFIG: /etc/chatops/kubeconfig
       secret_env:
@@ -66,7 +66,7 @@ func Test_Parse_full(t *testing.T) {
 			"builtin": {
 				Transport: TransportStdio,
 				Command:   "/usr/bin/chatops-mcp",
-				Args:      []string{"serve", "--tools", "ping"},
+				Args:      []string{"serve", "--tool", "ping"},
 				Env:       map[string]string{"KUBECONFIG": "/etc/chatops/kubeconfig"},
 				SecretEnv: map[string]string{"VAULT_TOKEN": "CHATOPS_VAULT_TOKEN"},
 			},
@@ -197,7 +197,11 @@ func Test_Load_packaged_sample(t *testing.T) {
 	for _, group := range []string{"ping", "status", "kubernetes"} {
 		server := cfg.MCP.Servers[group]
 		require.Equal(t, "/usr/bin/chatops-mcp", server.Command, group)
-		require.Equal(t, []string{"serve", "--tools", group}, server.Args[:3], group)
+		args := []string{"serve", "--tool", group}
+		if group != "ping" {
+			args = append(args, "--config", "/etc/chatops/mcp-"+group+".d")
+		}
+		require.Equal(t, args, server.Args, group)
 	}
 	// The shipped prompt must carry the behavioral guard, and thinking is disabled by both config and prompt.
 	require.Contains(t, cfg.Agent.SystemPrompt, "Answer only the latest user request")

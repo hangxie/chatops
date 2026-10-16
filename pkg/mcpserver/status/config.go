@@ -1,15 +1,12 @@
 package status
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
-	"os"
 	"regexp"
 
-	"go.yaml.in/yaml/v3"
+	"github.com/hangxie/chatops/internal/confdir"
 )
 
 // Page formats a service's status page can use.
@@ -49,20 +46,14 @@ type Feed struct {
 	Products []string `yaml:"products"`
 }
 
-// Load reads and validates a status config file; unknown fields are errors.
-func Load(path string) (Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return Config{}, fmt.Errorf("read status config: %w", err)
-	}
+// Load merges the *.yaml files in a status config directory (see package confdir); unknown fields are errors.
+func Load(dir string) (Config, error) {
 	var cfg Config
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
-		return Config{}, fmt.Errorf("parse status config %s: %w", path, err)
+	if err := confdir.Decode("status", dir, &cfg); err != nil {
+		return Config{}, err
 	}
 	if err := cfg.validate(); err != nil {
-		return Config{}, fmt.Errorf("status config %s: %w", path, err)
+		return Config{}, fmt.Errorf("status config %s: %w", dir, err)
 	}
 	return cfg, nil
 }

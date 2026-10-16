@@ -1,4 +1,4 @@
-# Services checked by chatops-mcp's service_status tool (serve --tools status --status-config <this file>).
+# Services checked by chatops-mcp's service_status tool (serve --tool status --config <this directory>).
 # Each service:
 #   name:    tool argument value; lowercase letters, digits, and "-"
 #   display: name shown in results
@@ -7,7 +7,9 @@
 #            or http (a self-hosted health endpoint such as llama.cpp /health; no answer or a non-2xx reply means down)
 #   url:     status or health endpoint, for every type but google
 #   feeds:   google only; incident feeds to combine, each optionally narrowed to product IDs
-# Services are reported in this order. Restart chatops serve after editing.
+# Only *.yaml files in this directory are read, in file name order, and their services lists are joined in that
+# order. Put site-specific services in a file of your own here (e.g. 10-homelab.yaml) rather than editing this one,
+# so package upgrades keep updating it. Restart chatops serve after a change.
 
 services:
   - name: github
@@ -69,7 +71,7 @@ services:
     type: statusio
     url: https://api.status.io/1.0/status/533c6539221ae15e3f000031
 
-  # A self-hosted service, checked through its own health endpoint:
+  # A self-hosted service, checked through its own health endpoint (put it in a file of your own, not here):
   # - name: local-llm
   #   display: Local LLM
   #   covers: [the local LLM server, llama.cpp]

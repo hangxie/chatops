@@ -28,11 +28,8 @@ func newClient() *mcp.Client {
 	return mcp.NewClient(&mcp.Implementation{Name: "client", Version: "v0"}, nil)
 }
 
-// packagedStatus is the services file the packages install as /etc/chatops/mcp-status.yaml.
-const packagedStatus = "../../../package/systemd/mcp-status.yaml"
-
-// packagedKubernetes is the kubernetes settings file the packages install as /etc/chatops/mcp-kubernetes.yaml.
-const packagedKubernetes = "../../../package/systemd/mcp-kubernetes.yaml"
+// packagedStatus is the directory the packages install as /etc/chatops/mcp-status.d.
+const packagedStatus = "../../../package/systemd/mcp-status.d"
 
 func Test_newServer(t *testing.T) {
 	tests := map[string]struct {
@@ -40,18 +37,15 @@ func Test_newServer(t *testing.T) {
 		tools  []string
 		errMsg string
 	}{
-		"ping":                      {cmd: Cmd{Tools: []string{"ping"}}, tools: []string{"ping"}},
-		"status":                    {cmd: Cmd{Tools: []string{"status"}, StatusConfig: packagedStatus}, tools: []string{"service_status"}},
-		"both":                      {cmd: Cmd{Tools: []string{"ping", "status"}, StatusConfig: packagedStatus}, tools: []string{"ping", "service_status"}},
-		"duplicate":                 {cmd: Cmd{Tools: []string{"ping", "ping"}}, errMsg: `tool group "ping" listed more than once`},
-		"unknown":                   {cmd: Cmd{Tools: []string{"bogus"}}, errMsg: `unknown tool group "bogus" (available: kubernetes, ping, status)`},
-		"none":                      {cmd: Cmd{}, errMsg: "at least one tool group is required"},
-		"blank-is-bogus":            {cmd: Cmd{Tools: []string{""}}, errMsg: `unknown tool group "" (available: kubernetes, ping, status)`},
-		"status-without-config":     {cmd: Cmd{Tools: []string{"status"}}, errMsg: `tool group "status": --status-config is required`},
-		"status-config-missing":     {cmd: Cmd{Tools: []string{"status"}, StatusConfig: "/nonexistent/status.yaml"}, errMsg: `tool group "status": read status config: open /nonexistent/status.yaml: no such file or directory`},
-		"config-without-status":     {cmd: Cmd{Tools: []string{"ping"}, StatusConfig: packagedStatus}, errMsg: "--status-config requires --tools status"},
-		"kube-config-without-group": {cmd: Cmd{Tools: []string{"ping"}, KubernetesConfig: packagedKubernetes}, errMsg: "--kubernetes-config requires --tools kubernetes"},
-		"kube-config-missing":       {cmd: Cmd{Tools: []string{"kubernetes"}, KubernetesConfig: "/nonexistent/mcp-kubernetes.yaml"}, errMsg: `tool group "kubernetes": read kubernetes config: open /nonexistent/mcp-kubernetes.yaml: no such file or directory`},
+		"ping":                  {cmd: Cmd{Tool: "ping"}, tools: []string{"ping"}},
+		"status":                {cmd: Cmd{Tool: "status", Config: packagedStatus}, tools: []string{"service_status"}},
+		"unknown":               {cmd: Cmd{Tool: "bogus"}, errMsg: `unknown tool group "bogus" (available: kubernetes, ping, status)`},
+		"none":                  {cmd: Cmd{}, errMsg: `unknown tool group "" (available: kubernetes, ping, status)`},
+		"list-is-unknown":       {cmd: Cmd{Tool: "ping,status"}, errMsg: `unknown tool group "ping,status" (available: kubernetes, ping, status)`},
+		"ping-with-config":      {cmd: Cmd{Tool: "ping", Config: packagedStatus}, errMsg: `tool group "ping": --config is not supported`},
+		"status-without-config": {cmd: Cmd{Tool: "status"}, errMsg: `tool group "status": --config is required`},
+		"status-config-missing": {cmd: Cmd{Tool: "status", Config: "/nonexistent/mcp-status.d"}, errMsg: `tool group "status": read status config directory: open /nonexistent/mcp-status.d: no such file or directory`},
+		"kube-config-missing":   {cmd: Cmd{Tool: "kubernetes", Config: "/nonexistent/mcp-kubernetes.d"}, errMsg: `tool group "kubernetes": read kubernetes config directory: open /nonexistent/mcp-kubernetes.d: no such file or directory`},
 	}
 
 	for name, tc := range tests {
@@ -83,10 +77,10 @@ func Test_newServer_kubernetes(t *testing.T) {
 	content := "apiVersion: v1\nkind: Config\nclusters:\n- cluster: {server: https://cluster.example:6443}\n  name: c\ncontexts:\n- context: {cluster: c, user: u}\n  name: ctx\ncurrent-context: ctx\nusers:\n- name: u\n  user: {token: t}\n"
 	require.NoError(t, os.WriteFile(kubeconfig, []byte(content), 0o600))
 
-	settings := filepath.Join(t.TempDir(), "mcp-kubernetes.yaml")
-	require.NoError(t, os.WriteFile(settings, []byte("kubeconfig: "+kubeconfig+"\n"), 0o600))
+	settings := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(settings, "00-default.yaml"), []byte("kubeconfig: "+kubeconfig+"\n"), 0o600))
 
-	server, err := newServer(Cmd{Tools: []string{"kubernetes"}, KubernetesConfig: settings})
+	server, err := newServer(Cmd{Tool: "kubernetes", Config: settings})
 	require.NoError(t, err)
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
@@ -105,7 +99,7 @@ func Test_Cmd_Run_transport(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Cmd{Tools: []string{"ping"}, transport: serverTransport}.Run(ctx)
+		done <- Cmd{Tool: "ping", transport: serverTransport}.Run(ctx)
 	}()
 
 	session, err := newClient().Connect(context.Background(), clientTransport, nil)
@@ -123,7 +117,7 @@ func Test_Cmd_Run_transport(t *testing.T) {
 }
 
 func Test_Cmd_Run_invalid_group(t *testing.T) {
-	err := Cmd{Tools: []string{"bogus"}}.Run(context.Background())
+	err := Cmd{Tool: "bogus"}.Run(context.Background())
 	require.ErrorContains(t, err, `unknown tool group "bogus"`)
 }
 
@@ -134,7 +128,7 @@ func Test_Cmd_Run_http(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	cmd := Cmd{Tools: []string{"ping"}, HTTP: listener.Addr().String(), TokenEnv: "SERVE_TEST_TOKEN", listener: listener}
+	cmd := Cmd{Tool: "ping", HTTP: listener.Addr().String(), TokenEnv: "SERVE_TEST_TOKEN", listener: listener}
 	go func() { done <- cmd.Run(ctx) }()
 
 	endpoint := "http://" + listener.Addr().String() + "/mcp"
@@ -159,10 +153,10 @@ func Test_Cmd_Run_errors(t *testing.T) {
 		cmd    Cmd
 		errMsg string
 	}{
-		"listen":              {cmd: Cmd{Tools: []string{"ping"}, HTTP: "127.0.0.1:99999"}, errMsg: "serve http: listen tcp: address 99999: invalid port"},
-		"non-loopback":        {cmd: Cmd{Tools: []string{"ping"}, HTTP: ":0"}, errMsg: `refusing to serve http on non-loopback address ":0" without --token-env`},
-		"token-env-unset":     {cmd: Cmd{Tools: []string{"ping"}, HTTP: "127.0.0.1:0", TokenEnv: "SERVE_TEST_TOKEN_UNSET"}, errMsg: "environment variable SERVE_TEST_TOKEN_UNSET is unset or empty"},
-		"token-env-for-stdio": {cmd: Cmd{Tools: []string{"ping"}, TokenEnv: "SERVE_TEST_TOKEN"}, errMsg: "--token-env requires --http"},
+		"listen":              {cmd: Cmd{Tool: "ping", HTTP: "127.0.0.1:99999"}, errMsg: "serve http: listen tcp: address 99999: invalid port"},
+		"non-loopback":        {cmd: Cmd{Tool: "ping", HTTP: ":0"}, errMsg: `refusing to serve http on non-loopback address ":0" without --token-env`},
+		"token-env-unset":     {cmd: Cmd{Tool: "ping", HTTP: "127.0.0.1:0", TokenEnv: "SERVE_TEST_TOKEN_UNSET"}, errMsg: "environment variable SERVE_TEST_TOKEN_UNSET is unset or empty"},
+		"token-env-for-stdio": {cmd: Cmd{Tool: "ping", TokenEnv: "SERVE_TEST_TOKEN"}, errMsg: "--token-env requires --http"},
 	}
 
 	for name, tc := range tests {
@@ -180,14 +174,14 @@ func (failingTransport) Connect(context.Context) (mcp.Connection, error) {
 }
 
 func Test_Cmd_Run_transport_error(t *testing.T) {
-	err := Cmd{Tools: []string{"ping"}, transport: failingTransport{}}.Run(context.Background())
+	err := Cmd{Tool: "ping", transport: failingTransport{}}.Run(context.Background())
 	require.ErrorContains(t, err, "serve stdio: connect refused")
 }
 
 func Test_Cmd_Run_transport_error_after_cancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := Cmd{Tools: []string{"ping"}, transport: failingTransport{}}.Run(ctx)
+	err := Cmd{Tool: "ping", transport: failingTransport{}}.Run(ctx)
 	require.ErrorContains(t, err, "serve stdio: connect refused")
 }
 
@@ -202,5 +196,5 @@ func Test_Cmd_Run_stdio_eof(t *testing.T) {
 		_ = reader.Close()
 	}()
 
-	require.NoError(t, Cmd{Tools: []string{"ping"}}.Run(context.Background()))
+	require.NoError(t, Cmd{Tool: "ping"}.Run(context.Background()))
 }

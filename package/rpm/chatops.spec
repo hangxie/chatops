@@ -31,8 +31,8 @@ install -Dpm 0755 chatops-mcp %{buildroot}%{_bindir}/chatops-mcp
 install -Dpm 0644 package/systemd/%{name}.service %{buildroot}%{_unitdir}/%{name}.service
 install -Dpm 0640 package/systemd/%{name}.env %{buildroot}%{_sysconfdir}/%{name}/%{name}.env
 install -Dpm 0640 package/systemd/config.yaml %{buildroot}%{_sysconfdir}/%{name}/config.yaml
-install -Dpm 0640 package/systemd/mcp-status.yaml %{buildroot}%{_sysconfdir}/%{name}/mcp-status.yaml
-install -Dpm 0640 package/systemd/mcp-kubernetes.yaml %{buildroot}%{_sysconfdir}/%{name}/mcp-kubernetes.yaml
+install -Dpm 0640 package/systemd/mcp-status.d/00-default.yaml %{buildroot}%{_sysconfdir}/%{name}/mcp-status.d/00-default.yaml
+install -Dpm 0640 package/systemd/mcp-kubernetes.d/00-default.yaml %{buildroot}%{_sysconfdir}/%{name}/mcp-kubernetes.d/00-default.yaml
 
 %pre
 getent group %{name} >/dev/null || groupadd -r %{name}
@@ -51,8 +51,10 @@ getent passwd %{name} >/dev/null || useradd -r -M -g %{name} -d /nonexistent -s 
 %{_bindir}/chatops
 %{_bindir}/chatops-mcp
 %{_unitdir}/%{name}.service
-%dir %attr(0750,root,%{name}) %{_sysconfdir}/%{name}
+%dir %attr(0755,root,%{name}) %{_sysconfdir}/%{name}
+%dir %attr(0755,root,%{name}) %{_sysconfdir}/%{name}/mcp-status.d
+%dir %attr(0755,root,%{name}) %{_sysconfdir}/%{name}/mcp-kubernetes.d
 %config(noreplace) %attr(0640,root,%{name}) %{_sysconfdir}/%{name}/%{name}.env
 %config(noreplace) %attr(0640,root,%{name}) %{_sysconfdir}/%{name}/config.yaml
-%config(noreplace) %attr(0640,root,%{name}) %{_sysconfdir}/%{name}/mcp-status.yaml
-%config(noreplace) %attr(0640,root,%{name}) %{_sysconfdir}/%{name}/mcp-kubernetes.yaml
+%config(noreplace) %attr(0640,root,%{name}) %{_sysconfdir}/%{name}/mcp-status.d/00-default.yaml
+%config(noreplace) %attr(0640,root,%{name}) %{_sysconfdir}/%{name}/mcp-kubernetes.d/00-default.yaml

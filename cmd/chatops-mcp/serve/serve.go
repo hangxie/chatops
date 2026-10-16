@@ -17,25 +17,19 @@ import (
 	"github.com/hangxie/chatops/pkg/mcpserver/status"
 )
 
-// groups maps tool group names accepted by --tools to their registration.
-var groups = map[string]func(*mcp.Server, Cmd) error{
-	"ping": func(server *mcp.Server, _ Cmd) error {
-		ping.Register(server)
-		return nil
-	},
+// groups maps tool group names accepted by --tool to their registration, given the --config directory.
+var groups = map[string]func(*mcp.Server, string) error{
+	"ping":       registerPing,
 	"status":     registerStatus,
 	"kubernetes": registerKubernetes,
 }
 
 // Cmd is the kong command for serve.
 type Cmd struct {
-	Tools    []string `help:"Comma-separated tool groups to serve (available: kubernetes, ping, status)." default:"ping" sep:","`
-	HTTP     string   `help:"Serve Streamable HTTP at /mcp on this address (e.g. 127.0.0.1:8080) instead of stdio." placeholder:"ADDR"`
-	TokenEnv string   `help:"Environment variable holding the bearer token HTTP clients must send; required when --http is not a loopback address." placeholder:"NAME"`
-	// StatusConfig lists the services the status group checks; nothing is built in.
-	StatusConfig string `help:"YAML file listing the services the status tool group checks; required with --tools status." placeholder:"FILE" type:"path"`
-	// KubernetesConfig holds every kubernetes group setting; without it the group uses its defaults.
-	KubernetesConfig string `name:"kubernetes-config" help:"YAML file configuring the kubernetes tool group (kubeconfig, context, max_results); optional with --tools kubernetes." placeholder:"FILE" type:"path"`
+	Tool     string `help:"Tool group to serve; one group per process (available: kubernetes, ping, status)." default:"ping"`
+	HTTP     string `help:"Serve Streamable HTTP at /mcp on this address (e.g. 127.0.0.1:8080) instead of stdio." placeholder:"ADDR"`
+	TokenEnv string `help:"Environment variable holding the bearer token HTTP clients must send; required when --http is not a loopback address." placeholder:"NAME"`
+	Config   string `help:"Config directory of the tool group: only its *.yaml files are loaded, merged in file name order. Required by status, optional for kubernetes, not taken by ping." placeholder:"DIR" type:"path"`
 
 	// transport overrides stdio and listener overrides --http listening in tests.
 	transport mcp.Transport
@@ -83,49 +77,41 @@ func (c Cmd) serveHTTP(ctx context.Context, server *mcp.Server) error {
 }
 
 func newServer(c Cmd) (*mcp.Server, error) {
-	if len(c.Tools) == 0 {
-		return nil, errors.New("at least one tool group is required")
+	register, ok := groups[c.Tool]
+	if !ok {
+		return nil, fmt.Errorf("unknown tool group %q (available: %s)", c.Tool, availableGroups())
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "chatops-mcp", Version: version.String()}, nil)
-	seen := map[string]bool{}
-	for _, name := range c.Tools {
-		register, ok := groups[name]
-		if !ok {
-			return nil, fmt.Errorf("unknown tool group %q (available: %s)", name, availableGroups())
-		}
-		if seen[name] {
-			return nil, fmt.Errorf("tool group %q listed more than once", name)
-		}
-		seen[name] = true
-		if err := register(server, c); err != nil {
-			return nil, fmt.Errorf("tool group %q: %w", name, err)
-		}
-	}
-	if c.StatusConfig != "" && !seen["status"] {
-		return nil, errors.New("--status-config requires --tools status")
-	}
-	if c.KubernetesConfig != "" && !seen["kubernetes"] {
-		return nil, errors.New("--kubernetes-config requires --tools kubernetes")
+	if err := register(server, c.Config); err != nil {
+		return nil, fmt.Errorf("tool group %q: %w", c.Tool, err)
 	}
 	return server, nil
 }
 
-func registerStatus(server *mcp.Server, c Cmd) error {
-	if c.StatusConfig == "" {
-		return errors.New("--status-config is required")
+func registerPing(server *mcp.Server, dir string) error {
+	if dir != "" {
+		return errors.New("--config is not supported")
 	}
-	cfg, err := status.Load(c.StatusConfig)
+	ping.Register(server)
+	return nil
+}
+
+func registerStatus(server *mcp.Server, dir string) error {
+	if dir == "" {
+		return errors.New("--config is required")
+	}
+	cfg, err := status.Load(dir)
 	if err != nil {
 		return err
 	}
 	return status.Register(server, cfg)
 }
 
-func registerKubernetes(server *mcp.Server, c Cmd) error {
+func registerKubernetes(server *mcp.Server, dir string) error {
 	var cfg kubernetes.Config
-	if c.KubernetesConfig != "" {
+	if dir != "" {
 		var err error
-		if cfg, err = kubernetes.Load(c.KubernetesConfig); err != nil {
+		if cfg, err = kubernetes.Load(dir); err != nil {
 			return err
 		}
 	}

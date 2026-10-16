@@ -51,15 +51,15 @@ mcp:
     ping:
       transport: stdio
       command: /usr/bin/chatops-mcp
-      args: [serve, --tools, ping]
+      args: [serve, --tool, ping]
     status:
       transport: stdio
       command: /usr/bin/chatops-mcp
-      args: [serve, --tools, status, --status-config, /etc/chatops/mcp-status.yaml]
+      args: [serve, --tool, status, --config, /etc/chatops/mcp-status.d]
     kubernetes:
       transport: stdio
       command: /usr/bin/chatops-mcp
-      args: [serve, --tools, kubernetes, --kubernetes-config, /etc/chatops/mcp-kubernetes.yaml]
+      args: [serve, --tool, kubernetes, --config, /etc/chatops/mcp-kubernetes.d]
     # A third-party stdio server. env values live in this file, so never put
     # secrets there; secret_env maps a server variable to the chatops variable
     # holding its value. Only PATH and HOME are inherited otherwise.
