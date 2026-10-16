@@ -1,4 +1,4 @@
-// Package status reports the public status of common external services from their vendors' status pages.
+// Package status reports the status of services from their vendors' status pages or their own health endpoints.
 package status
 
 import (
@@ -53,7 +53,7 @@ func register(server *mcp.Server, c *checker) {
 	openWorld := true
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "service_status",
-		Description: "Report the current public status of an external service from its vendor's status page, including active incidents. Use service \"all\" to check every service. Only the listed services are covered: for any other service, do not call this tool; say it is not covered.",
+		Description: "Report the current status of a service, from its vendor's status page or its own health endpoint, including active incidents. Use service \"all\" to check every service. Only the listed services are covered: for any other service, do not call this tool; say it is not covered.",
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
