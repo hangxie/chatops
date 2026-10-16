@@ -6,9 +6,17 @@ if ! getent passwd chatops >/dev/null; then
     adduser --system --group --no-create-home --home /nonexistent chatops
 fi
 
-chown root:chatops /etc/chatops /etc/chatops/mcp-status.d /etc/chatops/mcp-kubernetes.d /etc/chatops/chatops.env /etc/chatops/config.yaml /etc/chatops/mcp-status.d/00-default.yaml /etc/chatops/mcp-kubernetes.d/00-default.yaml
-chmod 0755 /etc/chatops /etc/chatops/mcp-status.d /etc/chatops/mcp-kubernetes.d
-chmod 0640 /etc/chatops/chatops.env /etc/chatops/config.yaml /etc/chatops/mcp-status.d/00-default.yaml /etc/chatops/mcp-kubernetes.d/00-default.yaml
+# dpkg never restores a conffile the admin deleted, so skip missing paths.
+for path in /etc/chatops /etc/chatops/mcp-status.d /etc/chatops/mcp-kubernetes.d; do
+    [ -e "$path" ] || continue
+    chown root:chatops "$path"
+    chmod 0755 "$path"
+done
+for path in /etc/chatops/chatops.env /etc/chatops/config.yaml /etc/chatops/mcp-status.d/00-default.yaml /etc/chatops/mcp-kubernetes.d/00-default.yaml; do
+    [ -e "$path" ] || continue
+    chown root:chatops "$path"
+    chmod 0640 "$path"
+done
 
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload >/dev/null || true
