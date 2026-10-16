@@ -206,6 +206,8 @@ func Test_Load_packaged_sample(t *testing.T) {
 	require.Equal(t, 0, cfg.Agent.HistoryTurns)
 	require.NotNil(t, cfg.LLM.Sampling.Temperature)
 	require.Equal(t, 0.0, *cfg.LLM.Sampling.Temperature)
+	// Metrics and health probes are on, bound to loopback.
+	require.Equal(t, Metrics{Listen: "127.0.0.1:9464"}, cfg.Metrics)
 }
 
 func Test_Load_packaged_sample_agent_defaults(t *testing.T) {
@@ -220,18 +222,6 @@ func Test_Load_packaged_sample_agent_defaults(t *testing.T) {
 	want := defaultAgent()
 	want.SystemPrompt = cfg.Agent.SystemPrompt
 	require.Equal(t, want, cfg.Agent)
-}
-
-func Test_Load_packaged_sample_metrics(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "package", "systemd", "config.yaml"))
-	require.NoError(t, err)
-	// The commented-out metrics block must be valid once uncommented.
-	uncommented := regexp.MustCompile(`(?m)^# (metrics:|  listen:)`).ReplaceAll(data, []byte("$1"))
-	require.NotEqual(t, data, uncommented)
-
-	cfg, err := Parse(uncommented)
-	require.NoError(t, err)
-	require.Equal(t, Metrics{Listen: "127.0.0.1:9464"}, cfg.Metrics)
 }
 
 func Test_Parse_slack_reply_in_channel(t *testing.T) {

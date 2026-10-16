@@ -6,7 +6,7 @@ Two consumers need to know where a turn spent its time and bytes: the person who
 
 ## Configuration
 
-The footer and the metrics endpoint are two independent settings, both off by default, so either can be enabled without the other: `agent.show_stats` controls the footer in chat and `metrics.listen` starts the Prometheus endpoint. The per-turn log line is always on. Both settings appear commented out, with their defaults, in the sample [`config.yaml`](../package/systemd/config.yaml) and in the README settings table.
+The footer and the metrics endpoint are two independent settings, both off by default, so either can be enabled without the other: `agent.show_stats` controls the footer in chat and `metrics.listen` starts the Prometheus endpoint. The per-turn log line is always on. The sample [`config.yaml`](../package/systemd/config.yaml) enables the endpoint on loopback (`127.0.0.1:9464`), so packaged installs get health probes and local scraping without exposing them, and shows the footer commented out with its default; both are also in the README settings table.
 
 ## Steps
 
