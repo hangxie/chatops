@@ -18,6 +18,7 @@ const (
 	TypeStatusIO   = "statusio"
 	TypeSlack      = "slack"
 	TypeGoogle     = "google"
+	TypeDatadog    = "datadog"
 )
 
 var serviceName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -90,7 +91,7 @@ func (s Service) validate() error {
 		return fmt.Errorf("service %q: display is required", s.Name)
 	}
 	switch s.Type {
-	case TypeStatuspage, TypeStatusIO, TypeSlack:
+	case TypeStatuspage, TypeStatusIO, TypeSlack, TypeDatadog:
 		if len(s.Feeds) != 0 {
 			return fmt.Errorf("service %q: feeds is only for type %q", s.Name, TypeGoogle)
 		}
@@ -109,7 +110,7 @@ func (s Service) validate() error {
 		}
 		return nil
 	}
-	return fmt.Errorf("service %q: type %q must be %s, %s, %s, or %s", s.Name, s.Type, TypeStatuspage, TypeStatusIO, TypeSlack, TypeGoogle)
+	return fmt.Errorf("service %q: type %q must be %s, %s, %s, %s, or %s", s.Name, s.Type, TypeStatuspage, TypeStatusIO, TypeSlack, TypeDatadog, TypeGoogle)
 }
 
 func checkURL(name, raw string) error {
@@ -129,6 +130,8 @@ func (s Service) check() checkFunc {
 		return statusIO(s.URL)
 	case TypeSlack:
 		return slackStatus(s.URL)
+	case TypeDatadog:
+		return datadog(s.URL)
 	}
 	return google(s.Feeds, s.Display)
 }

@@ -25,6 +25,7 @@ Services are listed in the `--status-config` YAML file (required with `--tools s
 | `statuspage` | Atlassian Statuspage `.../api/v2/summary.json`, used by many vendors |
 | `statusio` | Status.io `https://api.status.io/1.0/status/<page id>` |
 | `slack` | `https://slack-status.com/api/v2.0.0/current` |
+| `datadog` | Datadog Status Pages `<status page>/config.json`; the page itself is rendered by JavaScript, so this file is the only machine-readable source |
 | `google` | Google Cloud or Workspace `incidents.json` feeds, combined and optionally narrowed to product IDs |
 
 Unknown fields, duplicate names, and URLs that are not absolute `http`/`https` stop `chatops-mcp` at startup.
