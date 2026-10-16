@@ -31,6 +31,9 @@ func newClient() *mcp.Client {
 // packagedStatus is the directory the packages install as /etc/chatops/mcp-status.d.
 const packagedStatus = "../../../package/systemd/mcp-status.d"
 
+// packagedHost is the directory the packages install as /etc/chatops/mcp-host.d, which ships examples only.
+const packagedHost = "../../../package/systemd/mcp-host.d"
+
 func Test_newServer(t *testing.T) {
 	tests := map[string]struct {
 		cmd    Cmd
@@ -39,12 +42,15 @@ func Test_newServer(t *testing.T) {
 	}{
 		"ping":                  {cmd: Cmd{Tool: "ping"}, tools: []string{"ping"}},
 		"status":                {cmd: Cmd{Tool: "status", Config: packagedStatus}, tools: []string{"service_status"}},
-		"unknown":               {cmd: Cmd{Tool: "bogus"}, errMsg: `unknown tool group "bogus" (available: kubernetes, ping, status)`},
-		"none":                  {cmd: Cmd{}, errMsg: `unknown tool group "" (available: kubernetes, ping, status)`},
-		"list-is-unknown":       {cmd: Cmd{Tool: "ping,status"}, errMsg: `unknown tool group "ping,status" (available: kubernetes, ping, status)`},
+		"unknown":               {cmd: Cmd{Tool: "bogus"}, errMsg: `unknown tool group "bogus" (available: host, kubernetes, ping, status)`},
+		"none":                  {cmd: Cmd{}, errMsg: `unknown tool group "" (available: host, kubernetes, ping, status)`},
+		"list-is-unknown":       {cmd: Cmd{Tool: "ping,status"}, errMsg: `unknown tool group "ping,status" (available: host, kubernetes, ping, status)`},
 		"ping-with-config":      {cmd: Cmd{Tool: "ping", Config: packagedStatus}, errMsg: `tool group "ping": --config is not supported`},
 		"status-without-config": {cmd: Cmd{Tool: "status"}, errMsg: `tool group "status": --config is required`},
 		"status-config-missing": {cmd: Cmd{Tool: "status", Config: "/nonexistent/mcp-status.d"}, errMsg: `tool group "status": read status config directory: open /nonexistent/mcp-status.d: no such file or directory`},
+		"host-without-config":   {cmd: Cmd{Tool: "host"}, errMsg: `tool group "host": --config is required`},
+		"host-config-missing":   {cmd: Cmd{Tool: "host", Config: "/nonexistent/mcp-host.d"}, errMsg: `tool group "host": read host config directory: open /nonexistent/mcp-host.d: no such file or directory`},
+		"host-packaged-empty":   {cmd: Cmd{Tool: "host", Config: packagedHost}, errMsg: `tool group "host": host config ` + packagedHost + `: at least one host is required`},
 		"kube-config-missing":   {cmd: Cmd{Tool: "kubernetes", Config: "/nonexistent/mcp-kubernetes.d"}, errMsg: `tool group "kubernetes": read kubernetes config directory: open /nonexistent/mcp-kubernetes.d: no such file or directory`},
 	}
 
@@ -92,6 +98,22 @@ func Test_newServer_kubernetes(t *testing.T) {
 	defer func() { _ = session.Close() }()
 
 	require.ElementsMatch(t, []string{"node_list", "node_status", "node_resources", "namespace_list", "deployment_list", "deployment_pods", "deployment_describe", "pod_list", "pod_describe", "pod_log", "pod_resources", "statefulset_list", "statefulset_pods", "statefulset_describe", "daemonset_list", "daemonset_pods", "daemonset_describe", "replicaset_list", "replicaset_pods", "replicaset_describe", "service_list", "service_pods", "service_describe", "job_list", "job_pods", "job_log", "job_describe", "pv_list", "pv_describe", "pvc_list", "pvc_describe", "configmap_list", "configmap_describe", "event_list"}, toolNames(t, session))
+}
+
+func Test_newServer_host(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "10-homelab.yaml"), []byte("hosts:\n  - name: media\n    display: media\n    address: 127.0.0.1\n"), 0o600))
+	server, err := newServer(Cmd{Tool: "host", Config: dir})
+	require.NoError(t, err)
+
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+	require.NoError(t, err)
+	defer func() { _ = serverSession.Close() }()
+	session, err := newClient().Connect(context.Background(), clientTransport, nil)
+	require.NoError(t, err)
+	defer func() { _ = session.Close() }()
+	require.Equal(t, []string{"host_status"}, toolNames(t, session))
 }
 
 func Test_Cmd_Run_transport(t *testing.T) {

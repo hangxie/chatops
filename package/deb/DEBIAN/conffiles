@@ -2,3 +2,4 @@
 /etc/chatops/config.yaml
 /etc/chatops/mcp-status.d/00-default.yaml
 /etc/chatops/mcp-kubernetes.d/00-default.yaml
+/etc/chatops/mcp-host.d/00-default.yaml
