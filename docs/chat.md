@@ -47,14 +47,15 @@ A message makes a round trip through the backend that received it:
 
 - A `New(name, cfg, logger) (Backend, error)` factory builds each backend, switching on the configured `type`.
 - There is no `init()` or blank-import registration.
-- `stdio` is an ordinary backend: selected, configured, validated, and namespaced like every other. It is never a default or fallback.
+- `stdio` is an ordinary backend: configured, validated, and namespaced like every other. It is never a default or fallback.
 
 ## Selecting backends
 
-`chatops serve --chat <names>` runs the daemon against the named backends.
+`chatops serve` runs every backend under `chat:`. The config file is the only switch.
 
-- `--chat` is required, comma-separated, and has no default.
-- Startup aborts before connecting anything if a named backend is absent from the config or invalid.
+- To turn a backend off, comment it out or remove it. There is no command-line flag or environment variable that selects backends.
+- Startup aborts if `chat:` is empty, or before connecting anything if any backend is invalid.
+- `stdio` reads the terminal, so a config used under systemd must not define one: the backend hits EOF at once and exits.
 
 ## Configuration
 
@@ -78,7 +79,7 @@ A message makes a round trip through the backend that received it:
 | Check | Runs for |
 |---|---|
 | Structural validation (known `type`, well-formed fields) | every entry, at config load |
-| Secret resolution and live connection | only the backends named in `--chat` |
+| Secret resolution and live connection | every entry, at startup |
 
 ## Backend types
 
@@ -342,7 +343,7 @@ Deferred:
 ## Decisions
 
 1. **One interface, explicit wiring.** Every backend is a message source behind the one `Backend` interface, wired through a `type`-switched factory (no `init()` or blank import). A message's `Reply` closure is the entire platform abstraction.
-2. **Named configuration, required selection.** Backends are a named `chat:` map keyed by a `type` discriminator, with multiple instances per type. `--chat` selects them, required with no default, and startup aborts on a selected backend that is missing or invalid.
+2. **Named configuration, config-only selection.** Backends are a named `chat:` map keyed by a `type` discriminator, with multiple instances per type. Every entry runs, so the file alone says what is on, and startup aborts on any invalid entry.
 3. **One shared manager, isolated namespaces.** All backends feed one `serve`-owned conversation manager; keys are prefixed with the backend name so histories and ordering never collide.
 4. **Asynchronous, ordered, graceful.** `submit` never blocks; `Reply` fires exactly once and is concurrency-safe; per-conversation order is preserved; overload is central (`ErrBusy`, mapped per backend); shutdown drains within a bounded grace period.
 5. **Sender identity is separate from conversation identity.** A key is never treated as identity, and the `http` shared-token principal does not isolate an application's own users.

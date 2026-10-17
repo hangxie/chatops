@@ -224,7 +224,7 @@ chatops/
 
 - **Phase 0 — bootstrap:** done. Both binaries build and package (deb/rpm/container); main branch protection applied (required `build / build` check, signed commits, linear history, one approving review).
 - **Phase 1 — local vertical slice:** done. `chatops-mcp serve` + `ping`, `internal/config`, `internal/mcp`, `internal/llm`, `internal/agent`, and the `stdio` terminal chat backend. Verified live against `http://media.xiehang.com:8080/v1` with `qwen3-1.7b-q8`.
-- **Phase 2 — Slack:** done. Socket Mode, threading, retry deduplication, per-thread serialization. Chat backends are named and selected with `--chat`; `slack`, `discord`, `stdio`, and `unix` ship, `http`/`tcp` planned (`udp` deferred). See [`chat.md`](chat.md).
+- **Phase 2 — Slack:** done. Socket Mode, threading, retry deduplication, per-thread serialization. Chat backends are named in the config, and every one listed runs; `slack`, `discord`, `stdio`, and `unix` ship, `http`/`tcp` planned (`udp` deferred). See [`chat.md`](chat.md).
 - **Phase 2.5 — service and host status:** done. The `status` and `host` groups.
 - **Phase 3 — Kubernetes:** read-only slice done: 34 tools across nodes, namespaces, workloads (deployment, statefulset, daemonset, replicaset, job, pod), services, storage (pv, pvc), configmaps, and events. Mutation waits for Phase 4. See [`mcp-k8s.md`](mcp-k8s.md).
 - **Phase 4 — policy and approval:** not started. Roles, rules, execution-time checks, suspended turns, Slack approval buttons; a startup warning is logged until policy exists, so until then deploy only read-only tools or fully trusted channels.
