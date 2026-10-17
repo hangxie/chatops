@@ -119,6 +119,8 @@ Tool failures are reported by chatops, not left to the model. Small models drop 
 - Only unresolved failures are listed, and only they change how a decline is handled (§7.1).
 - Mutating tools (Phase 4) never clear a failure, because a later success does not undo an earlier failed change.
 - Each line is the error's first line, cut to a short limit.
+- The contract for every server, built-in or third-party: return `isError` when the tool cannot do what was asked, with plain error text. A measurement that comes out bad (a host down, a vendor incident) is data, not an error. chatops adds nothing server-specific, so errors need no categorizing layer.
+- The guarantee covers tool errors only. A partial result, such as an `UNKNOWN` row for one unreadable status page among many, still depends on the model relaying it; failing the whole call would make the model retry and lose the readable rows.
 - Error text can name internal endpoints. It already reaches the model, which could quote it, and the audience is the ops team, so it is shown.
 - Truncation is not sanitization: publishing is guaranteed, unlike the model's relaying, so servers must keep credentials, authorization headers, and config contents out of error text, as [`mcp-k8s.md`](mcp-k8s.md) requires.
 
@@ -284,7 +286,8 @@ chatops/
 - **Phase 2.5 — service and host status:** done. The `status` and `host` groups.
 - **Phase 3 — Kubernetes:** read-only slice done: 34 tools across nodes, namespaces, workloads (deployment, statefulset, daemonset, replicaset, job, pod), services, storage (pv, pvc), configmaps, and events. Mutation waits for Phase 4. See [`mcp-k8s.md`](mcp-k8s.md).
 - **Phase 4 — policy and approval:** not started. Roles, rules, execution-time checks, suspended turns, Slack approval buttons; a startup warning is logged until policy exists, so until then deploy only read-only tools or fully trusted channels.
-- **Decline tool, forced first call, and chatops-reported tool failures (§5, §7.1):** designed, not implemented.
+- **Chatops-reported tool failures (§5):** done.
+- **Decline tool and forced first call (§7.1):** designed, not implemented.
 - **Phase 5 — hardening:** metrics done (per-reply stats and Prometheus, see [`observability.md`](observability.md)); reconnect handling, structured audit events, and integration tests remain.
 
 ## 12. Testing strategy

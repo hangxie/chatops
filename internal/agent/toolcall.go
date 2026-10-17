@@ -14,22 +14,22 @@ import (
 // maxLoggedArgumentBytes caps the arguments a debug log line repeats.
 const maxLoggedArgumentBytes = 1024
 
-// runTool runs one call and returns text for the model, failures as "error: ...", plus its step.
-func (a *Agent) runTool(ctx context.Context, catalog *mcp.Catalog, call llm.ToolCall) (string, Step) {
+// runTool returns text for the model, its step, and a failure line for the user, empty for errors the model must fix.
+func (a *Agent) runTool(ctx context.Context, catalog *mcp.Catalog, call llm.ToolCall) (string, Step, string) {
 	// Arguments are model output that may echo user text, so they are logged only at debug level.
 	a.logger.Debug("tool call requested", "tool", call.Name, "arguments", truncate(call.Arguments, maxLoggedArgumentBytes))
 	step := Step{Phase: PhaseTool, Name: call.Name, Outcome: OutcomeError}
 	start := time.Now()
-	content := a.callTool(ctx, catalog, call, &step)
+	content, failure := a.callTool(ctx, catalog, call, &step)
 	step.Duration, step.SentBytes = time.Since(start), len(content)
-	return content, step
+	return content, step, failure
 }
 
-func (a *Agent) callTool(ctx context.Context, catalog *mcp.Catalog, call llm.ToolCall, step *Step) string {
+func (a *Agent) callTool(ctx context.Context, catalog *mcp.Catalog, call llm.ToolCall, step *Step) (content, failure string) {
 	tool, ok := catalog.Lookup(call.Name)
 	if !ok {
 		a.logger.Warn("tool call rejected", "tool", call.Name, "reason", "unknown tool")
-		return fmt.Sprintf("error: unknown tool %q", call.Name)
+		return fmt.Sprintf("error: unknown tool %q", call.Name), ""
 	}
 	step.Server, step.Tool = tool.Server, tool.MCPName
 	args := json.RawMessage(call.Arguments)
@@ -37,7 +37,7 @@ func (a *Agent) callTool(ctx context.Context, catalog *mcp.Catalog, call llm.Too
 		// The error can quote argument values, so it is logged only with them at debug level.
 		a.logger.Warn("tool call rejected", "tool", call.Name, "reason", "invalid arguments")
 		a.logger.Debug("tool call arguments invalid", "tool", call.Name, "error", err)
-		return "error: invalid arguments: " + err.Error()
+		return "error: invalid arguments: " + err.Error(), ""
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, a.limits.ToolTimeout)
@@ -49,21 +49,23 @@ func (a *Agent) callTool(ctx context.Context, catalog *mcp.Catalog, call llm.Too
 	if callCtx.Err() != nil {
 		step.Outcome = errorOutcome(callCtx.Err())
 		log.Warn("tool call timed out", "error", err)
-		return fmt.Sprintf("error: tool call timed out after %s", a.limits.ToolTimeout)
+		failure = fmt.Sprintf("tool call timed out after %s", a.limits.ToolTimeout)
+		return "error: " + failure, failure
 	}
 	if err != nil {
 		log.Warn("tool call failed", "error", err)
-		return "error: tool call failed: " + err.Error()
+		failure = "tool call failed: " + err.Error()
+		return "error: " + failure, failure
 	}
 	log.Info("tool call completed", "is_error", result.IsError, "bytes", len(result.Text))
 
 	step.ResultBytes, step.Truncated = len(result.Text), len(result.Text) > a.limits.MaxToolResultBytes
 	text := truncate(result.Text, a.limits.MaxToolResultBytes)
 	if result.IsError {
-		return "error: " + text
+		return "error: " + text, result.Text
 	}
 	step.Outcome = OutcomeOK
-	return text
+	return text, ""
 }
 
 // truncate cuts text to limit bytes on a rune boundary, then appends a marker beyond the limit.

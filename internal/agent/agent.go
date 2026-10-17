@@ -83,7 +83,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 	userMessage := llm.Message{Role: llm.RoleUser, Content: input}
 	messages = append(messages, userMessage)
 	steps := &turn.Stats.Steps
-	failures := map[llm.ToolCall]int{}
+	failures := newFailureLog()
 
 	for iteration := 1; ; iteration++ {
 		start := time.Now()
@@ -101,19 +101,19 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 			return turn, fmt.Errorf("model: %w", err)
 		}
 		if len(resp.Message.ToolCalls) == 0 {
-			turn.Reply, turn.Messages = resp.Message.Content, []llm.Message{userMessage}
+			turn.Reply, turn.Messages = withFailures(resp.Message.Content, failures.unresolved()), []llm.Message{userMessage}
 			return turn, nil
 		}
 		if iteration >= a.limits.MaxIterations {
 			(*steps)[len(*steps)-1].Outcome = OutcomeStopped
-			turn.Reply = fmt.Sprintf("I stopped after %d steps without reaching an answer. Try a narrower request.", iteration)
+			turn.Reply = withFailures(fmt.Sprintf("I stopped after %d steps without reaching an answer. Try a narrower request.", iteration), failures.unresolved())
 			turn.Messages = []llm.Message{userMessage}
 			a.logger.Warn("agent iteration limit reached", "iterations", iteration)
 			return turn, nil
 		}
-		if repeatsFailure(failures, resp.Message.ToolCalls) {
+		if failures.repeats(resp.Message.ToolCalls) {
 			(*steps)[len(*steps)-1].Outcome = OutcomeStopped
-			turn.Reply = "I stopped because the same tool call kept failing. Try rephrasing the request."
+			turn.Reply = withFailures("I stopped because the same tool call kept failing.", failures.unresolved())
 			turn.Messages = []llm.Message{userMessage}
 			a.logger.Warn("agent stopped on a repeated failing tool call", "iterations", iteration)
 			return turn, nil
@@ -121,16 +121,15 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 
 		messages = append(messages, resp.Message)
 		for _, call := range resp.Message.ToolCalls {
-			content, step := a.runTool(ctx, catalog, call)
+			content, step, failure := a.runTool(ctx, catalog, call)
 			*steps = append(*steps, step)
 			if ctx.Err() != nil {
 				return turn, context.Cause(ctx)
 			}
-			switch step.Outcome {
-			case OutcomeError:
-				failures[failureKey(call)]++
-			case OutcomeOK:
-				delete(failures, failureKey(call))
+			if step.Outcome == OutcomeOK {
+				failures.succeed(call)
+			} else {
+				failures.fail(call, failureLine(step, failure))
 			}
 			messages = append(messages, llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: content})
 		}
@@ -144,22 +143,6 @@ func (a *Agent) logStats(stats Stats) {
 		attrs = append(attrs, "prompt_tokens", prompt, "completion_tokens", completion)
 	}
 	a.logger.Info("turn completed", attrs...)
-}
-
-// repeatsFailure reports whether any call already failed maxRepeatedFailures times, which a model that
-// ignores the error would otherwise retry until max_iterations.
-func repeatsFailure(failures map[llm.ToolCall]int, calls []llm.ToolCall) bool {
-	for _, call := range calls {
-		if failures[failureKey(call)] >= maxRepeatedFailures {
-			return true
-		}
-	}
-	return false
-}
-
-// failureKey ignores the call ID, which differs on every retry.
-func failureKey(call llm.ToolCall) llm.ToolCall {
-	return llm.ToolCall{Name: call.Name, Arguments: call.Arguments}
 }
 
 func toolSpecs(catalog *mcp.Catalog) []llm.ToolSpec {
