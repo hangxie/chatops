@@ -12,6 +12,7 @@ chat:
   # discord:
   #   type: discord
   #   bot_token_env: DISCORD_BOT_TOKEN
+  #   reply_mode: channel # channel (default) or thread: answer top-level messages in a new thread
   # Local Unix socket backend, one conversation per connection. The directory
   # must be writable by the daemon; under the packaged unit that means adding
   # RuntimeDirectory=chatops so /run/chatops exists.

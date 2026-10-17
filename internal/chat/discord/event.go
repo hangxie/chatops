@@ -12,17 +12,16 @@ type inbound struct {
 	thread                              bool
 }
 
-// conversation keys history: a Discord thread is one conversation, any other message starts its own.
+// conversation keys history by thread, or by message outside one; a thread started on a message shares its ID.
 func (in inbound) conversation() string {
 	guild := in.guild
 	if guild == "" {
 		guild = "@me"
 	}
-	key := "discord:" + guild + ":" + in.channel
-	if !in.thread {
-		key += ":" + in.message
+	if in.thread {
+		return "discord:" + guild + ":" + in.channel
 	}
-	return key
+	return "discord:" + guild + ":" + in.message
 }
 
 // parseMessage accepts user messages in channels that lead with a bot mention and any direct message.

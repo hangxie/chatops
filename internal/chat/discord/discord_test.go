@@ -33,13 +33,17 @@ type fakeGateway struct {
 	// closedEarly records a Close that ran before Open returned.
 	closedEarly atomic.Bool
 
-	mu      sync.Mutex
-	sendErr error
-	sends   chan sent
+	mu        sync.Mutex
+	sendErr   error
+	sends     chan sent
+	threadErr error
+	started   chan threadStart
 }
 
+type threadStart struct{ channel, message, name string }
+
 func newFakeGateway() *fakeGateway {
-	return &fakeGateway{events: make(chan any), openErr: make(chan error, 1), sends: make(chan sent, 16)}
+	return &fakeGateway{events: make(chan any), openErr: make(chan error, 1), sends: make(chan sent, 16), started: make(chan threadStart, 4)}
 }
 
 func (g *fakeGateway) Open() error {
@@ -66,6 +70,14 @@ func (g *fakeGateway) Send(_ context.Context, channel string, msg *discordgo.Mes
 	defer g.mu.Unlock()
 	g.sends <- sent{channel: channel, msg: msg}
 	return g.sendErr
+}
+
+func (g *fakeGateway) StartThread(_ context.Context, channel, message, name string) (string, error) {
+	g.started <- threadStart{channel: channel, message: message, name: name}
+	if g.threadErr != nil {
+		return "", g.threadErr
+	}
+	return message, nil
 }
 
 func next[T any](t *testing.T, ch <-chan T) T {
@@ -102,6 +114,12 @@ func Test_New(t *testing.T) {
 	require.NotNil(t, a.gateway)
 	require.False(t, a.Connected())
 
+	for mode, inThread := range map[string]bool{"": false, config.ReplyChannel: false, config.ReplyThread: true} {
+		a, err := New(config.ChatBackend{Type: config.ChatDiscord, BotTokenEnv: "CHATOPS_DISCORD_TEST_TOKEN", ReplyMode: mode}, nil)
+		require.NoError(t, err)
+		require.Equal(t, inThread, a.replyInThread, mode)
+	}
+
 	_, err = New(config.ChatBackend{Type: config.ChatDiscord, BotTokenEnv: "CHATOPS_DISCORD_TEST_UNSET"}, nil)
 	require.ErrorContains(t, err, "discord bot token")
 }
@@ -130,7 +148,7 @@ func Test_Adapter_Run(t *testing.T) {
 	gw.events <- &discordgo.MessageCreate{Message: message("G1", "no mention")}
 	gw.events <- mention("is it up?")
 	msg := next(t, submitted)
-	require.Equal(t, "discord:G1:C1:M1", msg.Conversation)
+	require.Equal(t, "discord:G1:M1", msg.Conversation)
 	require.Equal(t, "U1", msg.User)
 	require.Equal(t, "is it up?", msg.Text)
 
@@ -157,6 +175,45 @@ func Test_Adapter_Run(t *testing.T) {
 	require.NoError(t, next(t, done))
 	require.False(t, a.Connected())
 	require.True(t, gw.closed.Load())
+}
+
+func Test_Adapter_Run_thread_mode(t *testing.T) {
+	gw := newFakeGateway()
+	gw.threads = map[string]bool{"T1": true}
+	gw.openErr <- nil
+	submitted := make(chan conversation.Message, 4)
+	a := newAdapter(gw, nil)
+	a.replyInThread = true
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx, func(m conversation.Message) error { submitted <- m; return nil }) }()
+	gw.events <- &discordgo.Ready{User: &discordgo.User{ID: "BOT"}}
+
+	gw.events <- mention("is it up?")
+	msg := next(t, submitted)
+	require.Equal(t, "discord:G1:M1", msg.Conversation)
+	require.Empty(t, gw.started, "the thread starts on the first reply, not on receipt")
+	require.NoError(t, msg.Reply(context.Background(), conversation.Reply{Text: "up"}))
+	require.Equal(t, threadStart{channel: "C1", message: "M1", name: "is it up?"}, next(t, gw.started))
+	got := gw.nextSend(t)
+	require.Equal(t, "M1", got.channel)
+	require.Nil(t, got.msg.Reference)
+
+	inThread := message("G1", "<@BOT> again")
+	inThread.ChannelID = "T1"
+	gw.events <- &discordgo.MessageCreate{Message: inThread}
+	gw.events <- &discordgo.MessageCreate{Message: message("", "status")}
+	for _, want := range []string{"T1", "C1"} {
+		msg := next(t, submitted)
+		require.NoError(t, msg.Reply(context.Background(), conversation.Reply{Text: "ok"}))
+		got := gw.nextSend(t)
+		require.Equal(t, want, got.channel)
+		require.Equal(t, "M1", got.msg.Reference.MessageID)
+	}
+	require.Empty(t, gw.started)
+
+	cancel()
+	require.NoError(t, next(t, done))
 }
 
 func Test_Adapter_Run_cancel_during_open(t *testing.T) {
@@ -186,7 +243,7 @@ func Test_Adapter_Run_thread_lookup_error(t *testing.T) {
 	gw.openErr <- nil
 	gw.events <- &discordgo.Ready{User: &discordgo.User{ID: "BOT"}}
 	gw.events <- mention("status")
-	require.Equal(t, "discord:G1:C1:M1", next(t, submitted).Conversation)
+	require.Equal(t, "discord:G1:M1", next(t, submitted).Conversation)
 	cancel()
 	require.NoError(t, next(t, done))
 }

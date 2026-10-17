@@ -19,6 +19,8 @@ type gateway interface {
 	// IsThread reports whether channelID is a thread, asking the REST API when the state cache lacks it.
 	IsThread(ctx context.Context, channelID string) (bool, error)
 	Send(ctx context.Context, channelID string, msg *discordgo.MessageSend) error
+	// StartThread opens a public thread on a message and returns the thread's ID.
+	StartThread(ctx context.Context, channelID, messageID, name string) (string, error)
 }
 
 // session forwards a discordgo session's events, in gateway order, to one channel.
@@ -81,4 +83,12 @@ func (g *session) IsThread(ctx context.Context, channelID string) (bool, error) 
 func (g *session) Send(ctx context.Context, channelID string, msg *discordgo.MessageSend) error {
 	_, err := g.s.ChannelMessageSendComplex(channelID, msg, discordgo.WithContext(ctx))
 	return err
+}
+
+func (g *session) StartThread(ctx context.Context, channelID, messageID, name string) (string, error) {
+	thread, err := g.s.MessageThreadStartComplex(channelID, messageID, &discordgo.ThreadStart{Name: name, AutoArchiveDuration: threadArchiveMinutes}, discordgo.WithContext(ctx))
+	if err != nil {
+		return "", err
+	}
+	return thread.ID, nil
 }
