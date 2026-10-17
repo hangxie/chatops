@@ -2,43 +2,88 @@
 
 Status: implemented ([`DESIGN.md`](DESIGN.md) §11, Phase 5).
 
-Two consumers need to know where a turn spent its time and bytes: the person who asked, looking at one reply, and an operator, looking at trends across many turns. Both are fed from one source: the agent records every step of a turn, and the conversation manager records every question from receipt to delivered reply. A per-reply stats footer renders one turn; Prometheus aggregates all of them. Neither changes how a turn runs.
+Two audiences need to know where a turn spent its time and bytes:
+
+| Audience | Looks at | Fed by |
+|---|---|---|
+| The person who asked | one reply | the per-reply stats footer |
+| An operator | trends across many turns | Prometheus |
+
+Both come from one source:
+
+- The agent records every step of a turn.
+- The conversation manager records every question from receipt to delivered reply.
+
+Neither changes how a turn runs.
 
 ## Configuration
 
-The footer and the metrics endpoint are two independent settings, both off by default, so either can be enabled without the other: `agent.show_stats` controls the footer in chat and `metrics.listen` starts the Prometheus endpoint. The per-turn log line is always on. The sample [`config.yaml`](../package/systemd/config.yaml) enables the endpoint on loopback (`127.0.0.1:9464`), so packaged installs get health probes and local scraping without exposing them, and shows the footer commented out with its default; both are also in the README settings table.
+| Setting | Default | Controls |
+|---|---|---|
+| `agent.show_stats` | `false` | the footer in chat |
+| `metrics.listen` | unset | the Prometheus endpoint and health probes |
+| (none) | always on | the per-turn log line |
+
+- The two settings are independent, so either can be enabled without the other. Both are in the README settings table.
+- The sample [`config.yaml`](../package/systemd/config.yaml) enables the endpoint on loopback (`127.0.0.1:9464`), so packaged installs get health probes and local scraping without exposing them.
+- The sample shows the footer commented out, with its default.
 
 ## Steps
 
 A turn is a sequence of steps, recorded in order with duration and outcome. A model call is named by what it returned, so a reader can tell the calls apart without counting iterations:
 
-- **plan:** the model returned tool calls.
-- **answer:** the model returned the final text; a successful turn ends with exactly one.
-- **model:** a model call that failed before returning either; it appears only on a failed turn.
-- **tool:** one MCP tool call, named by its model-facing name.
+| Step | Meaning |
+|---|---|
+| `plan` | The model returned tool calls. |
+| `answer` | The model returned the final text; a successful turn ends with exactly one. |
+| `model` | A model call that failed before returning either; appears only on a failed turn. |
+| `tool` | One MCP tool call, named by its model-facing name. |
 
-A model step carries prompt and completion tokens from the response's `usage` block; an endpoint that omits `usage` leaves tokens unreported, never zero, and totals count reported tokens only. A tool step carries two sizes: the bytes the server returned and the bytes the model saw after `max_tool_result_bytes` truncation, because a truncated result often explains a poor answer.
+What each step carries:
 
-A failed turn keeps the steps that completed and records the step that was running when it stopped, with its outcome (`timeout`, `error`); `Agent.Run` returns the partial stats alongside its error. A model or tool result that arrives after its deadline is discarded and its step recorded as `timeout`, because dependencies may ignore cancellation. A tool step is timed from the model's request, so a call rejected as unknown or invalid still has a duration. A turn stopped by `max_iterations`, or by an identical call that failed twice in a row, ends with a plan marked `stopped`. A call rejected as an unknown tool or invalid arguments logs `tool call rejected` at warn level without the arguments, which are logged only at debug level.
+- Model step: prompt and completion tokens from the response's `usage` block. An endpoint that omits `usage` leaves tokens unreported, never zero, and totals count reported tokens only.
+- Tool step: the bytes the server returned and the bytes the model saw after `max_tool_result_bytes` truncation, because a truncated result often explains a poor answer.
+
+Failures and edge cases:
+
+- A failed turn keeps the completed steps and records the step that was running when it stopped, with its outcome (`timeout`, `error`). `Agent.Run` returns the partial stats alongside its error.
+- A model or tool result that arrives after its deadline is discarded and its step recorded as `timeout`, because dependencies may ignore cancellation.
+- A tool step is timed from the model's request, so a call rejected as unknown or invalid still has a duration.
+- A turn stopped by `max_iterations`, or by an identical call that failed twice in a row, ends with a plan marked `stopped`.
+- A call rejected as an unknown tool or invalid arguments logs `tool call rejected` at warn level without the arguments, which are logged only at debug level.
 
 ## Reply footer
 
-With `agent.show_stats: true` (default `false`), the conversation manager appends the steps and totals to the end of every reply, failures included:
+With `agent.show_stats: true`, the conversation manager appends the steps and totals to every reply, failures included:
 
     plan 2.3s (1.2k→45 tok) → kubernetes.pod_list 5.7s (123KB→16KB) → answer 6.3s (8.1k→310 tok)
     total 14.3s · 1 tool · 9.3k→355 tok · reply 2.1KB
 
-Tools appear as `<server>.<tool>`, using the configured server name, which is unique across servers (the sample config names each built-in group's server after the group); the model-facing `<server>__<tool>` would render as bold in chat markdown. A call to an unknown tool shows the name the model asked for. The reply size is measured before sending and is approximate: platform rendering (Slack mrkdwn) changes it slightly, and the post itself cannot report its own latency. Measuring exactly would need a follow-up message or an edit, which is not worth the extra chat traffic.
+- Tools appear as `<server>.<tool>`, using the configured server name, which is unique across servers. The model-facing `<server>__<tool>` would render as bold in chat Markdown.
+- A call to an unknown tool shows the name the model asked for.
+- The reply size is measured before sending and is approximate: platform rendering (Slack mrkdwn) changes it slightly.
+- The post cannot report its own latency. Measuring it would need a follow-up message or an edit, which is not worth the extra chat traffic.
 
-The footer travels to the chat backend separately from the answer, so each backend can set it apart: Slack shows it below a divider as a context block (smaller grey text), and its notification text omits it; plain-text backends print it after a blank line.
+The footer travels to the chat backend separately from the answer, so each backend can set it apart:
+
+| Backend | Footer |
+|---|---|
+| Slack | below a divider as a context block (smaller grey text); left out of the notification text |
+| Discord | subtext (`-#` lines, smaller grey text) below the answer |
+| plain text | after a blank line |
 
 ## Prometheus
 
-`metrics.listen` in the config (unset by default) serves `/metrics` on its own HTTP listener. Collectors live in a dedicated registry wired explicitly in `serve`, never the global default registry, which also exports Go runtime and process metrics. The endpoint is unauthenticated, like most exporters; bind it to loopback or a scrape-only network. Once configured, metrics are part of the daemon's health: an unexpected server exit stops `serve` with an error, as a failed listen does at startup, so a supervisor restarts the whole process instead of it answering chat with no metrics.
+`metrics.listen` serves `/metrics` on its own HTTP listener.
 
-Labels stay low-cardinality: `backend` is the configured chat backend name, `server` and `tool` come from administrator-configured MCP servers. User, channel, conversation, and message text never become labels.
+- Collectors live in a dedicated registry wired explicitly in `serve`, never the global default registry. It also exports Go runtime and process metrics.
+- The endpoint is unauthenticated, like most exporters. Bind it to loopback or a scrape-only network.
+- Once configured, metrics are part of the daemon's health. An unexpected server exit stops `serve` with an error, as a failed listen does at startup, so a supervisor restarts the process instead of it answering chat with no metrics.
+- Labels stay low-cardinality: `backend` is the configured chat backend name, `server` and `tool` come from administrator-configured MCP servers. User, channel, conversation, and message text never become labels.
 
-Question metrics are recorded by the conversation manager, because some questions never reach the agent (refused as busy or during shutdown), and because response time must include the wait for a turn slot and reply delivery, which is what the asker experiences.
+### Question metrics
+
+Recorded by the conversation manager, because some questions never reach the agent (refused as busy or during shutdown), and because response time must include the wait for a turn slot and reply delivery, which is what the asker experiences.
 
 | Metric | Type | Labels |
 |---|---|---|
@@ -50,7 +95,9 @@ Question metrics are recorded by the conversation manager, because some question
 | `chatops_questions_pending` | gauge | |
 | `chatops_turns_in_flight` | gauge | |
 
-Step metrics are recorded from the agent's steps:
+### Step metrics
+
+Recorded from the agent's steps:
 
 | Metric | Type | Labels |
 |---|---|---|
@@ -65,21 +112,38 @@ Step metrics are recorded from the agent's steps:
 | `chatops_mcp_tools` | gauge | `server` |
 | `chatops_build_info` | gauge (always 1) | `version` |
 
-There is no separate answered or failed counter: the `_count` series of `chatops_response_duration_seconds` by `outcome` already counts them, and its `_sum`/`_count` gives the average response time. "Answered" means a final answer was produced and delivered, not that it was correct; a scope-gate decline counts as answered because its text is indistinguishable from help without a structured signal from the model.
+### Notes on the metrics
 
-`chatops_response_duration_seconds` observes delivered replies only; an undelivered one counts in `chatops_reply_failures_total` instead, while its turn's step metrics are still recorded. `chatops_queue_wait_seconds` runs from receipt to taking a turn slot, so it includes waiting behind earlier messages of the same conversation. A tool the model named but no server serves is labeled `(unknown)` for both `server` and `tool`, so model output never becomes a label. With no reconnect yet, `chatops_mcp_server_up` stays 0 once a session ends; the daemon logs a warning when that happens.
+- There is no separate answered or failed counter. The `_count` of `chatops_response_duration_seconds` by `outcome` counts them, and `_sum`/`_count` gives the average response time.
+- "Answered" means a final answer was produced and delivered, not that it was correct. A scope-gate decline counts as answered, since its text is indistinguishable from help without a structured signal from the model.
+- `chatops_response_duration_seconds` observes delivered replies only. An undelivered one counts in `chatops_reply_failures_total` instead; its turn's step metrics are still recorded.
+- `chatops_queue_wait_seconds` runs from receipt to taking a turn slot, so it includes waiting behind earlier messages of the same conversation.
+- A tool the model named but no server serves is labeled `(unknown)` for both `server` and `tool`, so model output never becomes a label.
+- With no reconnect yet, `chatops_mcp_server_up` stays 0 once a session ends; the daemon logs a warning when that happens.
 
 ## Health probes
 
-The metrics listener also serves `/healthz` and `/readyz`, so probes need no second port or setting. `/healthz` checks nothing beyond answering HTTP, so a liveness probe never restarts a daemon that is merely busy or waiting on a slow model. `/readyz` reports `starting` until the conversation manager is wired, `shutting down` once it stops accepting questions, each chat backend that is not connected, and each MCP server that is down; it reads the same cached state as the gauges and never calls the model or a tool, because a probe that depends on the model endpoint would flap with it. A chat backend counts as connected only once it can receive messages (for Slack, after Socket Mode connects), so a fresh daemon stays unready until then, and a Slack reconnect makes it briefly unready.
+The metrics listener also serves `/healthz` and `/readyz`, so probes need no second port or setting.
+
+| Probe | Checks | Why |
+|---|---|---|
+| `/healthz` | nothing beyond answering HTTP | a liveness probe never restarts a daemon that is merely busy or waiting on a slow model |
+| `/readyz` | startup finished, not shutting down, every chat backend connected, every MCP server up | a readiness or alerting signal |
+
+`/readyz` failure reasons: `starting` (until the conversation manager is wired), `shutting down` (once it stops accepting questions), each chat backend that is not connected, and each MCP server that is down.
+
+- `/readyz` reads the same cached state as the gauges and never calls the model or a tool, because a probe that depends on the model endpoint would flap with it.
+- A chat backend counts as connected only once it can receive messages (for Slack, after Socket Mode connects). A fresh daemon stays unready until then, and a reconnect makes it briefly unready.
 
 ### Readiness vs. activity
 
-Readiness is independent of conversation activity: an in-flight model call or MCP tool call, or a full pending queue, does not make the daemon unready. When the daemon checks its own status through a conversation, that conversation's turn is counted in `chatops_turns_in_flight`, so `chatops_turns_in_flight >= 1` is expected during a self-check and does not indicate an unhealthy daemon. `/readyz` answers 503 only when a readiness dependency fails: startup has not finished, shutdown is in progress, a chat backend is not connected, or a configured MCP server is down.
+Readiness is independent of conversation activity. An in-flight model or tool call, or a full pending queue, does not make the daemon unready.
+
+When the daemon checks its own status through a conversation, that turn counts in `chatops_turns_in_flight`, so `chatops_turns_in_flight >= 1` is expected during a self-check and is not a sign of trouble.
 
 ## Logs
 
-Each turn also emits one info-level log line with the same totals as the footer, whether or not the footer or metrics are enabled, so a slow turn can be investigated after the fact.
+Each turn emits one info-level log line with the same totals as the footer, whether or not the footer or metrics are enabled, so a slow turn can be investigated after the fact.
 
 ## Out of scope
 
