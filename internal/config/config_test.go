@@ -191,7 +191,7 @@ func Test_Load(t *testing.T) {
 func Test_Load_packaged_sample(t *testing.T) {
 	cfg, err := Load(filepath.Join("..", "..", "package", "systemd", "config.yaml"))
 	require.NoError(t, err)
-	require.Equal(t, Chat{"homelab": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}}, cfg.Chat)
+	require.Equal(t, Chat{"homelab": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN", ReplyMode: ReplyThread}}, cfg.Chat)
 	// Each built-in group runs as its own server named after the group, so tool prefixes name the group.
 	require.Len(t, cfg.MCP.Servers, 3)
 	for _, group := range []string{"ping", "status", "kubernetes"} {
@@ -228,20 +228,16 @@ func Test_Load_packaged_sample_agent_defaults(t *testing.T) {
 	require.Equal(t, want, cfg.Agent)
 }
 
-func Test_Parse_slack_reply_in_channel(t *testing.T) {
-	for _, value := range []string{"", "false", "true", "invalid"} {
+func Test_Parse_reply_mode(t *testing.T) {
+	for _, value := range []string{"", "thread", "channel"} {
 		t.Run(value, func(t *testing.T) {
 			input := fullConfig
 			if value != "" {
-				input = strings.Replace(input, "    app_token_env: SLACK_APP_TOKEN", "    app_token_env: SLACK_APP_TOKEN\n    reply_in_channel: "+value, 1)
+				input = strings.Replace(input, "    app_token_env: SLACK_APP_TOKEN", "    app_token_env: SLACK_APP_TOKEN\n    reply_mode: "+value, 1)
 			}
 			cfg, err := Parse([]byte(input))
-			if value == "invalid" {
-				require.ErrorContains(t, err, "parse config")
-				return
-			}
 			require.NoError(t, err)
-			require.Equal(t, value == "true", cfg.Chat["slack"].ReplyInChannel)
+			require.Equal(t, value, cfg.Chat["slack"].ReplyMode)
 		})
 	}
 }

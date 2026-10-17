@@ -1,4 +1,4 @@
-// Package discord receives Discord messages over the Gateway and answers them as replies.
+// Package discord receives Discord messages over the Gateway and answers them as replies or in threads.
 package discord
 
 import (
@@ -30,6 +30,8 @@ type Adapter struct {
 	gateway gateway
 	logger  *slog.Logger
 	botID   string
+	// replyInThread answers top-level channel messages in a thread started on them.
+	replyInThread bool
 
 	busySlots chan struct{}
 	busy      sync.WaitGroup
@@ -46,7 +48,9 @@ func New(cfg config.ChatBackend, logger *slog.Logger) (*Adapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("discord session: %w", err)
 	}
-	return newAdapter(gw, logger), nil
+	adapter := newAdapter(gw, logger)
+	adapter.replyInThread = cfg.ReplyMode == config.ReplyThread
+	return adapter, nil
 }
 
 func newAdapter(gw gateway, logger *slog.Logger) *Adapter {
@@ -140,6 +144,9 @@ func (a *Adapter) isThread(ctx context.Context, channelID string) bool {
 func (a *Adapter) submit(ctx context.Context, in inbound, ref *discordgo.MessageReference, submit func(conversation.Message) error) {
 	log := a.logger.With("conversation", in.conversation(), "user", in.user)
 	reply := a.replier(in.channel, ref)
+	if a.replyInThread && !in.thread && in.guild != "" {
+		reply = a.threadReplier(in, ref, log)
+	}
 	err := submit(conversation.Message{Conversation: in.conversation(), User: in.user, Text: in.text, Reply: reply})
 	switch {
 	case err == nil:

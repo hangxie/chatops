@@ -165,6 +165,40 @@ func Test_session_Send_error(t *testing.T) {
 	require.ErrorContains(t, gw.Send(context.Background(), "C1", &discordgo.MessageSend{Content: "hi"}), "Missing Permissions")
 }
 
+func Test_session_StartThread(t *testing.T) {
+	type request struct {
+		path string
+		body map[string]any
+	}
+	requests := make(chan request, 2)
+	fakeDiscordAPI(t, func(rw http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		requests <- request{path: r.URL.Path, body: body}
+		rw.Header().Set("Content-Type", "application/json")
+		if body["name"] == "denied" {
+			rw.WriteHeader(http.StatusForbidden)
+			_, _ = rw.Write([]byte(`{"code":50013,"message":"Missing Permissions"}`))
+			return
+		}
+		_, _ = rw.Write([]byte(`{"id":"M1","guild_id":"G1","type":11}`))
+	})
+	gw, err := newSession("token")
+	require.NoError(t, err)
+
+	id, err := gw.StartThread(context.Background(), "C1", "M1", "is it up?")
+	require.NoError(t, err)
+	require.Equal(t, "M1", id)
+	got := <-requests
+	require.Equal(t, "/channels/C1/messages/M1/threads", got.path)
+	require.Equal(t, "is it up?", got.body["name"])
+	require.EqualValues(t, threadArchiveMinutes, got.body["auto_archive_duration"])
+
+	_, err = gw.StartThread(context.Background(), "C1", "M1", "denied")
+	require.ErrorContains(t, err, "Missing Permissions")
+	<-requests
+}
+
 func Test_session_Open_error(t *testing.T) {
 	fakeDiscordAPI(t, func(rw http.ResponseWriter, _ *http.Request) {
 		rw.WriteHeader(http.StatusUnauthorized)

@@ -75,7 +75,7 @@ func New(cfg config.ChatBackend, logger *slog.Logger) (*Adapter, error) {
 	}
 	api := slackapi.New(botToken, slackapi.OptionAppLevelToken(appToken))
 	adapter := newAdapter(socket{client: socketmode.New(api)}, api, logger)
-	adapter.replyInChannel = cfg.ReplyInChannel
+	adapter.replyInChannel = cfg.ReplyMode == config.ReplyChannel
 	return adapter, nil
 }
 

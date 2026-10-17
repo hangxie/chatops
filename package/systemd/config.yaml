@@ -7,11 +7,12 @@ chat:
     type: slack
     bot_token_env: SLACK_BOT_TOKEN
     app_token_env: SLACK_APP_TOKEN
-    reply_in_channel: false # Top-level replies go to the channel or DM when true; threaded replies stay in their thread.
+    reply_mode: thread # Where top-level messages are answered: thread (default) or channel; threaded messages stay in their thread.
   # Discord Gateway backend; add its name to CHAT in chatops.env to run it.
   # discord:
   #   type: discord
   #   bot_token_env: DISCORD_BOT_TOKEN
+  #   reply_mode: channel # channel (default) or thread: answer top-level messages in a new thread
   # Local Unix socket backend, one conversation per connection. The directory
   # must be writable by the daemon; under the packaged unit that means adding
   # RuntimeDirectory=chatops so /run/chatops exists.

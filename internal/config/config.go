@@ -41,6 +41,12 @@ const (
 	ChatUnix    = "unix"
 )
 
+// Reply modes: where slack and discord answer a top-level message.
+const (
+	ReplyThread  = "thread"
+	ReplyChannel = "channel"
+)
+
 // Chat maps a backend name to its definition; `chatops serve --chat` selects which ones run.
 type Chat map[string]ChatBackend
 
@@ -51,8 +57,8 @@ type ChatBackend struct {
 	// slack: environment variables holding the bot (xoxb) and app-level (xapp) tokens; discord: the bot token.
 	BotTokenEnv string `yaml:"bot_token_env"`
 	AppTokenEnv string `yaml:"app_token_env"`
-	// ReplyInChannel posts replies to top-level Slack messages directly to the channel.
-	ReplyInChannel bool `yaml:"reply_in_channel"`
+	// ReplyMode is ReplyThread or ReplyChannel; empty takes the backend's default (slack thread, discord channel).
+	ReplyMode string `yaml:"reply_mode"`
 
 	// unix: filesystem path of the socket to create, and optional octal permission bits (e.g. "0600").
 	Path string `yaml:"path"`

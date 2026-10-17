@@ -64,7 +64,7 @@ Start from the annotated sample at [`package/systemd/config.yaml`](package/syste
 | `chat.<name>.type` | (required) | Chat backend kind: `slack`, `discord`, `stdio`, or `unix`; `<name>` is a free-form id selected on the command line with `--chat` |
 | `chat.<name>.bot_token_env`, `app_token_env` | (none) | slack: environment variables holding the Slack bot (`xoxb-`) and app-level (`xapp-`) tokens; both required |
 | `chat.<name>.bot_token_env` | (none) | discord: environment variable holding the Discord bot token; required |
-| `chat.<name>.reply_in_channel` | `false` | slack only: reply to top-level messages directly in the channel or DM; messages in an existing thread always receive replies in that thread |
+| `chat.<name>.reply_mode` | slack `thread`, discord `channel` | slack and discord: where a top-level message is answered, `thread` or `channel`; a message in an existing thread is always answered in that thread |
 | `chat.<name>.path`, `mode` | (none) | unix only: filesystem path of the socket to create (required) and optional octal permission bits (e.g. `0600`, the default owner-only) |
 | `llm.base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions` |
 | `llm.model` | (required) | Model name sent with each request |
@@ -203,9 +203,9 @@ How it answers:
 
 | Where | Answered when | Reply goes to |
 |---|---|---|
-| Channel the app is invited to | the message starts with a mention of the bot (`@chatops is the MCP server reachable?`); a later mention is ignored, and thread follow-ups need it too | the message's thread, or the channel with `reply_in_channel: true` |
-| Direct message | always; no mention needed | the message's thread, or the DM with `reply_in_channel: true` |
-| Existing thread | as above | always that thread, regardless of `reply_in_channel` |
+| Channel the app is invited to | the message starts with a mention of the bot (`@chatops is the MCP server reachable?`); a later mention is ignored, and thread follow-ups need it too | the message's thread, or the channel with `reply_mode: channel` |
+| Direct message | always; no mention needed | the message's thread, or the DM with `reply_mode: channel` |
+| Existing thread | as above | always that thread, regardless of `reply_mode` |
 
 Conversations and ordering:
 
@@ -229,7 +229,7 @@ Busy, failures, and safety:
 The `discord` backend answers Discord messages over the Gateway, a websocket the bot opens outbound, so like `slack` it needs no public endpoint.
 
 1. At https://discord.com/developers/applications, choose "New Application", then on the "Bot" page choose "Reset Token" and export the token. The bot needs no privileged gateway intents: without the Message Content intent, Discord still sends it the text of messages that mention it and of direct messages.
-2. Invite the bot with `https://discord.com/oauth2/authorize?client_id=<application id>&scope=bot&permissions=274877975552`, which grants View Channels, Send Messages, Send Messages in Threads, and Read Message History (needed to reply to a message).
+2. Invite the bot with `https://discord.com/oauth2/authorize?client_id=<application id>&scope=bot&permissions=309237713920`, which grants View Channels, Send Messages, Create Public Threads (needed for `reply_mode: thread`), Send Messages in Threads, and Read Message History (needed to reply to a message).
 3. Add a backend such as `discord: {type: discord, bot_token_env: DISCORD_BOT_TOKEN}` and start the daemon:
 
 ```bash
@@ -239,14 +239,15 @@ export DISCORD_BOT_TOKEN=...
 
 How it answers:
 
-| Where | Answered when | Conversation |
-|---|---|---|
-| Server channel | the message starts with a mention of the bot (`@chatops is the MCP server reachable?`) | each message is its own |
-| Thread | the message starts with a mention of the bot | the whole thread shares history |
-| Direct message | always | each message is its own |
+| Where | Answered when | Reply goes to | Conversation |
+|---|---|---|---|
+| Server channel | the message starts with a mention of the bot (`@chatops is the MCP server reachable?`) | a reply in the channel, or a new thread on the message with `reply_mode: thread` | each message is its own, joined by the thread it opens |
+| Thread | the message starts with a mention of the bot | that thread | the whole thread shares history |
+| Direct message | always | a reply in the DM | each message is its own |
 
 - Messages from other bots and webhooks are ignored.
-- The answer is a Discord reply to the message, in the same channel or thread. Start a thread for follow-ups when `agent.history_turns > 0`.
+- With `reply_mode: thread`, the thread is named after the question and archives after a day of inactivity. Follow-ups in it still need a mention. If the bot cannot start a thread, it replies in the channel instead.
+- Keep follow-ups in a thread when `agent.history_turns > 0`, either one started by `reply_mode: thread` or one started by hand.
 - Replies ping no one, not even the asker, and have link previews off, so model output cannot mention `@everyone` or users, or make Discord fetch a URL.
 - Markdown is shown as Discord renders it, except tables, which become aligned code blocks.
 - A long answer is split at line breaks into up to five messages of 2,000 characters, ending with "[reply truncated]" if longer.
