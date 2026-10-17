@@ -13,7 +13,6 @@ jobs:
     uses: ./.github/workflows/build.yml
   release-build:
     runs-on: ubuntu-26.04
-    needs: build
     steps:
       - uses: actions/checkout@v7
         with:
@@ -34,7 +33,7 @@ jobs:
           path: build
   github-release:
     runs-on: ubuntu-26.04
-    needs: release-build
+    needs: [build, release-build]
     permissions:
       contents: write
     steps:
@@ -54,7 +53,7 @@ jobs:
               ./build/release/*
   docker-image:
     runs-on: ubuntu-26.04
-    needs: release-build
+    needs: [build, release-build]
     permissions:
       contents: read
       packages: write
