@@ -108,8 +108,8 @@ func (b *fakeBackend) Run(ctx context.Context, submit func(conversation.Message)
 
 func (b *fakeBackend) Connected() bool { return true }
 
-func injected(b chat.Backend) func(config.Chat, []string, *slog.Logger) ([]chat.Named, error) {
-	return func(config.Chat, []string, *slog.Logger) ([]chat.Named, error) {
+func injected(b chat.Backend) func(config.Chat, *slog.Logger) ([]chat.Named, error) {
+	return func(config.Chat, *slog.Logger) ([]chat.Named, error) {
 		return []chat.Named{{Name: "fake", Backend: b}}, nil
 	}
 }
@@ -117,7 +117,7 @@ func injected(b chat.Backend) func(config.Chat, []string, *slog.Logger) ([]chat.
 func Test_Cmd_Run_end_to_end(t *testing.T) {
 	var logs bytes.Buffer
 	b := &fakeBackend{reply: make(chan string, 1)}
-	cmd := Cmd{Config: writeConfig(t, scriptedLLM(t).URL), Chat: []string{"slack"}, LogLevel: "info", LogFormat: "json", errOut: &logs, selectBackends: injected(b)}
+	cmd := Cmd{Config: writeConfig(t, scriptedLLM(t).URL), LogLevel: "info", LogFormat: "json", errOut: &logs, buildBackends: injected(b)}
 
 	require.NoError(t, cmd.Run(context.Background()))
 	require.Equal(t, "The server replied pong.", <-b.reply)
@@ -185,7 +185,7 @@ func Test_Cmd_Run_metrics(t *testing.T) {
 	b := &scrapeBackend{addr: make(chan string, 1)}
 	var logs bytes.Buffer
 	cmd := Cmd{
-		Config: path, Chat: []string{"slack"}, LogLevel: "info", LogFormat: "json", errOut: &logs, selectBackends: injected(b),
+		Config: path, LogLevel: "info", LogFormat: "json", errOut: &logs, buildBackends: injected(b),
 		listen: func(network, address string) (net.Listener, error) {
 			ln, err := net.Listen(network, address)
 			if err == nil {
@@ -246,7 +246,7 @@ func Test_Cmd_Run_metrics_server_failure(t *testing.T) {
 
 	b := &closingBackend{listener: make(chan net.Listener, 1)}
 	cmd := Cmd{
-		Config: path, Chat: []string{"slack"}, LogLevel: "info", LogFormat: "text", errOut: io.Discard, selectBackends: injected(b),
+		Config: path, LogLevel: "info", LogFormat: "text", errOut: io.Discard, buildBackends: injected(b),
 		listen: func(network, address string) (net.Listener, error) {
 			ln, err := net.Listen(network, address)
 			if err == nil {
@@ -267,13 +267,13 @@ func Test_Cmd_Run_metrics_listen_error(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(path, append(data, []byte("metrics:\n  listen: "+busy.Addr().String()+"\n")...), 0o600))
 
-	cmd := Cmd{Config: path, Chat: []string{"slack"}, LogLevel: "info", LogFormat: "text", errOut: io.Discard, selectBackends: injected(&fakeBackend{reply: make(chan string, 1)})}
+	cmd := Cmd{Config: path, LogLevel: "info", LogFormat: "text", errOut: io.Discard, buildBackends: injected(&fakeBackend{reply: make(chan string, 1)})}
 	require.ErrorContains(t, cmd.Run(context.Background()), "metrics: listen tcp "+busy.Addr().String())
 }
 
 func Test_Cmd_Run_backend_error(t *testing.T) {
 	b := &fakeBackend{reply: make(chan string, 1), err: errors.New("slack: socket mode: invalid_auth")}
-	cmd := Cmd{Config: writeConfig(t, scriptedLLM(t).URL), Chat: []string{"slack"}, LogLevel: "warn", LogFormat: "text", errOut: io.Discard, selectBackends: injected(b)}
+	cmd := Cmd{Config: writeConfig(t, scriptedLLM(t).URL), LogLevel: "warn", LogFormat: "text", errOut: io.Discard, buildBackends: injected(b)}
 	require.EqualError(t, cmd.Run(context.Background()), "slack: socket mode: invalid_auth")
 }
 
@@ -283,10 +283,10 @@ func Test_Cmd_Run_errors(t *testing.T) {
 		cmd    Cmd
 		errMsg string
 	}{
-		"bad-level":       {cmd: Cmd{Config: writeConfig(t, llmURL), Chat: []string{"slack"}, LogLevel: "loud", LogFormat: "text"}, errMsg: `log level: slog: level string "loud": unknown name`},
-		"bad-format":      {cmd: Cmd{Config: writeConfig(t, llmURL), Chat: []string{"slack"}, LogLevel: "info", LogFormat: "xml"}, errMsg: `log format: must be "text" or "json", got "xml"`},
-		"missing-file":    {cmd: Cmd{Config: filepath.Join(t.TempDir(), "none.yaml"), Chat: []string{"slack"}, LogLevel: "info", LogFormat: "text"}, errMsg: "read config"},
-		"unknown-backend": {cmd: Cmd{Config: writeConfig(t, llmURL), Chat: []string{"ghost"}, LogLevel: "info", LogFormat: "text"}, errMsg: `chat backend "ghost" is not defined in the config`},
+		"bad-level":    {cmd: Cmd{Config: writeConfig(t, llmURL), LogLevel: "loud", LogFormat: "text"}, errMsg: `log level: slog: level string "loud": unknown name`},
+		"bad-format":   {cmd: Cmd{Config: writeConfig(t, llmURL), LogLevel: "info", LogFormat: "xml"}, errMsg: `log format: must be "text" or "json", got "xml"`},
+		"missing-file": {cmd: Cmd{Config: filepath.Join(t.TempDir(), "none.yaml"), LogLevel: "info", LogFormat: "text"}, errMsg: "read config"},
+		"unset-token":  {cmd: Cmd{Config: writeConfig(t, llmURL), LogLevel: "info", LogFormat: "text"}, errMsg: "slack bot token"},
 	}
 
 	for name, tc := range tests {
@@ -314,17 +314,17 @@ func Test_Cmd_Run_dependency_errors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.yaml")
 			require.NoError(t, os.WriteFile(path, []byte(tc.config), 0o600))
-			cmd := Cmd{Config: path, Chat: []string{"slack"}, LogLevel: "info", LogFormat: "text", errOut: io.Discard, selectBackends: injected(&fakeBackend{reply: make(chan string, 1)})}
+			cmd := Cmd{Config: path, LogLevel: "info", LogFormat: "text", errOut: io.Discard, buildBackends: injected(&fakeBackend{reply: make(chan string, 1)})}
 			require.ErrorContains(t, cmd.Run(context.Background()), tc.errMsg)
 		})
 	}
 }
 
-func Test_Cmd_selector_default(t *testing.T) {
+func Test_Cmd_builder_default(t *testing.T) {
 	t.Setenv("CHATOPS_SERVE_TEST_BOT", "xoxb-1")
 	t.Setenv("CHATOPS_SERVE_TEST_APP", "xapp-1")
 	cfg := config.Chat{"slack": {Type: config.ChatSlack, BotTokenEnv: "CHATOPS_SERVE_TEST_BOT", AppTokenEnv: "CHATOPS_SERVE_TEST_APP"}}
-	backends, err := Cmd{}.selector()(cfg, []string{"slack"}, slog.Default())
+	backends, err := Cmd{}.builder()(cfg, slog.Default())
 	require.NoError(t, err)
 	require.Len(t, backends, 1)
 	require.Equal(t, "slack", backends[0].Name)

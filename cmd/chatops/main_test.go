@@ -16,15 +16,14 @@ func Test_cli_parse(t *testing.T) {
 		errMsg  string
 		command string
 	}{
-		"serve":            {args: []string{"serve", "-c", "c.yaml", "--chat", "slack", "--log-format", "json"}, command: "serve"},
-		"serve-multi-chat": {args: []string{"serve", "-c", "c.yaml", "--chat", "slack,console"}, command: "serve"},
-		"serve-no-config":  {args: []string{"serve", "--chat", "slack"}, errMsg: "missing flags: --config=FILE"},
-		"serve-no-chat":    {args: []string{"serve", "-c", "c.yaml"}, errMsg: "--chat=NAME"},
-		"version":          {args: []string{"version"}, command: "version"},
-		"version-json":     {args: []string{"version", "--json"}, command: "version"},
-		"no-args":          {args: nil, errMsg: "expected"},
-		"unknown":          {args: []string{"bogus"}, errMsg: "unexpected argument bogus"},
-		"too-many-args":    {args: []string{"version", "extra"}, errMsg: "unexpected argument extra"},
+		"serve":           {args: []string{"serve", "-c", "c.yaml", "--log-format", "json"}, command: "serve"},
+		"serve-no-config": {args: []string{"serve"}, errMsg: "missing flags: --config=FILE"},
+		"serve-chat-gone": {args: []string{"serve", "-c", "c.yaml", "--chat", "slack"}, errMsg: "unknown flag --chat"},
+		"version":         {args: []string{"version"}, command: "version"},
+		"version-json":    {args: []string{"version", "--json"}, command: "version"},
+		"no-args":         {args: nil, errMsg: "expected"},
+		"unknown":         {args: []string{"bogus"}, errMsg: "unexpected argument bogus"},
+		"too-many-args":   {args: []string{"version", "extra"}, errMsg: "unexpected argument extra"},
 	}
 
 	for name, tc := range tests {

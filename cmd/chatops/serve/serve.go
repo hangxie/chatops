@@ -29,15 +29,14 @@ var errMetricsStopped = errors.New("metrics server stopped")
 
 // Cmd is the kong command for serve.
 type Cmd struct {
-	Config    string   `short:"c" required:"" placeholder:"FILE" help:"Path to the YAML config file."`
-	Chat      []string `required:"" sep:"," placeholder:"NAME" help:"Comma-separated chat backend names to run, from the config's chat: map."`
-	LogLevel  string   `default:"info" help:"Minimum level of logs written to stderr: debug, info, warn, or error."`
-	LogFormat string   `default:"text" help:"Log format on stderr: text or json."`
+	Config    string `short:"c" required:"" placeholder:"FILE" help:"Path to the YAML config file."`
+	LogLevel  string `default:"info" help:"Minimum level of logs written to stderr: debug, info, warn, or error."`
+	LogFormat string `default:"text" help:"Log format on stderr: text or json."`
 
-	// errOut, selectBackends, and listen override stderr, backend construction, and the metrics listener in tests.
-	errOut         io.Writer
-	selectBackends func(config.Chat, []string, *slog.Logger) ([]chat.Named, error)
-	listen         func(network, address string) (net.Listener, error)
+	// errOut, buildBackends, and listen override stderr, backend construction, and the metrics listener in tests.
+	errOut        io.Writer
+	buildBackends func(config.Chat, *slog.Logger) ([]chat.Named, error)
+	listen        func(network, address string) (net.Listener, error)
 }
 
 // Run connects to the chat backends, the model, and the MCP servers, then answers messages until cancelled.
@@ -52,7 +51,7 @@ func (c Cmd) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	backends, err := c.selector()(cfg.Chat, c.Chat, logger)
+	backends, err := c.builder()(cfg.Chat, logger)
 	if err != nil {
 		return err
 	}
@@ -132,11 +131,11 @@ func (c Cmd) serveMetrics(address string, exporter *metrics.Metrics, logger *slo
 	return func() { cancel(); <-done }, nil
 }
 
-func (c Cmd) selector() func(config.Chat, []string, *slog.Logger) ([]chat.Named, error) {
-	if c.selectBackends != nil {
-		return c.selectBackends
+func (c Cmd) builder() func(config.Chat, *slog.Logger) ([]chat.Named, error) {
+	if c.buildBackends != nil {
+		return c.buildBackends
 	}
-	return chat.Select
+	return chat.Build
 }
 
 func (c Cmd) logger() (*slog.Logger, error) {

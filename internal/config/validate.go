@@ -24,6 +24,9 @@ func (c Config) Validate() error {
 		errs = append(errs, fmt.Errorf("%s: %s", field, fmt.Sprintf(format, args...)))
 	}
 
+	if len(c.Chat) == 0 {
+		add("chat", "at least one backend is required")
+	}
 	for _, name := range sortedChat(c.Chat) {
 		validateChatBackend(name, c.Chat[name], add)
 	}

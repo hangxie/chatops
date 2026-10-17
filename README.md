@@ -6,7 +6,7 @@
 
 This project is under early development:
 
-- `chatops serve --chat <names>` answers messages from the selected chat backends: Slack, Discord, a local terminal, or a Unix socket.
+- `chatops serve` answers messages from every chat backend in its config: Slack, Discord, a local terminal, or a Unix socket.
 - `chatops-mcp` serves the built-in tool groups: `ping`, `status`, read-only `kubernetes`, and `host` (see [Built-in MCPs](#built-in-mcps)).
 - Authorization policy and approvals are not implemented yet.
 
@@ -61,7 +61,7 @@ Start from the annotated sample at [`package/systemd/config.yaml`](package/syste
 
 | Setting | Default | Description |
 |---|---|---|
-| `chat.<name>.type` | (required) | Chat backend kind: `slack`, `discord`, `stdio`, or `unix`; `<name>` is a free-form id selected on the command line with `--chat` |
+| `chat.<name>.type` | (required) | Chat backend kind: `slack`, `discord`, `stdio`, or `unix`; `<name>` is a free-form id; every backend listed runs, and at least one is required |
 | `chat.<name>.bot_token_env`, `app_token_env` | (none) | slack: environment variables holding the Slack bot (`xoxb-`) and app-level (`xapp-`) tokens; both required |
 | `chat.<name>.bot_token_env` | (none) | discord: environment variable holding the Discord bot token; required |
 | `chat.<name>.reply_mode` | slack `thread`, discord `channel` | slack and discord: where a top-level message is answered, `thread` or `channel`; a message in an existing thread is always answered in that thread |
@@ -133,10 +133,10 @@ Whatever the value, a strong `system_prompt` helps. The packaged prompt makes th
 
 ## Chat backends
 
-`chatops serve` runs the daemon against one or more named chat backends. See [`docs/chat.md`](docs/chat.md) for the design.
+`chatops serve` runs the daemon against every chat backend in its config. See [`docs/chat.md`](docs/chat.md) for the design.
 
 - Backends are declared in the `chat:` map, each with a free-form name and a `type`.
-- `--chat` selects which ones to run: comma-separated, required, no default.
+- Every entry runs. To turn one off, comment it out or remove it; no flag or environment variable selects backends.
 - Several can run at once, all sharing one agent and conversation manager.
 
 ```yaml
@@ -152,11 +152,10 @@ chat:
 | Flag | Default | Description |
 |---|---|---|
 | `-c`, `--config` | (required) | Path to the YAML config file |
-| `--chat` | (required) | Comma-separated backend names from the `chat:` map (e.g. `--chat eng-slack` or `--chat eng-slack,console`) |
 | `--log-level` | `info` | Minimum level of logs written to stderr: `debug`, `info`, `warn`, or `error`; `debug` adds each tool call's arguments; see [Debug logs](#debug-logs) |
 | `--log-format` | `text` | Log format on stderr: `text` or `json` |
 
-Startup aborts if a selected backend is absent from the config or invalid.
+Startup aborts if `chat:` is empty or any backend is invalid.
 
 Stopping the daemon (SIGINT or SIGTERM) stops accepting new messages and gives in-flight turns and their replies a short grace period to finish. Anything still running past it is cancelled, and conversation history is lost.
 
@@ -177,7 +176,7 @@ The `stdio` backend is an interactive development harness: one conversation on s
 
 ```bash
 make build
-./build/chatops serve --config config.yaml --chat console
+./build/chatops serve --config config.yaml   # with only a stdio backend under chat:
 ```
 
 ```text
@@ -196,7 +195,7 @@ The `slack` backend answers Slack messages over Socket Mode, so it needs no publ
 
 ```bash
 export SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-...
-./build/chatops serve --config config.yaml --chat eng-slack
+./build/chatops serve --config config.yaml
 ```
 
 How it answers:
@@ -234,7 +233,7 @@ The `discord` backend answers Discord messages over the Gateway, a websocket the
 
 ```bash
 export DISCORD_BOT_TOKEN=...
-./build/chatops serve --config config.yaml --chat discord
+./build/chatops serve --config config.yaml
 ```
 
 How it answers:
@@ -265,8 +264,8 @@ The `unix` backend lets a client on the same host reach a running daemon over a 
 For example, with a backend named `ops` of `type: unix` and `path: /run/chatops/ops.sock`:
 
 ```bash
-./build/chatops serve --config config.yaml --chat homelab,ops   # Slack plus the local socket
-nc -U /run/chatops/ops.sock                                      # then talk to it, one message per line
+./build/chatops serve --config config.yaml   # every backend in the config, the socket included
+nc -U /run/chatops/ops.sock                  # then talk to it, one message per line
 ```
 
 ### Debug logs
@@ -350,8 +349,8 @@ The deb and rpm packages install both binaries, a `chatops` system user, and a s
 | `/etc/chatops/mcp-status.d/` | Config directory of the `status` tool group; `00-default.yaml` is the shipped service list, and your own services go in files of your own beside it |
 | `/etc/chatops/mcp-kubernetes.d/` | Config directory of the `kubernetes` tool group; `00-default.yaml` points at the kubeconfig at `/etc/chatops/kubeconfig` (which you provide; make it `root:chatops` `0640`) |
 | `/etc/chatops/mcp-host.d/` | Config directory of the `host` tool group; `00-default.yaml` has examples only, so list your hosts in a file of your own beside it, then enable the commented `host` server in `config.yaml` |
-| `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `DISCORD_BOT_TOKEN` and `LLM_API_KEY`), `CHAT` (required: the backend names to run, shipped as `homelab` to match the sample config), and `LOG_LEVEL`/`LOG_FORMAT`; readable only by root and the `chatops` group |
-| `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml --chat ${CHAT}` (default `homelab`, the backend named in the sample config) with JSON logs to the journal; restarts on failure |
+| `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `DISCORD_BOT_TOKEN` and `LLM_API_KEY`), and `LOG_LEVEL`/`LOG_FORMAT`, which apply from the first log line; readable only by root and the `chatops` group |
+| `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml`, which starts every backend under `chat:`, with JSON logs to the journal; restarts on failure |
 
 Edited config files are kept across upgrades; see [Configuration directories](#configuration-directories). The service is not started on install; once both files are filled in:
 

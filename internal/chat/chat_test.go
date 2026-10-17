@@ -39,25 +39,22 @@ func Test_New(t *testing.T) {
 	require.EqualError(t, err, `chat backend "x": unknown type "irc"`)
 }
 
-func Test_Select(t *testing.T) {
+func Test_Build(t *testing.T) {
 	cfg := config.Chat{
 		"console": {Type: config.ChatStdio},
 		"other":   {Type: config.ChatStdio},
 	}
 
-	selected, err := Select(cfg, []string{"other", "console"}, nil)
+	built, err := Build(cfg, nil)
 	require.NoError(t, err)
-	require.Equal(t, []string{"other", "console"}, []string{selected[0].Name, selected[1].Name})
+	require.Equal(t, []string{"console", "other"}, []string{built[0].Name, built[1].Name})
 
-	_, err = Select(cfg, []string{"ghost"}, nil)
-	require.EqualError(t, err, `chat backend "ghost" is not defined in the config`)
-
-	_, err = Select(config.Chat{"bad": {Type: "irc"}}, []string{"bad"}, nil)
+	_, err = Build(config.Chat{"bad": {Type: "irc"}, "console": {Type: config.ChatStdio}}, nil)
 	require.EqualError(t, err, `chat backend "bad": unknown type "irc"`)
 
-	for _, names := range [][]string{nil, {}, {""}} {
-		_, err = Select(cfg, names, nil)
-		require.EqualError(t, err, "no chat backend selected")
+	for _, empty := range []config.Chat{nil, {}} {
+		_, err = Build(empty, nil)
+		require.EqualError(t, err, "no chat backend configured")
 	}
 }
 

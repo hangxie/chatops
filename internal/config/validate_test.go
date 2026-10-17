@@ -11,7 +11,8 @@ func pval[T any](v T) *T { return &v }
 
 func validConfig() Config {
 	return Config{
-		LLM: LLM{BaseURL: "http://localhost:8080/v1", Model: "m"},
+		Chat: Chat{"console": {Type: ChatStdio}},
+		LLM:  LLM{BaseURL: "http://localhost:8080/v1", Model: "m"},
 		MCP: MCP{Servers: map[string]Server{
 			"builtin": {Transport: TransportStdio, Command: "chatops-mcp"},
 			"remote":  {Transport: TransportStreamableHTTP, URL: "https://example.internal/mcp"},
@@ -69,6 +70,7 @@ func Test_Config_Validate(t *testing.T) {
 		"unix-bad-mode":     {mutate: func(c *Config) { c.Chat = Chat{"ops": {Type: ChatUnix, Path: "/run/chatops.sock", Mode: "nope"}} }, errs: []string{`chat.ops.mode: must be octal permission bits (e.g. 0600), got "nope"`}},
 		"chat-bad-name":     {mutate: func(c *Config) { c.Chat = Chat{"Bad_Name": {Type: ChatStdio}} }, errs: []string{`chat.Bad_Name: name must match ^[a-z][a-z0-9-]{0,31}$`}},
 		"stdio-with-env":    {mutate: func(c *Config) { c.Chat = Chat{"console": {Type: ChatStdio, BotTokenEnv: "X"}} }, errs: []string{"chat.console: bot_token_env and app_token_env are not allowed for a stdio backend"}},
+		"no-chat":           {mutate: func(c *Config) { c.Chat = nil }, errs: []string{"chat: at least one backend is required"}},
 		"no-servers":        {mutate: func(c *Config) { c.MCP.Servers = nil }},
 		"missing-base-url":  {mutate: func(c *Config) { c.LLM.BaseURL = "" }, errs: []string{"llm.base_url: required"}},
 		"relative-base-url": {mutate: func(c *Config) { c.LLM.BaseURL = "localhost/v1" }, errs: []string{`llm.base_url: must be an absolute http or https URL, got "localhost/v1"`}},
