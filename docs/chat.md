@@ -112,7 +112,7 @@ Slack Socket Mode, one conversation per Slack thread. Sender identity is the ver
 
 Formatting:
 
-- Replies post into the thread as escaped mrkdwn, without link previews.
+- Replies post into the thread as escaped mrkdwn, without link previews. With `reply_mode: channel`, a top-level message is answered in its channel or DM instead.
 - Common Markdown the model emits is converted to mrkdwn.
 - A reply with a Markdown table is posted as Block Kit blocks. The first table that fits a native Slack table block is posted as one: Slack allows one per message, up to 100 rows, 20 columns, and 10,000 characters, with no empty cells.
 - Every other table becomes an aligned code block.
@@ -129,6 +129,7 @@ Length and fallback:
 | `type` | yes | `slack` |
 | `bot_token_env` | yes | Environment variable holding the bot token (`xoxb-…`) |
 | `app_token_env` | yes | Environment variable holding the app-level token (`xapp-…`) for Socket Mode |
+| `reply_mode` | no | `thread` (default) or `channel`: where a top-level message is answered |
 
 ### `discord`
 
@@ -144,11 +145,22 @@ Conversations and identity:
 
 - Each message is its own conversation, except inside a Discord thread, where the thread is one conversation.
 - A thread is recognized from the gateway's channel cache, or by a REST lookup when a revived thread is not cached yet.
+- A conversation is keyed by the thread ID inside a thread and by the message ID elsewhere. Discord gives a thread started from a message that message's ID, so a top-level question and the thread opened on it share one key and one history.
 - Sender identity is the Discord user ID from the gateway event.
+
+Thread mode (`reply_mode: thread`):
+
+- A top-level channel message is answered in a public thread the bot starts on it. Messages already in a thread and direct messages, which cannot have threads, are answered as in channel mode.
+- The thread is started when the first reply is sent, off the gateway event loop, so a slow REST call never delays other messages.
+- The thread is named after the question's first line, cut to Discord's 100 characters, and archives after a day of inactivity.
+- If a thread already exists on the message (Discord error 160004), the reply goes into it, since its ID is the message ID.
+- Any other failure, such as a missing Create Public Threads permission or a channel type without threads, falls back to a channel reply and logs a warning.
+- Follow-ups in the thread still need a mention, because without the Message Content intent Discord sends the bot no text for other messages.
 
 Replies:
 
-- Replies are Discord replies to the user's message that ping no one (no allowed mentions, not even the replied-to user) and suppress embeds, so links do not unfurl.
+- Replies ping no one (no allowed mentions, not even the replied-to user) and suppress embeds, so links do not unfurl.
+- Outside a new thread, the first message is a Discord reply to the user's message. In a thread the bot started, it is a plain message below the question.
 - Discord renders Markdown, so the answer is sent as written, except tables, which Discord does not render and which become aligned code blocks.
 - A reply is split at line breaks into messages of at most 2,000 characters. A code block spanning two messages is closed and reopened with its language.
 - A reply is cut after five messages with "[reply truncated]".
@@ -160,6 +172,7 @@ Connection: the gateway reconnects and resumes on its own; a token Discord rejec
 |---|---|---|
 | `type` | yes | `discord` |
 | `bot_token_env` | yes | Environment variable holding the bot token |
+| `reply_mode` | no | `channel` (default) or `thread`: where a top-level channel message is answered |
 
 ### `unix`
 
