@@ -35,9 +35,10 @@ type Metrics struct {
 
 // Chat backend types.
 const (
-	ChatSlack = "slack"
-	ChatStdio = "stdio"
-	ChatUnix  = "unix"
+	ChatSlack   = "slack"
+	ChatDiscord = "discord"
+	ChatStdio   = "stdio"
+	ChatUnix    = "unix"
 )
 
 // Chat maps a backend name to its definition; `chatops serve --chat` selects which ones run.
@@ -47,7 +48,7 @@ type Chat map[string]ChatBackend
 type ChatBackend struct {
 	Type string `yaml:"type"`
 
-	// slack: environment variables holding the bot (xoxb) and app-level (xapp) tokens.
+	// slack: environment variables holding the bot (xoxb) and app-level (xapp) tokens; discord: the bot token.
 	BotTokenEnv string `yaml:"bot_token_env"`
 	AppTokenEnv string `yaml:"app_token_env"`
 	// ReplyInChannel posts replies to top-level Slack messages directly to the channel.

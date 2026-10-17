@@ -29,7 +29,13 @@ func Test_Config_Validate(t *testing.T) {
 		"slack": {mutate: func(c *Config) {
 			c.Chat = Chat{"slack": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}}
 		}},
-		"stdio":             {mutate: func(c *Config) { c.Chat = Chat{"console": {Type: ChatStdio}} }},
+		"stdio":               {mutate: func(c *Config) { c.Chat = Chat{"console": {Type: ChatStdio}} }},
+		"discord":             {mutate: func(c *Config) { c.Chat = Chat{"dc": {Type: ChatDiscord, BotTokenEnv: "DISCORD_BOT_TOKEN"}} }},
+		"discord-missing-env": {mutate: func(c *Config) { c.Chat = Chat{"dc": {Type: ChatDiscord}} }, errs: []string{"chat.dc.bot_token_env: required"}},
+		"discord-bad-env":     {mutate: func(c *Config) { c.Chat = Chat{"dc": {Type: ChatDiscord, BotTokenEnv: "1BOT"}} }, errs: []string{`chat.dc.bot_token_env: invalid environment variable name "1BOT"`}},
+		"discord-with-app-token": {mutate: func(c *Config) {
+			c.Chat = Chat{"dc": {Type: ChatDiscord, BotTokenEnv: "DISCORD_BOT_TOKEN", AppTokenEnv: "X"}}
+		}, errs: []string{"chat.dc.app_token_env: not allowed for a discord backend"}},
 		"metrics":           {mutate: func(c *Config) { c.Metrics.Listen = "127.0.0.1:9464" }},
 		"metrics-any-host":  {mutate: func(c *Config) { c.Metrics.Listen = ":9464" }},
 		"metrics-ipv6":      {mutate: func(c *Config) { c.Metrics.Listen = "[::1]:9464" }},
@@ -41,7 +47,7 @@ func Test_Config_Validate(t *testing.T) {
 			`chat.slack.bot_token_env: invalid environment variable name "1BOT"`,
 			`chat.slack.app_token_env: invalid environment variable name "A-B"`,
 		}},
-		"chat-bad-type":     {mutate: func(c *Config) { c.Chat = Chat{"x": {Type: "irc"}} }, errs: []string{`chat.x.type: must be one of "slack", "stdio", "unix"; got "irc"`}},
+		"chat-bad-type":     {mutate: func(c *Config) { c.Chat = Chat{"x": {Type: "irc"}} }, errs: []string{`chat.x.type: must be one of "slack", "discord", "stdio", "unix"; got "irc"`}},
 		"unix":              {mutate: func(c *Config) { c.Chat = Chat{"ops": {Type: ChatUnix, Path: "/run/chatops.sock", Mode: "0600"}} }},
 		"unix-missing-path": {mutate: func(c *Config) { c.Chat = Chat{"ops": {Type: ChatUnix}} }, errs: []string{"chat.ops.path: required for a unix backend"}},
 		"unix-bad-mode":     {mutate: func(c *Config) { c.Chat = Chat{"ops": {Type: ChatUnix, Path: "/run/chatops.sock", Mode: "nope"}} }, errs: []string{`chat.ops.mode: must be octal permission bits (e.g. 0600), got "nope"`}},

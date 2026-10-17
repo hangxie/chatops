@@ -17,6 +17,13 @@ func Test_New(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, fmt.Sprintf("%T", slackBackend), "*slack.")
 
+	discordBackend, err := New("dc", config.ChatBackend{Type: config.ChatDiscord, BotTokenEnv: "CHATOPS_CHAT_TEST_BOT"}, nil)
+	require.NoError(t, err)
+	require.Contains(t, fmt.Sprintf("%T", discordBackend), "*discord.")
+
+	_, err = New("dc-unset", config.ChatBackend{Type: config.ChatDiscord, BotTokenEnv: "CHATOPS_CHAT_TEST_UNSET"}, nil)
+	require.ErrorContains(t, err, "discord bot token")
+
 	stdioBackend, err := New("console", config.ChatBackend{Type: config.ChatStdio}, nil)
 	require.NoError(t, err)
 	require.Contains(t, fmt.Sprintf("%T", stdioBackend), "*stdio.")
