@@ -54,6 +54,11 @@ func Test_Select(t *testing.T) {
 
 	_, err = Select(config.Chat{"bad": {Type: "irc"}}, []string{"bad"}, nil)
 	require.EqualError(t, err, `chat backend "bad": unknown type "irc"`)
+
+	for _, names := range [][]string{nil, {}, {""}} {
+		_, err = Select(cfg, names, nil)
+		require.EqualError(t, err, "no chat backend selected")
+	}
 }
 
 func Test_Health(t *testing.T) {
