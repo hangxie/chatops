@@ -95,7 +95,7 @@ Ownership boundaries:
 2. Load conversation history and identify the requester (Slack user ID) and workspace/channel.
 3. Take a per-turn snapshot of the tool catalog filtered by the requester's policy; disallowed tools are never shown to the model.
 4. Send the system prompt, history, user message, and authorized tool schemas to the LLM. The schemas sent drop `null` from type lists such as `["null","array"]` (see below).
-5. Plain text from the LLM is the final answer.
+5. On the first round the model must call a tool, `decline` included (see §7.1); from the second round on, plain text from the LLM is the final answer.
 6. Tool calls are processed sequentially: resolve the model-facing name against the turn snapshot, validate arguments against the tool's JSON Schema, and enforce policy again.
 7. A call needing approval suspends the turn and posts an approval prompt showing the exact server, tool, and arguments.
 8. Invoke the MCP tool with a per-call timeout; treat output as untrusted data, never as instructions.
@@ -109,7 +109,18 @@ Limits and failures:
 - Per-turn limits bound model/tool iterations, wall-clock time, tool-result bytes, token budget, and per-tool time.
 - Hitting a limit or a failed call produces a readable reply, not a retry loop.
 - Validation failures and policy denials are fed back to the model as tool errors, so it can correct itself.
-- An identical call (same tool and arguments) that failed twice in a row stops the turn, instead of spending the remaining iterations.
+- An identical call (same tool and arguments) that failed twice in a row stops the turn, instead of spending the remaining iterations. The stop reply includes the last error.
+
+Tool failures are reported by chatops, not left to the model. Small models drop error text: an expired kubeconfig (`Unauthorized`) and an unreachable API server both came back as the off-topic decline.
+
+- When a tool call fails, chatops appends one line per failure to the reply, such as `kubernetes.node_list: Unauthorized`, whatever the model wrote.
+- Failures counted: server-reported errors, transport failures, and timeouts. Argument-validation errors are the model's own mistakes, fed back for it to correct, and are not listed.
+- A failure stays unresolved until a later call with the same tool and the same arguments, compared as canonical JSON, succeeds in the turn. A success with other arguments clears nothing: a working `pod_list` for one namespace must not hide a 403 on another.
+- Only unresolved failures are listed, and only they change how a decline is handled (§7.1).
+- Mutating tools (Phase 4) never clear a failure, because a later success does not undo an earlier failed change.
+- Each line is the error's first line, cut to a short limit.
+- Error text can name internal endpoints. It already reaches the model, which could quote it, and the audience is the ops team, so it is shown.
+- Truncation is not sanitization: publishing is guaranteed, unlike the model's relaying, so servers must keep credentials, authorization headers, and config contents out of error text, as [`mcp-k8s.md`](mcp-k8s.md) requires.
 
 ## 6. MCP integration
 
@@ -147,7 +158,7 @@ Tool descriptions, schemas, annotations, and outputs from any server are untrust
 
 The LLM adapter exposes one request/response pair: a request with messages and tool specs, a response with either assistant text or tool calls.
 
-- It targets OpenAI chat-completions with `tool_choice: auto`. There is no reply tool and no forced tool call, because plain assistant text is the answer.
+- It targets OpenAI chat-completions. The first round of a turn sends `tool_choice: required`, and later rounds send `auto` (see §7.1).
 - It strips a leading `<think>...</think>` block.
 - It assigns `call_<index>` IDs to tool calls that lack one.
 - It fails a completion on `finish_reason` of `length` or `content_filter`; a missing `finish_reason` is accepted.
@@ -160,6 +171,51 @@ Conversations:
 - History is in memory, bounded by age and turn count, oldest first.
 - Only earlier user messages are replayed, never assistant answers, tool calls, or tool results. Messages from other threads are never included.
 - Tool execution is sequential, even when the model requests several calls at once.
+
+### 7.1 Decline tool and forced first call
+
+Small models often answer in plain text when they should call a tool, and chatops posts that text as the answer. Seen on 4B models:
+
+- answering `pong` from memory instead of calling `ping`;
+- writing out "I will call the ping__ping tool… The tool returns: pong" as prose;
+- reporting a service healthy with no tool able to tell.
+
+Prompt wording does not fix this: each rewording that fixes one message breaks another, such as greetings getting a chatty reply. The fix is to remove plain text as an option for the first step:
+
+```text
+round 1, tool_choice: required
+    |-- MCP tool call(s) --> results --> later rounds, tool_choice: auto --> answer
+    '-- decline -----------> fixed decline reply, turn ends
+```
+
+- The agent advertises one built-in tool, `decline`, alongside the MCP tools. It takes no arguments.
+- Its description is as strict as the prompt, since small models weigh it as much: use it only when no available tool can help with the request.
+- `decline` is handled by the agent, not an MCP server. It is the only built-in tool, so it is not a tool framework (§3).
+- Its name has no `__`, so it can never collide with an MCP tool's `<server>__<tool>` name.
+- A sole `decline` call ends the turn without another model call. The reply is a fixed sentence from config, never model-written text.
+- A `decline` mixed with other calls is dropped, and the other calls run. The dropped call is logged, but not counted as a decline.
+- Declines that end a turn appear in reply stats and metrics like any other tool step, so misrouted messages are visible.
+- The sample system prompt tells the model to call `decline` for off-topic messages, instead of replying with an exact sentence.
+
+Failure handling:
+
+| Condition | Behavior |
+|---|---|
+| A forced first round returns no tool calls | protocol error: the text is never posted, the turn fails with the usual apology, and there is no retry with `auto` |
+| The turn's snapshot has no MCP tools | no model call; the reply says no tools are available, not the off-topic decline |
+| A configured server is down when the model declines | the decline reply names the down servers, so an outage does not read as off-topic |
+| The model declines, by calling `decline` or in text, while a tool failure is unresolved (§5) | never posted as off-topic; the reply is the failure lines |
+| The model declines after every failure was resolved | the normal decline |
+
+A down server's tools stay in the snapshot, so a call to one fails as a tool error the model can report.
+
+Trade-offs:
+
+- The guarantee is a tool call, not a grounded answer. The final answer can still claim more than the results show, such as calling a whole cluster healthy from a node list.
+
+- The model can still pick the wrong tool, such as `decline` for `ping`. That is a visible, logged misroute rather than an invented answer.
+- Some endpoints reject `required`; vLLM does unless it runs with `--tool-call-parser`. A config opt-out sends `auto` on every round, keeps `decline` advertised, and makes plain first-round text the answer again.
+- A question that needs no tool, such as "what can you do?", can only be declined.
 
 ## 8. Authorization, approval, and security
 
@@ -228,6 +284,7 @@ chatops/
 - **Phase 2.5 — service and host status:** done. The `status` and `host` groups.
 - **Phase 3 — Kubernetes:** read-only slice done: 34 tools across nodes, namespaces, workloads (deployment, statefulset, daemonset, replicaset, job, pod), services, storage (pv, pvc), configmaps, and events. Mutation waits for Phase 4. See [`mcp-k8s.md`](mcp-k8s.md).
 - **Phase 4 — policy and approval:** not started. Roles, rules, execution-time checks, suspended turns, Slack approval buttons; a startup warning is logged until policy exists, so until then deploy only read-only tools or fully trusted channels.
+- **Decline tool, forced first call, and chatops-reported tool failures (§5, §7.1):** designed, not implemented.
 - **Phase 5 — hardening:** metrics done (per-reply stats and Prometheus, see [`observability.md`](observability.md)); reconnect handling, structured audit events, and integration tests remain.
 
 ## 12. Testing strategy
@@ -236,6 +293,7 @@ chatops/
 - MCP contract tests using the SDK's in-memory transport against `pkg/mcpserver` groups: discovery, pagination, success/error results, list changes, timeout, reconnect, malformed responses.
 - Agent tests against a deterministic fake LLM: plain reply, sequential tool calls, invalid arguments, denied call, approval suspend/resume, prompt injection in tool output, iteration exhaustion, cancellation.
 - End-to-end smoke tests against a live model and cluster, run manually or behind a build tag.
+- Tool-selection checks against the small models in use record the first tool chosen, not just the reply, for a fixed message set: `ping`, an operational question per group, `hello`, `thanks`, `what can you do?`, `tell me a joke`, and the mixed `ping and tell me a joke`.
 
 ## 13. Decisions
 
@@ -249,6 +307,8 @@ chatops/
 8. `chatops-mcp serve` runs one tool group per process (`--tool`).
 9. A tool group's `--config` is a directory whose `*.yaml` files merge in file name order by one shared rule (mappings by key, lists appended, later scalars win, `null` ignored). Local settings live in their own file and never require editing a packaged one.
 10. The daemon's `config.yaml` stays a single file, since a second file silently overriding LLM or credential settings is too surprising.
+11. The first round of every turn forces a tool call, with a built-in `decline` tool for off-topic messages, so the model's first step is always a real tool call rather than an answer from memory or a call described in prose (§7.1).
+12. Tool failures reach the user as lines chatops appends to the reply, never only through the model's wording (§5).
 
 ## 14. References
 
