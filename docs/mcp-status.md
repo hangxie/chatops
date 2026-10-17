@@ -1,24 +1,43 @@
 # status MCP tool group
 
-The `status` group reports the status and active incidents of services, from their vendors' public status pages or, for self-hosted services, their own health endpoints. It gives the chat bot a useful read-only tool that needs only outbound HTTP(S) and no credentials. Package: `pkg/mcpserver/status`.
+The `status` group reports the status and active incidents of services. Package: `pkg/mcpserver/status`.
+
+- External services: read from their vendors' public status pages.
+- Self-hosted services: read from their own health endpoints.
+
+It gives the bot a useful read-only tool that needs only outbound HTTP(S) and no credentials.
 
 ## Tool: `service_status`
 
-- Argument: `service` (required) — one configured service name, or `all` for every one. The argument is a JSON Schema enum of the configured names, so a small model can map a question such as "is gmail down?" to the right service; a service not in the enum is reported as not covered rather than guessed at.
+- Argument: `service` (required), one configured service name, or `all` for every one.
+- The argument is a JSON Schema enum of the configured names, so a small model can map "is gmail down?" to the right service. A service not in the enum is reported as not covered rather than guessed at.
 - Result text: one line per service, `[HEALTH] <display> - <summary>`, with each active incident indented beneath it (name, status, URL). Structured output carries the same snapshots.
-- Health labels: `OK`, `MAINTENANCE`, `DEGRADED`, `PARTIAL OUTAGE`, `MAJOR OUTAGE`, `UNKNOWN`. A status page that cannot be read is reported as `UNKNOWN` health rather than failing the call, since the vendor's service may well be up; an `http` health endpoint that cannot be reached is reported as `MAJOR OUTAGE`, since the endpoint is the service itself.
 - Annotations: `ReadOnlyHint: true`, `IdempotentHint: true`, `OpenWorldHint: true` (it reaches external pages).
 
-No service, URL, or product name is hardcoded: the code knows only the page formats, and every service comes from the config directory. The tool description tells the model that only the listed services are covered.
+Health labels: `OK`, `MAINTENANCE`, `DEGRADED`, `PARTIAL OUTAGE`, `MAJOR OUTAGE`, `UNKNOWN`. An unreadable source is treated differently by kind:
+
+| Source cannot be read | Health | Why |
+|---|---|---|
+| vendor status page | `UNKNOWN` | the vendor's service may well be up |
+| `http` health endpoint | `MAJOR OUTAGE` | the endpoint is the service itself |
+
+No service, URL, or product name is hardcoded. The code knows only page formats; every service comes from the config directory, and the tool description tells the model that only the listed services are covered.
 
 ## Configuration
 
-Services are listed in the `*.yaml` files of the `--config` directory (required with `--tool status`), shipped as `package/systemd/mcp-status.d/00-default.yaml` and installed at `/etc/chatops/mcp-status.d/00-default.yaml`. Services are reported in file name order, then list order; restart the server after a change. Each entry has:
+- Services are listed in the `*.yaml` files of the `--config` directory, required with `--tool status`.
+- Shipped as `package/systemd/mcp-status.d/00-default.yaml`, installed at `/etc/chatops/mcp-status.d/00-default.yaml`.
+- Services are reported in file name order, then list order.
+- Restart the server after a change.
 
-- `name` — the tool argument value (lowercase letters, digits, `-`).
-- `display` — the name shown in results.
-- `covers` — the product names users ask about; these drive the enum description, so when the bot answers from the wrong service or not at all, add the product name here.
-- `type` and its endpoint `url` (see below). A `google` entry instead lists `feeds`, each a `url` with an optional `products` filter.
+Each entry has:
+
+| Field | Meaning |
+|---|---|
+| `name` | The tool argument value (lowercase letters, digits, `-`) |
+| `display` | The name shown in results |
+| `covers` | Product names users ask about. They drive the enum description, so when the bot answers from the wrong service or not at all, add the product name here. |
+| `type`, `url` | The page format and its endpoint (below). A `google` entry lists `feeds` instead, each a `url` with an optional `products` filter. |
 
 | `type` | Endpoint |
 |---|---|
@@ -29,8 +48,36 @@ Services are listed in the `*.yaml` files of the `--config` directory (required 
 | `google` | Google Cloud or Workspace `incidents.json` feeds, combined and optionally narrowed to product IDs |
 | `http` | A self-hosted health endpoint such as llama.cpp `/health`, Harbor `/api/v2.0/health`, or chatops `/healthz`; see below |
 
-An `http` entry is `OK` on any 2xx response, unless its JSON body reports a problem; then it is `PARTIAL OUTAGE`. A `status` field reports one when it is present and is neither `true` nor `ok`, `healthy`, `up`, or `pass` (case-insensitive), so `false` or `500` counts while a missing or `null` one leaves the verdict to the HTTP code. A `components` list (as Harbor reports) reports one for each member whose `status` is not one of those words, listed as an incident, and the summary counts them when the top-level status is healthy. Fields are read one by one, so a malformed component or a `components` value that is not a list never hides the top-level `status`. A non-2xx response, or none at all, is `MAJOR OUTAGE`, and the summary quotes the start of the response body so the reason a service gives for failing reaches the user.
-
-Site-specific services go in a file of your own in the same directory (for example `10-homelab.yaml`, same `services:` schema) rather than edits to the shipped list; the lists are joined in file name order, by the merge rule in the README's [Configuration directories](../README.md#configuration-directories). Any file may be empty as long as some service is listed, and a later file cannot replace or remove a shipped entry, since list items are never merged. The deb and rpm packages install `00-default.yaml` as a configuration file: an unedited copy is updated on upgrade, while an edited one is kept and the new list is saved beside it (`.dpkg-dist` if dpkg is told to keep it, `.rpmnew`, both skipped) for a manual merge. The packages never touch files they did not install, so local services survive upgrades and leave `00-default.yaml` unedited to keep receiving the shipped list.
-
 Unknown fields, duplicate names (also across files), and URLs that are not absolute `http`/`https` stop `chatops-mcp` at startup.
+
+### `http` health rule
+
+Healthy words, case-insensitive: `true`, `ok`, `healthy`, `up`, `pass`.
+
+| Response | Health |
+|---|---|
+| 2xx, body reports no problem | `OK` |
+| 2xx, top-level `status` present and not a healthy word (`false`, `500`, ...) | `PARTIAL OUTAGE` |
+| 2xx, a `components` member (as Harbor reports) whose `status` is not a healthy word | `PARTIAL OUTAGE`; each listed as an incident, and counted in the summary when the top-level status is healthy |
+| 2xx, `status` missing or `null` | decided by the HTTP code (`OK`) |
+| non-2xx, or no response | `MAJOR OUTAGE`; the summary quotes the start of the body so the service's reason reaches the user |
+
+Fields are read one by one, so a malformed component, or a `components` value that is not a list, never hides the top-level `status`.
+
+### Your own services
+
+Put site-specific services in a file of your own in the same directory, such as `10-homelab.yaml` with the same `services:` schema. Do not edit the shipped list.
+
+- Lists are joined in file name order, by the merge rule in the README's [Configuration directories](../README.md#configuration-directories).
+- Any file may be empty, as long as some service is listed.
+- A later file cannot replace or remove a shipped entry, since list items are never merged.
+
+How the deb and rpm packages treat the files on upgrade:
+
+| File | On upgrade |
+|---|---|
+| `00-default.yaml`, unedited | updated |
+| `00-default.yaml`, edited | kept; the new list is saved beside it as `.dpkg-dist` (if dpkg is told to keep it) or `.rpmnew`, both skipped, for a manual merge |
+| files you added | never touched |
+
+Leave `00-default.yaml` unedited to keep receiving the shipped list.
