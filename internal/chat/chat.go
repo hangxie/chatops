@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 
 	"github.com/hangxie/chatops/internal/chat/discord"
 	"github.com/hangxie/chatops/internal/chat/slack"
@@ -62,26 +64,18 @@ func New(name string, cfg config.ChatBackend, logger *slog.Logger) (Backend, err
 	}
 }
 
-// Select builds the backends named by names, in that order, failing if a name is absent or invalid.
-func Select(cfg config.Chat, names []string, logger *slog.Logger) ([]Named, error) {
-	selected := make([]Named, 0, len(names))
-	for _, name := range names {
-		// An unset CHAT in the packaged unit expands to an empty name.
-		if name == "" {
-			continue
-		}
-		def, ok := cfg[name]
-		if !ok {
-			return nil, fmt.Errorf("chat backend %q is not defined in the config", name)
-		}
-		backend, err := New(name, def, logger)
+// Build builds every configured backend in name order, failing if there are none or any is invalid.
+func Build(cfg config.Chat, logger *slog.Logger) ([]Named, error) {
+	if len(cfg) == 0 {
+		return nil, errors.New("no chat backend configured")
+	}
+	built := make([]Named, 0, len(cfg))
+	for _, name := range slices.Sorted(maps.Keys(cfg)) {
+		backend, err := New(name, cfg[name], logger)
 		if err != nil {
 			return nil, err
 		}
-		selected = append(selected, Named{Name: name, Backend: backend})
+		built = append(built, Named{Name: name, Backend: backend})
 	}
-	if len(selected) == 0 {
-		return nil, errors.New("no chat backend selected")
-	}
-	return selected, nil
+	return built, nil
 }

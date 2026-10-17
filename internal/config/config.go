@@ -47,7 +47,7 @@ const (
 	ReplyChannel = "channel"
 )
 
-// Chat maps a backend name to its definition; `chatops serve --chat` selects which ones run.
+// Chat maps a backend name to its definition; `chatops serve` runs every one.
 type Chat map[string]ChatBackend
 
 // ChatBackend configures one chat backend; Type selects the implementation and the fields it reads.

@@ -92,8 +92,11 @@ func Test_Parse_full(t *testing.T) {
 	}, cfg)
 }
 
+// minimalChat is the smallest valid chat section, since a config needs at least one backend.
+const minimalChat = "chat:\n  console:\n    type: stdio\n"
+
 func Test_Parse_defaults(t *testing.T) {
-	cfg, err := Parse([]byte("llm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
+	cfg, err := Parse([]byte(minimalChat + "llm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
 	require.Equal(t, Agent{
 		SystemPrompt:       "p",
@@ -107,22 +110,21 @@ func Test_Parse_defaults(t *testing.T) {
 		MaxPendingMessages: 64,
 	}, cfg.Agent)
 	require.Empty(t, cfg.MCP.Servers)
-	require.Empty(t, cfg.Chat)
 }
 
 func Test_Parse_sampling(t *testing.T) {
-	cfg, err := Parse([]byte("llm:\n  base_url: http://localhost:8080/v1\n  model: m\n  sampling:\n    temperature: 0\n    top_p: 0.9\n    seed: 7\n    stop: [\"</s>\"]\nagent:\n  system_prompt: p\n"))
+	cfg, err := Parse([]byte(minimalChat + "llm:\n  base_url: http://localhost:8080/v1\n  model: m\n  sampling:\n    temperature: 0\n    top_p: 0.9\n    seed: 7\n    stop: [\"</s>\"]\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
 	require.Equal(t, Sampling{Temperature: pval(0.0), TopP: pval(0.9), Seed: pval(7), Stop: []string{"</s>"}}, cfg.LLM.Sampling)
 
 	// Omitting the sampling block leaves every parameter unset, so none is sent.
-	bare, err := Parse([]byte("llm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
+	bare, err := Parse([]byte(minimalChat + "llm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
 	require.Equal(t, Sampling{}, bare.LLM.Sampling)
 }
 
 func Test_Parse_single_document_marker(t *testing.T) {
-	cfg, err := Parse([]byte("---\nllm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
+	cfg, err := Parse([]byte("---\n" + minimalChat + "llm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
 	require.Equal(t, "m", cfg.LLM.Model)
 }
