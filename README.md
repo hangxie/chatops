@@ -64,7 +64,7 @@ Start from the annotated sample at [`package/systemd/config.yaml`](package/syste
 | `chat.<name>.type` | (required) | Chat backend kind: `slack`, `discord`, `stdio`, or `unix`; `<name>` is a free-form id selected on the command line with `--chat` |
 | `chat.<name>.bot_token_env`, `app_token_env` | (none) | slack: environment variables holding the Slack bot (`xoxb-`) and app-level (`xapp-`) tokens; both required |
 | `chat.<name>.bot_token_env` | (none) | discord: environment variable holding the Discord bot token; required |
-| `chat.<name>.reply_in_channel` | `false` | slack only: reply to top-level messages directly in the channel or DM; messages in an existing thread always receive replies in that thread |
+| `chat.<name>.reply_mode` | slack `thread`, discord `channel` | slack and discord: where a top-level message is answered, `thread` or `channel`; a message in an existing thread is always answered in that thread |
 | `chat.<name>.path`, `mode` | (none) | unix only: filesystem path of the socket to create (required) and optional octal permission bits (e.g. `0600`, the default owner-only) |
 | `llm.base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions` |
 | `llm.model` | (required) | Model name sent with each request |
@@ -203,9 +203,9 @@ How it answers:
 
 | Where | Answered when | Reply goes to |
 |---|---|---|
-| Channel the app is invited to | the message starts with a mention of the bot (`@chatops is the MCP server reachable?`); a later mention is ignored, and thread follow-ups need it too | the message's thread, or the channel with `reply_in_channel: true` |
-| Direct message | always; no mention needed | the message's thread, or the DM with `reply_in_channel: true` |
-| Existing thread | as above | always that thread, regardless of `reply_in_channel` |
+| Channel the app is invited to | the message starts with a mention of the bot (`@chatops is the MCP server reachable?`); a later mention is ignored, and thread follow-ups need it too | the message's thread, or the channel with `reply_mode: channel` |
+| Direct message | always; no mention needed | the message's thread, or the DM with `reply_mode: channel` |
+| Existing thread | as above | always that thread, regardless of `reply_mode` |
 
 Conversations and ordering:
 
