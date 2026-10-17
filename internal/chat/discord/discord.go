@@ -1,4 +1,4 @@
-// Package discord receives Discord messages over the Gateway and answers them as replies.
+// Package discord receives Discord messages over the Gateway and answers them as replies or in threads.
 package discord
 
 import (
@@ -30,6 +30,8 @@ type Adapter struct {
 	gateway gateway
 	logger  *slog.Logger
 	botID   string
+	// replyInThread answers top-level channel messages in a thread started on them.
+	replyInThread bool
 
 	busySlots chan struct{}
 	busy      sync.WaitGroup
@@ -46,7 +48,9 @@ func New(cfg config.ChatBackend, logger *slog.Logger) (*Adapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("discord session: %w", err)
 	}
-	return newAdapter(gw, logger), nil
+	adapter := newAdapter(gw, logger)
+	adapter.replyInThread = cfg.ReplyMode == config.ReplyThread
+	return adapter, nil
 }
 
 func newAdapter(gw gateway, logger *slog.Logger) *Adapter {
@@ -139,14 +143,19 @@ func (a *Adapter) isThread(ctx context.Context, channelID string) bool {
 
 func (a *Adapter) submit(ctx context.Context, in inbound, ref *discordgo.MessageReference, submit func(conversation.Message) error) {
 	log := a.logger.With("conversation", in.conversation(), "user", in.user)
-	reply := a.replier(in.channel, ref)
+	inChannel := a.replier(in.channel, ref)
+	reply := inChannel
+	if a.replyInThread && !in.thread && in.guild != "" {
+		reply = a.threadReplier(in, ref, log)
+	}
 	err := submit(conversation.Message{Conversation: in.conversation(), User: in.user, Text: in.text, Reply: reply})
 	switch {
 	case err == nil:
 		log.Info("discord message accepted")
 	case errors.Is(err, conversation.ErrBusy):
 		log.Warn("discord message refused: busy")
-		a.replyBusy(ctx, log, reply)
+		// Answered in place, so an overloaded bot opens no thread that never gets an answer.
+		a.replyBusy(ctx, log, inChannel)
 	default:
 		log.Warn("discord message dropped", "error", err)
 	}
