@@ -7,6 +7,7 @@ import (
 	slackapi "github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackutilsx"
 
+	"github.com/hangxie/chatops/internal/chat/markdown"
 	"github.com/hangxie/chatops/internal/conversation"
 )
 
@@ -46,16 +47,16 @@ func bodyBlocks(text string) ([]slackapi.Block, bool) {
 		prose = nil
 	}
 	native := false
-	for _, s := range parseMarkdown(text) {
+	for _, s := range markdown.Parse(text, inlineMrkdwn) {
 		switch {
-		case s.table == nil:
-			prose = append(prose, s.text)
-		case !native && nativeTable(s.table):
+		case s.Table == nil:
+			prose = append(prose, s.Text)
+		case !native && nativeTable(s.Table):
 			flush()
-			blocks = append(blocks, tableBlock(s.table))
+			blocks = append(blocks, tableBlock(s.Table))
 			native = true
 		default:
-			prose = append(prose, codeBlock(s.table))
+			prose = append(prose, markdown.CodeBlock(s.Table))
 		}
 	}
 	flush()
@@ -125,7 +126,7 @@ func tableBlock(rows [][]string) *slackapi.TableBlock {
 // chunkEscaped escapes text for mrkdwn and splits it at line breaks into non-blank chunks of at most limit
 // runes, closing and reopening a code fence that spans chunks so each section renders on its own.
 func chunkEscaped(text string, limit int) []string {
-	const fenceRunes = len(codeFence) + 1
+	const fenceRunes = len(markdown.Fence) + 1
 	var chunks, cur []string
 	n, lines, inFence := 0, 0, false
 	add := func(s string) {
@@ -148,18 +149,18 @@ func chunkEscaped(text string, limit int) []string {
 			return
 		}
 		if inFence {
-			add(codeFence)
+			add(markdown.Fence)
 		}
 		if s := strings.Trim(strings.Join(cur, "\n"), "\n"); strings.TrimSpace(s) != "" {
 			chunks = append(chunks, s)
 		}
 		cur, n, lines = nil, 0, 0
 		if inFence {
-			add(codeFence)
+			add(markdown.Fence)
 		}
 	}
 	for _, line := range strings.Split(text, "\n") {
-		fenced := inFence != isFence(line)
+		fenced := inFence != markdown.IsFence(line)
 		room := limit
 		if fenced {
 			room -= 2 * fenceRunes
