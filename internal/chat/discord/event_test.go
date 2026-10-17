@@ -87,9 +87,11 @@ func Test_inbound_conversation(t *testing.T) {
 		in   inbound
 		want string
 	}{
-		"channel message": {in: inbound{guild: "G1", channel: "C1", message: "M1"}, want: "discord:G1:C1:M1"},
+		"channel message": {in: inbound{guild: "G1", channel: "C1", message: "M1"}, want: "discord:G1:M1"},
 		"thread":          {in: inbound{guild: "G1", channel: "T1", message: "M1", thread: true}, want: "discord:G1:T1"},
-		"direct message":  {in: inbound{channel: "D1", message: "M1"}, want: "discord:@me:D1:M1"},
+		"direct message":  {in: inbound{channel: "D1", message: "M1"}, want: "discord:@me:M1"},
+		// A thread started on a message takes the message's ID, so both keys match.
+		"thread from message": {in: inbound{guild: "G1", channel: "M1", message: "M2", thread: true}, want: "discord:G1:M1"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
