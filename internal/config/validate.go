@@ -58,6 +58,7 @@ func validateChatBackend(name string, b ChatBackend, add addFunc) {
 		add(prefix, "name must match %s", serverIDPattern)
 		return
 	}
+	validateReplyMode(prefix, b, add)
 	switch b.Type {
 	case ChatSlack:
 		requireEnvName(prefix+".bot_token_env", b.BotTokenEnv, add)
@@ -82,6 +83,16 @@ func validateChatBackend(name string, b ChatBackend, add addFunc) {
 		}
 	default:
 		add(prefix+".type", "must be one of %q, %q, %q, %q; got %q", ChatSlack, ChatDiscord, ChatStdio, ChatUnix, b.Type)
+	}
+}
+
+func validateReplyMode(prefix string, b ChatBackend, add addFunc) {
+	switch {
+	case b.ReplyMode == "":
+	case b.Type != ChatSlack && b.Type != ChatDiscord:
+		add(prefix+".reply_mode", "not allowed for a %s backend", b.Type)
+	case b.ReplyMode != ReplyThread && b.ReplyMode != ReplyChannel:
+		add(prefix+".reply_mode", "must be %q or %q, got %q", ReplyThread, ReplyChannel, b.ReplyMode)
 	}
 }
 

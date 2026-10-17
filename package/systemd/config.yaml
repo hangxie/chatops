@@ -7,7 +7,7 @@ chat:
     type: slack
     bot_token_env: SLACK_BOT_TOKEN
     app_token_env: SLACK_APP_TOKEN
-    reply_in_channel: false # Top-level replies go to the channel or DM when true; threaded replies stay in their thread.
+    reply_mode: thread # Where top-level messages are answered: thread (default) or channel; threaded messages stay in their thread.
   # Discord Gateway backend; add its name to CHAT in chatops.env to run it.
   # discord:
   #   type: discord
