@@ -36,6 +36,22 @@ func Test_Config_Validate(t *testing.T) {
 		"discord-with-app-token": {mutate: func(c *Config) {
 			c.Chat = Chat{"dc": {Type: ChatDiscord, BotTokenEnv: "DISCORD_BOT_TOKEN", AppTokenEnv: "X"}}
 		}, errs: []string{"chat.dc.app_token_env: not allowed for a discord backend"}},
+		"slack-reply-thread": {mutate: func(c *Config) {
+			c.Chat = Chat{"slack": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN", ReplyMode: ReplyThread}}
+		}},
+		"slack-reply-channel": {mutate: func(c *Config) {
+			c.Chat = Chat{"slack": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN", ReplyMode: ReplyChannel}}
+		}},
+		"discord-reply-thread": {mutate: func(c *Config) {
+			c.Chat = Chat{"dc": {Type: ChatDiscord, BotTokenEnv: "DISCORD_BOT_TOKEN", ReplyMode: ReplyThread}}
+		}},
+		"discord-bad-reply-mode": {mutate: func(c *Config) {
+			c.Chat = Chat{"dc": {Type: ChatDiscord, BotTokenEnv: "DISCORD_BOT_TOKEN", ReplyMode: "inline"}}
+		}, errs: []string{`chat.dc.reply_mode: must be "thread" or "channel", got "inline"`}},
+		"stdio-with-reply-mode": {mutate: func(c *Config) { c.Chat = Chat{"console": {Type: ChatStdio, ReplyMode: ReplyThread}} }, errs: []string{"chat.console.reply_mode: not allowed for a stdio backend"}},
+		"unix-with-reply-mode": {mutate: func(c *Config) {
+			c.Chat = Chat{"ops": {Type: ChatUnix, Path: "/run/chatops.sock", ReplyMode: ReplyChannel}}
+		}, errs: []string{"chat.ops.reply_mode: not allowed for a unix backend"}},
 		"metrics":           {mutate: func(c *Config) { c.Metrics.Listen = "127.0.0.1:9464" }},
 		"metrics-any-host":  {mutate: func(c *Config) { c.Metrics.Listen = ":9464" }},
 		"metrics-ipv6":      {mutate: func(c *Config) { c.Metrics.Listen = "[::1]:9464" }},
