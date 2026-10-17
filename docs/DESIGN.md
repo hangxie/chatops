@@ -132,7 +132,7 @@ chatops/
 │   └── chatops-mcp/           # built-in MCP server binary
 ├── internal/
 │   ├── agent/                 # bounded LLM/tool turn loop
-│   ├── chat/                  # chat backend interface, factory, runner; slack and stdio backends
+│   ├── chat/                  # chat backend interface, factory, runner; slack, discord, stdio, and unix backends
 │   ├── conversation/          # per-thread serialization, history, suspended turns
 │   ├── llm/                   # OpenAI-compatible adapter
 │   ├── mcp/                   # SDK client wrapper, catalog, name mapping
@@ -156,7 +156,7 @@ There is no top-level `main.go`; `main` packages live under `cmd/<binary>/`, and
 
 - **Phase 0 — bootstrap:** done. Both binaries build and package (deb/rpm/container); main branch protection applied (required `build / build` check, signed commits, linear history, one approving review).
 - **Phase 1 — local vertical slice:** done. `chatops-mcp serve` + `ping`, `internal/config`, `internal/mcp`, `internal/llm`, `internal/agent`, and the `stdio` terminal chat backend. Verified live against `http://media.xiehang.com:8080/v1` with `qwen3-1.7b-q8`.
-- **Phase 2 — Slack:** done. Socket Mode, threading, retry deduplication, per-thread serialization. Chat backends are named and selected with `--chat`; `slack` and `stdio` ship, `unix`/`http`/`tcp` planned (`udp` deferred). See [`chat.md`](chat.md).
+- **Phase 2 — Slack:** done. Socket Mode, threading, retry deduplication, per-thread serialization. Chat backends are named and selected with `--chat`; `slack`, `discord`, `stdio`, and `unix` ship, `http`/`tcp` planned (`udp` deferred). See [`chat.md`](chat.md).
 - **Phase 2.5 — service status:** done. The `status` group.
 - **Phase 3 — Kubernetes:** node slice done (`node_list`, `node_status`, `node_resources`, read-only); deployment slice done (`deployment_list`, `deployment_pods`, `deployment_describe`). See [`mcp-k8s.md`](mcp-k8s.md).
 - **Phase 4 — policy and approval:** not started. Roles, rules, execution-time checks, suspended turns, Slack approval buttons; a startup warning is logged until policy exists, so until then deploy only read-only tools or fully trusted channels.
