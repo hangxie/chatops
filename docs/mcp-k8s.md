@@ -431,12 +431,26 @@ A change to a convention in this document is a design change of its own, not par
 | Kind | Examples | Result |
 |---|---|---|
 | Local configuration | missing `--config` directory, malformed file or unknown field in it, bad kubeconfig path, malformed kubeconfig, unknown `context` | `chatops-mcp serve` fails fast at startup, as `status` does |
-| Network-dependent | cluster unreachable, TLS failure, API-call timeout, RBAC-forbidden | a runtime tool error the model can relay |
+| Network-dependent | cluster unreachable, TLS failure, API-call timeout, expired or rejected credentials, RBAC-forbidden | a runtime tool error the model can relay |
 | Missing object | | a normal result, not an error |
 
 - RBAC-forbidden errors name the verb and resource (e.g. `get nodes`), so the operator can fix the role.
-- Error messages never echo bearer tokens or raw kubeconfig contents.
+- Error messages never echo bearer tokens, authorization headers, or raw kubeconfig contents. chatops posts tool errors to chat verbatim, so this is the only guard.
 - There is no startup connectivity probe: a cluster can become unreachable at any time, so it would say nothing about whether a later call succeeds.
+
+Runtime errors start with a category, so the ops team knows what to check. The raw client errors (`Unauthorized`, `dial tcp …: connection refused`) do not say which part failed.
+
+| Category | Cause | What to check |
+|---|---|---|
+| `credentials rejected (401)` | expired or revoked token or client certificate | refresh the kubeconfig |
+| `forbidden (403): <verb> <resource>` | RBAC denies the call | the `ClusterRole` grants |
+| `cannot reach API server <host>` | DNS failure, connection refused, or a dial timeout | the server address and network path |
+| `TLS failure` | unknown CA, expired or mismatched server certificate | the kubeconfig CA data and server name |
+| `request timed out` | any other timeout, such as during the TLS handshake or while waiting for a response | API server load and the network path |
+
+- The underlying error follows the category, so nothing is lost.
+- The category comes from the client's typed errors (`apierrors.IsUnauthorized`, `IsForbidden`, `net` and `x509` errors), not from matching message text.
+- A timeout is only blamed on the network when it happened while dialing. Otherwise it is not clear whether the request reached the API server, so the category stays generic.
 
 ## Testing
 
