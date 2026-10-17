@@ -28,8 +28,10 @@ llm:
   base_url: http://localhost:8080/v1
   model: CHANGEME   # the model name your endpoint serves
   # api_key_env: LLM_API_KEY
-  # Stops reasoning models such as Qwen3 from spending the budget on thinking;
-  # set false for endpoints that reject unknown request fields.
+  # Disabling thinking is recommended for small models to save context window
+  # and response time; larger models generally behave better with thinking
+  # enabled. Some endpoints, such as Cloudflare Workers AI, reject the extra
+  # request fields and need disable_thinking: false.
   disable_thinking: true
   sampling:
     # Generation parameters sent with every completion; omit any one to use the
