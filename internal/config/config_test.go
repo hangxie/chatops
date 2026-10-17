@@ -193,10 +193,17 @@ func Test_Load(t *testing.T) {
 func Test_Load_packaged_sample(t *testing.T) {
 	cfg, err := Load(filepath.Join("..", "..", "package", "systemd", "config.yaml"))
 	require.NoError(t, err)
-	require.Equal(t, Chat{"homelab": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN", ReplyMode: ReplyThread}}, cfg.Chat)
+	require.Equal(t, Chat{
+		"homelab-slack":   {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN", ReplyMode: ReplyThread},
+		"homelab-discord": {Type: ChatDiscord, BotTokenEnv: "DISCORD_BOT_TOKEN", ReplyMode: ReplyChannel},
+		"homelab-unix":    {Type: ChatUnix, Path: "/run/chatops/ops.sock", Mode: "0600"},
+	}, cfg.Chat)
+	// The local endpoint is active: the only example that works without an account or key.
+	require.Equal(t, "http://localhost:8080/v1", cfg.LLM.BaseURL)
+	require.Empty(t, cfg.LLM.APIKeyEnv)
 	// Each built-in group runs as its own server named after the group, so tool prefixes name the group.
-	require.Len(t, cfg.MCP.Servers, 3)
-	for _, group := range []string{"ping", "status", "kubernetes"} {
+	require.Len(t, cfg.MCP.Servers, 4)
+	for _, group := range []string{"ping", "status", "kubernetes", "host"} {
 		server := cfg.MCP.Servers[group]
 		require.Equal(t, "/usr/bin/chatops-mcp", server.Command, group)
 		args := []string{"serve", "--tool", group}

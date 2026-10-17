@@ -3,31 +3,45 @@
 
 # Each entry is a named chat backend, and every one runs; comment one out to turn it off.
 chat:
-  homelab:
+  homelab-slack:
     type: slack
     bot_token_env: SLACK_BOT_TOKEN
     app_token_env: SLACK_APP_TOKEN
     reply_mode: thread # Where top-level messages are answered: thread (default) or channel; threaded messages stay in their thread.
-  # Discord Gateway backend; uncomment to run it.
-  # discord:
-  #   type: discord
-  #   bot_token_env: DISCORD_BOT_TOKEN
-  #   reply_mode: channel # channel (default) or thread: answer top-level messages in a new thread
-  # Local Unix socket backend, one conversation per connection. The directory
-  # must be writable by the daemon; under the packaged unit that means adding
-  # RuntimeDirectory=chatops so /run/chatops exists.
-  # ops:
-  #   type: unix
-  #   path: /run/chatops/ops.sock
-  #   mode: "0600"   # octal permission bits; default owner-only
-  # Interactive terminal backend for development; not for an unattended daemon.
+  # Discord Gateway backend.
+  homelab-discord:
+    type: discord
+    bot_token_env: DISCORD_BOT_TOKEN
+    reply_mode: channel # channel (default) or thread: answer top-level messages in a new thread
+  # Local Unix socket backend, one conversation per connection. The packages
+  # create /run/chatops (0755, owned by chatops) at boot for it.
+  homelab-unix:
+    type: unix
+    path: /run/chatops/ops.sock
+    mode: "0600"   # octal permission bits; default owner-only
+  # Interactive terminal backend for development. Never enable it under systemd:
+  # it reads EOF at once and exits.
   # console:
   #   type: stdio
 
+# Any OpenAI-compatible endpoint; keep one block uncommented. API keys go in
+# chatops.env under the name api_key_env gives.
 llm:
+  # Local llama.cpp, vLLM, or Ollama server
   base_url: http://localhost:8080/v1
   model: CHANGEME   # the model name your endpoint serves
   # api_key_env: LLM_API_KEY
+
+  # OpenRouter
+  # base_url: https://openrouter.ai/api/v1
+  # model: "nvidia/nemotron-3.5-lightning:free"
+  # api_key_env: OR_API_KEY
+
+  # Cloudflare Workers AI; also set disable_thinking: false below
+  # base_url: https://api.cloudflare.com/client/v4/accounts/<CF Account ID>/ai/v1
+  # model: "@cf/zai-org/glm-4.7-flash"
+  # api_key_env: CF_API_KEY
+
   # Disabling thinking is recommended for small models to save context window
   # and response time; larger models generally behave better with thinking
   # enabled. Some endpoints, such as Cloudflare Workers AI, reject the extra
@@ -67,12 +81,12 @@ mcp:
       transport: stdio
       command: /usr/bin/chatops-mcp
       args: [serve, --tool, kubernetes, --config, /etc/chatops/mcp-kubernetes.d]
-    # Reachability of your own hosts; enable once a file in mcp-host.d/ lists them,
-    # since the shipped one has examples only.
-    # host:
-    #   transport: stdio
-    #   command: /usr/bin/chatops-mcp
-    #   args: [serve, --tool, host, --config, /etc/chatops/mcp-host.d]
+    # Reachability of your hosts; the shipped list checks only localhost, so add
+    # yours in a file of your own in mcp-host.d/.
+    host:
+      transport: stdio
+      command: /usr/bin/chatops-mcp
+      args: [serve, --tool, host, --config, /etc/chatops/mcp-host.d]
     # A third-party stdio server. env values live in this file, so never put
     # secrets there; secret_env maps a server variable to the chatops variable
     # holding its value. Only PATH and HOME are inherited otherwise.

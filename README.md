@@ -345,14 +345,15 @@ The deb and rpm packages install both binaries, a `chatops` system user, and a s
 
 | Path | Purpose |
 |---|---|
-| `/etc/chatops/config.yaml` | Config file; set `llm.base_url` and `llm.model` before starting |
+| `/etc/chatops/config.yaml` | Config file; set `llm.base_url` and `llm.model` before starting. It holds no secrets, so a new install makes it world-readable (`0644`) for troubleshooting. An upgrade never loosens a file installed `0640` by an earlier release: an edited one keeps its mode on both packages, and the deb keeps it on an unedited one too, so `chmod 0644` it yourself; never put a secret in an MCP server's `env:` |
 | `/etc/chatops/mcp-status.d/` | Config directory of the `status` tool group; `00-default.yaml` is the shipped service list, and your own services go in files of your own beside it |
 | `/etc/chatops/mcp-kubernetes.d/` | Config directory of the `kubernetes` tool group; `00-default.yaml` points at the kubeconfig at `/etc/chatops/kubeconfig` (which you provide; make it `root:chatops` `0640`) |
-| `/etc/chatops/mcp-host.d/` | Config directory of the `host` tool group; `00-default.yaml` has examples only, so list your hosts in a file of your own beside it, then enable the commented `host` server in `config.yaml` |
-| `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `DISCORD_BOT_TOKEN` and `LLM_API_KEY`), and `LOG_LEVEL`/`LOG_FORMAT`, which apply from the first log line; readable only by root and the `chatops` group |
+| `/etc/chatops/mcp-host.d/` | Config directory of the `host` tool group; `00-default.yaml` checks only `localhost`, so list your hosts in a file of your own beside it |
+| `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `DISCORD_BOT_TOKEN`, and the LLM key named by `llm.api_key_env`), and `LOG_LEVEL`/`LOG_FORMAT`, which apply from the first log line; readable only by root and the `chatops` group (`0640`) |
+| `/run/chatops/` | Socket directory of the `homelab-unix` backend, `0755` and owned by `chatops`; a tmpfiles.d entry (`/usr/lib/tmpfiles.d/chatops.conf`) recreates it at every boot |
 | `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml`, which starts every backend under `chat:`, with JSON logs to the journal; restarts on failure |
 
-Edited config files are kept across upgrades; see [Configuration directories](#configuration-directories). The service is not started on install; once both files are filled in:
+Edited config files are kept across upgrades; see [Configuration directories](#configuration-directories). The service is not started on install. The sample config runs `homelab-slack`, `homelab-discord`, and `homelab-unix`, and a backend whose token is empty fails startup, so set both the Slack and Discord tokens or comment out the backend you do not use. Once both files are filled in:
 
 ```bash
 sudo systemctl enable --now chatops
@@ -581,7 +582,7 @@ A tool group's `--config` names a directory, not a file. Every `*.yaml` in it is
 
 Other files, such as a kubeconfig, may sit in the directory as long as their names do not end in `.yaml`. A `kubeconfig.yaml` there would be loaded as group config and rejected for its unknown fields.
 
-The packages install `/etc/chatops/mcp-status.d/`, `/etc/chatops/mcp-kubernetes.d/`, and `/etc/chatops/mcp-host.d/` (owned `root:chatops`, mode `0755`), each holding the shipped `00-default.yaml` (mode `0640`). On upgrade:
+The packages install `/etc/chatops/mcp-status.d/`, `/etc/chatops/mcp-kubernetes.d/`, and `/etc/chatops/mcp-host.d/` (owned `root:chatops`, mode `0755`), each holding the shipped `00-default.yaml` (mode `0644` on a new install; an upgrade keeps an edited file's mode, and the deb keeps an unedited file's mode too). On upgrade:
 
 | File | What the packages do |
 |---|---|
@@ -589,7 +590,7 @@ The packages install `/etc/chatops/mcp-status.d/`, `/etc/chatops/mcp-kubernetes.
 | `00-default.yaml`, edited | keep it, and save the new version beside it as `.dpkg-dist` or `.rpmnew`, which is skipped |
 | files you add | never touch them |
 
-So keep local settings in your own file (mode `0640`, readable by the `chatops` group), and leave `00-default.yaml` unedited to keep receiving the shipped defaults.
+So keep local settings in your own file (mode `0644`; secrets never belong in these directories), and leave `00-default.yaml` unedited to keep receiving the shipped defaults.
 
 What a later file does depends on the kind of node it sets:
 

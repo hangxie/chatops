@@ -118,7 +118,7 @@ Probe outcomes and the health rule are separate functions, with the ICMP and SSH
 ## Configuration
 
 - `--config` is required with `--tool host` and names a directory, installed as `/etc/chatops/mcp-host.d/`.
-- Its `00-default.yaml` holds commented examples only, since every host is site-specific.
+- Its `00-default.yaml` ships one host, `localhost` with the ping check only, so the packaged `host` server starts out of the box. Other hosts are site-specific and stay commented examples.
 - Hosts go in a file of your own beside it, merged in file name order as `status` reads `mcp-status.d/`.
 - Unknown fields and duplicate names (also across files) stop `chatops-mcp` at startup.
 

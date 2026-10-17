@@ -62,8 +62,9 @@ func Test_Load(t *testing.T) {
 }
 
 func Test_Load_packaged(t *testing.T) {
-	_, err := Load(packagedConfig)
-	require.EqualError(t, err, "host config "+packagedConfig+": at least one host is required")
+	cfg, err := Load(packagedConfig)
+	require.NoError(t, err)
+	require.Equal(t, []Host{{Name: "localhost", Display: "localhost", Covers: []string{"this server", "the chatops host"}, Address: "localhost", Checks: []string{"ping"}}}, cfg.Hosts)
 }
 
 func Test_Config_validate(t *testing.T) {
