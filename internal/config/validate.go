@@ -62,6 +62,11 @@ func validateChatBackend(name string, b ChatBackend, add addFunc) {
 	case ChatSlack:
 		requireEnvName(prefix+".bot_token_env", b.BotTokenEnv, add)
 		requireEnvName(prefix+".app_token_env", b.AppTokenEnv, add)
+	case ChatDiscord:
+		requireEnvName(prefix+".bot_token_env", b.BotTokenEnv, add)
+		if b.AppTokenEnv != "" {
+			add(prefix+".app_token_env", "not allowed for a discord backend")
+		}
 	case ChatStdio:
 		if b.BotTokenEnv != "" || b.AppTokenEnv != "" {
 			add(prefix, "%s and %s are not allowed for a stdio backend", "bot_token_env", "app_token_env")
@@ -76,7 +81,7 @@ func validateChatBackend(name string, b ChatBackend, add addFunc) {
 			}
 		}
 	default:
-		add(prefix+".type", "must be one of %q, %q, %q; got %q", ChatSlack, ChatStdio, ChatUnix, b.Type)
+		add(prefix+".type", "must be one of %q, %q, %q, %q; got %q", ChatSlack, ChatDiscord, ChatStdio, ChatUnix, b.Type)
 	}
 }
 

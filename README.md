@@ -4,7 +4,7 @@
 
 `chatops` connects a chat platform to an OpenAI-compatible language model and to tools served over the [Model Context Protocol](https://modelcontextprotocol.io/specification) (MCP). The model chooses which tools to call, ChatOps enforces authorization and approval, and the answer is posted back to chat.
 
-This project is under early development: `chatops serve --chat <names>` answers messages from the selected chat backends (Slack, or a local terminal), and `chatops-mcp` serves the `ping`, `service_status`, and read-only Kubernetes node tools (`node_list`, `node_status`, `node_resources`). Authorization policy and approvals are not implemented yet.
+This project is under early development: `chatops serve --chat <names>` answers messages from the selected chat backends (Slack, Discord, or a local terminal), and `chatops-mcp` serves the `ping`, `service_status`, and read-only Kubernetes node tools (`node_list`, `node_status`, `node_resources`). Authorization policy and approvals are not implemented yet.
 
 ## Binaries
 
@@ -47,8 +47,9 @@ The annotated sample at [`package/systemd/config.yaml`](package/systemd/config.y
 
 | Setting | Default | Description |
 |---|---|---|
-| `chat.<name>.type` | (required) | Chat backend kind: `slack`, `stdio`, or `unix`; `<name>` is a free-form id selected on the command line with `--chat` |
-| `chat.<name>.bot_token_env`, `app_token_env` | (none) | slack only: environment variables holding the Slack bot (`xoxb-`) and app-level (`xapp-`) tokens; both required |
+| `chat.<name>.type` | (required) | Chat backend kind: `slack`, `discord`, `stdio`, or `unix`; `<name>` is a free-form id selected on the command line with `--chat` |
+| `chat.<name>.bot_token_env`, `app_token_env` | (none) | slack: environment variables holding the Slack bot (`xoxb-`) and app-level (`xapp-`) tokens; both required |
+| `chat.<name>.bot_token_env` | (none) | discord: environment variable holding the Discord bot token; required |
 | `chat.<name>.reply_in_channel` | `false` | slack only: reply to top-level messages directly in the channel or DM; messages in an existing thread always receive replies in that thread |
 | `chat.<name>.path`, `mode` | (none) | unix only: filesystem path of the socket to create (required) and optional octal permission bits (e.g. `0600`, the default owner-only) |
 | `llm.base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions` |
@@ -140,6 +141,27 @@ export SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-...
 ./build/chatops serve --config config.yaml --chat eng-slack
 ```
 
+### `discord` — Gateway
+
+The `discord` backend answers Discord messages over the Gateway, a websocket the bot opens outbound, so like `slack` it needs no public endpoint.
+
+1. At https://discord.com/developers/applications, choose "New Application", then on the "Bot" page choose "Reset Token" and export the token. The bot needs no privileged gateway intents: Discord sends it the text of messages that mention it and of direct messages without the Message Content intent.
+2. Invite the bot with `https://discord.com/oauth2/authorize?client_id=<application id>&scope=bot&permissions=274877975552`, which grants View Channels, Send Messages, Send Messages in Threads, and Read Message History (needed to reply to a message).
+3. Add a backend such as `discord: {type: discord, bot_token_env: DISCORD_BOT_TOKEN}` and start the daemon:
+
+```bash
+export DISCORD_BOT_TOKEN=...
+./build/chatops serve --config config.yaml --chat discord
+```
+
+How it answers:
+
+- In a server channel or thread, a message must start with a mention of the bot, such as `@chatops is the MCP server reachable?`; in a direct message to the bot, every message is answered. Messages from other bots and webhooks are ignored.
+- The answer is a Discord reply to the message, in the same channel or thread. Each message is a separate conversation, except in a thread, where the whole thread shares history; start a thread for follow-ups when `agent.history_turns > 0`.
+- Replies ping no one, not even the asker, and have link previews turned off, so model output cannot mention `@everyone` or users, or make Discord fetch a URL. Markdown is shown as Discord renders it, except tables, which become aligned code blocks.
+- A long answer is split at line breaks into up to five messages of 2,000 characters, ending with "[reply truncated]" if longer. The `agent.show_stats` footer is shown below the answer in smaller grey text.
+- When `agent.max_pending_messages` is reached, new messages get a short "try again shortly" reply, as on Slack.
+
 ### `unix` — local socket
 
 The `unix` backend lets a client on the same host reach a running daemon over a Unix domain socket: one conversation per connection, a message per line. Access control is the socket file's permissions (`mode`, default owner-only), so it needs no token; it is the right way to drive a daemon locally, unlike `stdio`. A live socket refuses a second daemon's startup, and an exclusive lock file (`<path>.lock`) held for the daemon's lifetime keeps two instances from racing on the same path. For example, with a backend named `ops` of `type: unix` and `path: /run/chatops/ops.sock`:
@@ -157,7 +179,7 @@ At `--log-level debug`, `serve` logs a `tool call requested` line with the argum
 level=DEBUG msg="tool call requested" tool=status__service_status arguments="{\"service\": \"openai\"}"
 ```
 
-Turn it on only while troubleshooting. Credentials never appear there: Slack tokens, the LLM API key, and MCP tokens and `secret_env` values are read by the processes themselves and never reach the model. The arguments can, however, repeat anything the model has seen, including what users typed (such as a password pasted into a question) and earlier tool results. At `info` and above, `serve` logs Slack user and conversation IDs but never message text. Under systemd, logs go to the journal, which is usually readable by the `adm` and `systemd-journal` groups, a wider audience than `/etc/chatops/chatops.env`.
+Turn it on only while troubleshooting. Credentials never appear there: Slack and Discord tokens, the LLM API key, and MCP tokens and `secret_env` values are read by the processes themselves and never reach the model. The arguments can, however, repeat anything the model has seen, including what users typed (such as a password pasted into a question) and earlier tool results. At `info` and above, `serve` logs chat user and conversation IDs but never message text. Under systemd, logs go to the journal, which is usually readable by the `adm` and `systemd-journal` groups, a wider audience than `/etc/chatops/chatops.env`.
 
 How it answers:
 
@@ -199,7 +221,7 @@ The `metrics.listen` endpoint also serves two probes that answer in plain text, 
 | `/healthz` | the daemon is serving HTTP | no answer |
 | `/readyz` | startup has finished, the daemon accepts questions, every chat backend can receive messages, and every MCP server is up | `503` listing each failure: `starting`, `shutting down`, `chat backend <name>: not connected`, or `mcp server <name>: down` |
 
-Use `/healthz` for liveness and `/readyz` for readiness or alerting. A Slack backend counts as connected once Socket Mode connects and is briefly not connected while it reconnects. A disconnected MCP server stays down until `serve` restarts, so a `/readyz` that keeps failing on one means a restart is needed. The probes check only cached state and never call the model or a tool, so a slow model endpoint does not fail them. For example:
+Use `/healthz` for liveness and `/readyz` for readiness or alerting. A Slack backend counts as connected once Socket Mode connects, and a Discord backend once its gateway session is ready; both are briefly not connected while they reconnect. A disconnected MCP server stays down until `serve` restarts, so a `/readyz` that keeps failing on one means a restart is needed. The probes check only cached state and never call the model or a tool, so a slow model endpoint does not fail them. For example:
 
 ```sh
 curl -fsS http://127.0.0.1:9464/readyz
@@ -215,7 +237,7 @@ The deb and rpm packages install both binaries, a `chatops` system user, and a s
 | `/etc/chatops/mcp-status.d/` | Config directory of the `status` tool group; `00-default.yaml` is the shipped service list, and your own services go in files of your own beside it |
 | `/etc/chatops/mcp-kubernetes.d/` | Config directory of the `kubernetes` tool group; `00-default.yaml` points at the kubeconfig at `/etc/chatops/kubeconfig` (which you provide; make it `root:chatops` `0640`) |
 | `/etc/chatops/mcp-host.d/` | Config directory of the `host` tool group; `00-default.yaml` has examples only, so list your hosts in a file of your own beside it, then enable the commented `host` server in `config.yaml` |
-| `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `LLM_API_KEY`) and `LOG_LEVEL`/`LOG_FORMAT`; readable only by root and the `chatops` group |
+| `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `DISCORD_BOT_TOKEN` and `LLM_API_KEY`) and `LOG_LEVEL`/`LOG_FORMAT`; readable only by root and the `chatops` group |
 | `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml --chat ${CHAT}` (default `homelab`, the backend named in the sample config) with JSON logs to the journal; restarts on failure |
 
 Edited config files are kept across upgrades; see [Configuration directories](#configuration-directories). The service is not started on install; once both files are filled in:

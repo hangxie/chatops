@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/hangxie/chatops/internal/chat/discord"
 	"github.com/hangxie/chatops/internal/chat/slack"
 	"github.com/hangxie/chatops/internal/chat/stdio"
 	"github.com/hangxie/chatops/internal/chat/unix"
@@ -49,6 +50,8 @@ func New(name string, cfg config.ChatBackend, logger *slog.Logger) (Backend, err
 	switch cfg.Type {
 	case config.ChatSlack:
 		return slack.New(cfg, logger)
+	case config.ChatDiscord:
+		return discord.New(cfg, logger)
 	case config.ChatStdio:
 		return stdio.New(cfg, logger), nil
 	case config.ChatUnix:
