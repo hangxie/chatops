@@ -349,7 +349,7 @@ The deb and rpm packages install both binaries, a `chatops` system user, and a s
 | `/etc/chatops/mcp-status.d/` | Config directory of the `status` tool group; `00-default.yaml` is the shipped service list, and your own services go in files of your own beside it |
 | `/etc/chatops/mcp-kubernetes.d/` | Config directory of the `kubernetes` tool group; `00-default.yaml` points at the kubeconfig at `/etc/chatops/kubeconfig` (which you provide; make it `root:chatops` `0640`) |
 | `/etc/chatops/mcp-host.d/` | Config directory of the `host` tool group; `00-default.yaml` has examples only, so list your hosts in a file of your own beside it, then enable the commented `host` server in `config.yaml` |
-| `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `DISCORD_BOT_TOKEN` and `LLM_API_KEY`) and `LOG_LEVEL`/`LOG_FORMAT`; readable only by root and the `chatops` group |
+| `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `DISCORD_BOT_TOKEN` and `LLM_API_KEY`), `CHAT` (required: the backend names to run, shipped as `homelab` to match the sample config), and `LOG_LEVEL`/`LOG_FORMAT`; readable only by root and the `chatops` group |
 | `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml --chat ${CHAT}` (default `homelab`, the backend named in the sample config) with JSON logs to the journal; restarts on failure |
 
 Edited config files are kept across upgrades; see [Configuration directories](#configuration-directories). The service is not started on install; once both files are filled in:

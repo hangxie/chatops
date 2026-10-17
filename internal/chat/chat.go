@@ -3,6 +3,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -65,6 +66,10 @@ func New(name string, cfg config.ChatBackend, logger *slog.Logger) (Backend, err
 func Select(cfg config.Chat, names []string, logger *slog.Logger) ([]Named, error) {
 	selected := make([]Named, 0, len(names))
 	for _, name := range names {
+		// An unset CHAT in the packaged unit expands to an empty name.
+		if name == "" {
+			continue
+		}
 		def, ok := cfg[name]
 		if !ok {
 			return nil, fmt.Errorf("chat backend %q is not defined in the config", name)
@@ -74,6 +79,9 @@ func Select(cfg config.Chat, names []string, logger *slog.Logger) ([]Named, erro
 			return nil, err
 		}
 		selected = append(selected, Named{Name: name, Backend: backend})
+	}
+	if len(selected) == 0 {
+		return nil, errors.New("no chat backend selected")
 	}
 	return selected, nil
 }
