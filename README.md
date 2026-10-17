@@ -159,6 +159,19 @@ Startup aborts if `chat:` is empty or any backend is invalid.
 
 Stopping the daemon (SIGINT or SIGTERM) stops accepting new messages and gives in-flight turns and their replies a short grace period to finish. Anything still running past it is cancelled, and conversation history is lost.
 
+A tool call that fails is reported by chatops itself, whatever the model wrote, so an expired credential or an unreachable system is never hidden behind a vague answer:
+
+```text
+I couldn't list the namespaces.
+
+Tool errors:
+- `kubernetes.namespace_list`: Unauthorized
+```
+
+- One line per failing call: the error's first line, cut to 200 characters. Error text can name internal hosts.
+- A failure is cleared only when the same tool with the same arguments later succeeds in the turn; a success on another namespace or target leaves it listed.
+- Server errors, lost connections, and timeouts are listed. Unknown tools and invalid arguments are the model's own mistakes, fed back to it, and are not listed.
+
 | Backend | Reaches users through | Public endpoint |
 |---|---|---|
 | [`stdio`](#stdio--interactive-terminal) | the terminal it runs in; development only | no |

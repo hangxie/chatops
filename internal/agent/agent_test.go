@@ -152,6 +152,8 @@ func Test_Agent_Run_tool_rounds(t *testing.T) {
 		results   []llm.Message
 		called    []toolCallRecord
 		steps     []Step
+		// reported is the failure line appended to the reply.
+		reported string
 	}{
 		"single-call": {
 			toolCalls: []llm.ToolCall{{ID: "c1", Name: "builtin__ping", Arguments: `{}`}},
@@ -192,18 +194,20 @@ func Test_Agent_Run_tool_rounds(t *testing.T) {
 			handle: func(context.Context, mcp.Tool, json.RawMessage) (mcp.Result, error) {
 				return mcp.Result{Text: "backend down", IsError: true}, nil
 			},
-			results: []llm.Message{toolMessage("c1", "error: backend down")},
-			called:  []toolCallRecord{{name: "builtin__ping", args: `{}`}},
-			steps:   []Step{{Phase: PhaseTool, Name: "builtin__ping", Server: "builtin", Tool: "ping", Outcome: OutcomeError, ResultBytes: 12}},
+			results:  []llm.Message{toolMessage("c1", "error: backend down")},
+			called:   []toolCallRecord{{name: "builtin__ping", args: `{}`}},
+			steps:    []Step{{Phase: PhaseTool, Name: "builtin__ping", Server: "builtin", Tool: "ping", Outcome: OutcomeError, ResultBytes: 12}},
+			reported: "`builtin.ping`: backend down",
 		},
 		"tool-call-fails": {
 			toolCalls: []llm.ToolCall{{ID: "c1", Name: "builtin__ping", Arguments: `{}`}},
 			handle: func(context.Context, mcp.Tool, json.RawMessage) (mcp.Result, error) {
 				return mcp.Result{}, errors.New("connection closed")
 			},
-			results: []llm.Message{toolMessage("c1", "error: tool call failed: connection closed")},
-			called:  []toolCallRecord{{name: "builtin__ping", args: `{}`}},
-			steps:   []Step{{Phase: PhaseTool, Name: "builtin__ping", Server: "builtin", Tool: "ping", Outcome: OutcomeError}},
+			results:  []llm.Message{toolMessage("c1", "error: tool call failed: connection closed")},
+			called:   []toolCallRecord{{name: "builtin__ping", args: `{}`}},
+			steps:    []Step{{Phase: PhaseTool, Name: "builtin__ping", Server: "builtin", Tool: "ping", Outcome: OutcomeError}},
+			reported: "`builtin.ping`: tool call failed: connection closed",
 		},
 		"tool-timeout": {
 			toolCalls: []llm.ToolCall{{ID: "c1", Name: "builtin__ping", Arguments: `{}`}},
@@ -211,9 +215,10 @@ func Test_Agent_Run_tool_rounds(t *testing.T) {
 				<-ctx.Done()
 				return mcp.Result{}, ctx.Err()
 			},
-			results: []llm.Message{toolMessage("c1", "error: tool call timed out after 50ms")},
-			called:  []toolCallRecord{{name: "builtin__ping", args: `{}`}},
-			steps:   []Step{{Phase: PhaseTool, Name: "builtin__ping", Server: "builtin", Tool: "ping", Outcome: OutcomeTimeout}},
+			results:  []llm.Message{toolMessage("c1", "error: tool call timed out after 50ms")},
+			called:   []toolCallRecord{{name: "builtin__ping", args: `{}`}},
+			steps:    []Step{{Phase: PhaseTool, Name: "builtin__ping", Server: "builtin", Tool: "ping", Outcome: OutcomeTimeout}},
+			reported: "`builtin.ping`: tool call timed out after 50ms",
 		},
 		"tool-late-success": {
 			toolCalls: []llm.ToolCall{{ID: "c1", Name: "builtin__ping", Arguments: `{}`}},
@@ -221,9 +226,10 @@ func Test_Agent_Run_tool_rounds(t *testing.T) {
 				time.Sleep(100 * time.Millisecond)
 				return mcp.Result{Text: "pong"}, nil
 			},
-			results: []llm.Message{toolMessage("c1", "error: tool call timed out after 50ms")},
-			called:  []toolCallRecord{{name: "builtin__ping", args: `{}`}},
-			steps:   []Step{{Phase: PhaseTool, Name: "builtin__ping", Server: "builtin", Tool: "ping", Outcome: OutcomeTimeout}},
+			results:  []llm.Message{toolMessage("c1", "error: tool call timed out after 50ms")},
+			called:   []toolCallRecord{{name: "builtin__ping", args: `{}`}},
+			steps:    []Step{{Phase: PhaseTool, Name: "builtin__ping", Server: "builtin", Tool: "ping", Outcome: OutcomeTimeout}},
+			reported: "`builtin.ping`: tool call timed out after 50ms",
 		},
 	}
 
@@ -236,7 +242,11 @@ func Test_Agent_Run_tool_rounds(t *testing.T) {
 
 			turn, err := New(model, tools, limits, nil).Run(context.Background(), nil, "do it")
 			require.NoError(t, err)
-			require.Equal(t, "done", turn.Reply)
+			want := "done"
+			if tc.reported != "" {
+				want += "\n\nTool errors:\n- " + tc.reported
+			}
+			require.Equal(t, want, turn.Reply)
 			require.Equal(t, tc.called, tools.calls)
 
 			// History keeps only the user message, no assistant answer or tool messages.
@@ -514,7 +524,7 @@ func Test_Agent_Run_repeated_failure(t *testing.T) {
 	}{
 		"third identical failing call is not run": {
 			responses: []func(context.Context) (llm.Response, error){calls(bad), calls(bad), calls(bad)},
-			reply:     "I stopped because the same tool call kept failing. Try rephrasing the request.",
+			reply:     "I stopped because the same tool call kept failing.",
 			outcome:   OutcomeStopped,
 			steps:     []Step{plan, failed, plan, failed, {Phase: PhasePlan, Outcome: OutcomeStopped}},
 		},
@@ -562,6 +572,64 @@ func Test_Agent_Run_repeated_failure(t *testing.T) {
 			require.Equal(t, []llm.Message{{Role: llm.RoleUser, Content: "get a"}}, turn.Messages)
 			require.Equal(t, tc.outcome, turn.Stats.Outcome)
 			require.Equal(t, tc.steps, withoutDurations(turn.Stats.Steps))
+		})
+	}
+}
+
+func Test_Agent_Run_reports_unresolved_failures(t *testing.T) {
+	prod := llm.ToolCall{ID: "c1", Name: "builtin__get", Arguments: `{"name":"prod"}`}
+	prodAgain := llm.ToolCall{ID: "c2", Name: "builtin__get", Arguments: `{ "name" : "prod" }`}
+	dev := llm.ToolCall{ID: "c3", Name: "builtin__get", Arguments: `{"name":"dev"}`}
+	denied := "\n\nTool errors:\n- `builtin.get`: forbidden (403)"
+
+	tests := map[string]struct {
+		responses []func(context.Context) (llm.Response, error)
+		// failing is how many prod calls fail before prod succeeds.
+		failing int
+		reply   string
+	}{
+		"success with other arguments keeps the failure": {
+			responses: []func(context.Context) (llm.Response, error){calls(prod), calls(dev), reply("dev is fine")},
+			failing:   9,
+			reply:     "dev is fine" + denied,
+		},
+		"retry of the same call resolves it": {
+			responses: []func(context.Context) (llm.Response, error){calls(prod), calls(prodAgain), reply("prod is fine")},
+			failing:   1,
+			reply:     "prod is fine",
+		},
+		"model drops the error from its answer": {
+			responses: []func(context.Context) (llm.Response, error){calls(prod), reply("I can only help with operations questions.")},
+			failing:   9,
+			reply:     "I can only help with operations questions." + denied,
+		},
+		"repeated failure stop names the error": {
+			responses: []func(context.Context) (llm.Response, error){calls(prod), calls(prod), calls(prod)},
+			failing:   9,
+			reply:     "I stopped because the same tool call kept failing." + denied,
+		},
+		"iteration limit names the error": {
+			responses: []func(context.Context) (llm.Response, error){calls(prod), calls(dev), calls(dev), calls(dev)},
+			failing:   9,
+			reply:     "I stopped after 4 steps without reaching an answer. Try a narrower request." + denied,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			prodCalls := 0
+			handle := func(_ context.Context, _ mcp.Tool, args json.RawMessage) (mcp.Result, error) {
+				if strings.Contains(string(args), "prod") {
+					prodCalls++
+					if prodCalls <= tc.failing {
+						return mcp.Result{Text: "forbidden (403)\ndetails", IsError: true}, nil
+					}
+				}
+				return mcp.Result{Text: "ok"}, nil
+			}
+			model := &fakeModel{responses: tc.responses}
+			turn, err := New(model, newFakeTools(t, handle), testLimits(), nil).Run(context.Background(), nil, "check")
+			require.NoError(t, err)
+			require.Equal(t, tc.reply, turn.Reply)
 		})
 	}
 }
