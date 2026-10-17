@@ -1,0 +1,2 @@
+# Directory for the unix chat backend's socket, recreated at every boot.
+d /run/chatops 0755 chatops chatops -

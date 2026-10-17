@@ -12,13 +12,18 @@ for path in /etc/chatops /etc/chatops/mcp-status.d /etc/chatops/mcp-kubernetes.d
     chown root:chatops "$path"
     chmod 0755 "$path"
 done
-for path in /etc/chatops/chatops.env /etc/chatops/config.yaml /etc/chatops/mcp-status.d/00-default.yaml /etc/chatops/mcp-kubernetes.d/00-default.yaml /etc/chatops/mcp-host.d/00-default.yaml; do
+if [ -e /etc/chatops/chatops.env ]; then
+    chown root:chatops /etc/chatops/chatops.env
+    chmod 0640 /etc/chatops/chatops.env
+fi
+# No chmod: dpkg ships these 0644 but keeps an edited conffile's mode, so an upgrade never loosens one.
+for path in /etc/chatops/config.yaml /etc/chatops/mcp-status.d/00-default.yaml /etc/chatops/mcp-kubernetes.d/00-default.yaml /etc/chatops/mcp-host.d/00-default.yaml; do
     [ -e "$path" ] || continue
     chown root:chatops "$path"
-    chmod 0640 "$path"
 done
 
 if [ -d /run/systemd/system ]; then
+    systemd-tmpfiles --create chatops.conf >/dev/null || true
     systemctl daemon-reload >/dev/null || true
     if [ -n "${2:-}" ]; then
         systemctl try-restart chatops.service >/dev/null || true

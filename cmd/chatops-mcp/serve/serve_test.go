@@ -31,7 +31,7 @@ func newClient() *mcp.Client {
 // packagedStatus is the directory the packages install as /etc/chatops/mcp-status.d.
 const packagedStatus = "../../../package/systemd/mcp-status.d"
 
-// packagedHost is the directory the packages install as /etc/chatops/mcp-host.d, which ships examples only.
+// packagedHost is the directory the packages install as /etc/chatops/mcp-host.d, which ships a localhost entry.
 const packagedHost = "../../../package/systemd/mcp-host.d"
 
 func Test_newServer(t *testing.T) {
@@ -50,7 +50,7 @@ func Test_newServer(t *testing.T) {
 		"status-config-missing": {cmd: Cmd{Tool: "status", Config: "/nonexistent/mcp-status.d"}, errMsg: `tool group "status": read status config directory: open /nonexistent/mcp-status.d: no such file or directory`},
 		"host-without-config":   {cmd: Cmd{Tool: "host"}, errMsg: `tool group "host": --config is required`},
 		"host-config-missing":   {cmd: Cmd{Tool: "host", Config: "/nonexistent/mcp-host.d"}, errMsg: `tool group "host": read host config directory: open /nonexistent/mcp-host.d: no such file or directory`},
-		"host-packaged-empty":   {cmd: Cmd{Tool: "host", Config: packagedHost}, errMsg: `tool group "host": host config ` + packagedHost + `: at least one host is required`},
+		"host-packaged":         {cmd: Cmd{Tool: "host", Config: packagedHost}, tools: []string{"host_status"}},
 		"kube-config-missing":   {cmd: Cmd{Tool: "kubernetes", Config: "/nonexistent/mcp-kubernetes.d"}, errMsg: `tool group "kubernetes": read kubernetes config directory: open /nonexistent/mcp-kubernetes.d: no such file or directory`},
 	}
 
