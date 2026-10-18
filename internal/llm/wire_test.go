@@ -97,9 +97,31 @@ func Test_toWireRequest(t *testing.T) {
 }
 
 func Test_toWireRequest_no_tools(t *testing.T) {
-	encoded, err := json.Marshal(toWireRequest("m", false, config.Sampling{}, Request{Messages: []Message{{Role: RoleUser, Content: "hi"}}}))
+	// tool_choice is dropped without tools, which endpoints would reject.
+	req := Request{Messages: []Message{{Role: RoleUser, Content: "hi"}}, ToolChoice: ToolChoiceRequired}
+	encoded, err := json.Marshal(toWireRequest("m", false, config.Sampling{}, req))
 	require.NoError(t, err)
 	require.JSONEq(t, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, string(encoded))
+}
+
+func Test_toWireRequest_tool_choice(t *testing.T) {
+	tools := []ToolSpec{{Name: "t", Parameters: json.RawMessage(`{"type":"object"}`)}}
+	tests := map[string]struct {
+		choice string
+		want   any
+	}{
+		"default omitted": {choice: "", want: nil},
+		"required":        {choice: ToolChoiceRequired, want: "required"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			encoded, err := json.Marshal(toWireRequest("m", false, config.Sampling{}, Request{Tools: tools, ToolChoice: tc.choice}))
+			require.NoError(t, err)
+			var got map[string]any
+			require.NoError(t, json.Unmarshal(encoded, &got))
+			require.Equal(t, tc.want, got["tool_choice"])
+		})
+	}
 }
 
 func Test_fromWireResponse(t *testing.T) {

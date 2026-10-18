@@ -50,10 +50,15 @@ type ToolSpec struct {
 	Parameters  json.RawMessage
 }
 
+// ToolChoiceRequired makes the model call at least one tool instead of answering in text.
+const ToolChoiceRequired = "required"
+
 // Request is one completion request.
 type Request struct {
 	Messages []Message
 	Tools    []ToolSpec
+	// ToolChoice is empty for the endpoint default (auto) or ToolChoiceRequired; it is sent only with tools.
+	ToolChoice string
 }
 
 // Response holds the assistant message: final text, tool calls, or both.
