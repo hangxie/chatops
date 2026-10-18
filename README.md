@@ -327,6 +327,24 @@ Turn it on only while troubleshooting.
 - At `info` and above, `serve` logs chat user and conversation IDs, but never message text.
 - Under systemd, logs go to the journal, usually readable by the `adm` and `systemd-journal` groups: a wider audience than `/etc/chatops/chatops.env`.
 
+### Model check
+
+[`scripts/model-check.sh`](scripts/model-check.sh) checks whether a model can drive chatops. It sends each prompt in a cases file to a running daemon over its `unix` socket, records every request and reply in a Markdown result file, and grades each reply.
+
+```bash
+sudo scripts/model-check.sh scripts/model-check.cases                 # socket /run/chatops/ops.sock
+scripts/model-check.sh -s /tmp/ops.sock -o qwen.md -n "qwen-3.5-4b, vLLM, require_tool_call=false" scripts/model-check.cases
+```
+
+- Each case is a line `id | prompt | checks`, with checks separated by `;`. [`scripts/model-check.cases`](scripts/model-check.cases) lists the check kinds and a starter set covering decline, ping, host, status, and Kubernetes.
+- A case passes when every check holds and the turn neither stops, times out, nor fails. A case without checks is marked `MANUAL` for a human to read.
+- Checks are heuristics, not proof: `has=worker-1` shows the reply names the node, not that a tool checked it. Read the replies of a model you plan to use.
+- Tool checks (`tool=`, `notool=`, `first=`) read the stats footer, so set `agent.show_stats: true`. Without it they are marked `MANUAL`.
+- `-t` limits each reply wait (default `300` seconds). Keep it above `agent.turn_timeout`, so a slow turn ends in chatops's own timeout reply, with its stats footer, rather than no reply. `NC` overrides the client command (default `nc -NU`, which needs OpenBSD netcat). The script needs `timeout` (GNU coreutils; `gtimeout` also works) and exits if neither is installed.
+- `-n` adds a note to the result file's header, such as the model and the settings that differ between runs.
+- Cases are numbered in run order. The summary table lists the tools each case called, so a warm-up call or an answer without a tool stands out.
+- The exit status is non-zero when any case fails.
+
 ### Metrics
 
 With `metrics.listen` set, `serve` exposes Prometheus metrics at `http://<listen>/metrics`. The full list is in [`docs/observability.md`](docs/observability.md).
