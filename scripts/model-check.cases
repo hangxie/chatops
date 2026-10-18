@@ -1,0 +1,50 @@
+# Cases for scripts/model-check.sh: id | prompt | checks
+# Checks are separated by ";". A case without checks is left for a human (MANUAL).
+#   tool=NAME   the model called NAME (server.tool, or the bare tool name)
+#   notool=NAME the model did not call NAME
+#   first=NAME  the first tool called was NAME
+#   has=TEXT    the answer contains TEXT (case-insensitive)
+#   lacks=TEXT  the answer does not contain TEXT
+# Every case also fails when the turn stops, times out, or fails.
+# Host, service, and cluster names match the homelab configs; edit them for yours.
+
+# ping first: the cheapest check that the socket, chatops, and model all work, and it takes the model's cold start.
+ping            | ping                                          | first=ping; notool=decline
+
+# Off-topic messages go to the built-in decline tool.
+hello           | hello                                         | first=decline
+thanks          | thanks                                        | first=decline
+joke            | tell me a joke                                | first=decline
+capabilities    | what can you do?                              |
+mixed           | ping and tell me a joke                       | tool=ping
+
+# host: names, covers aliases, all hosts, and a host that is not listed (the tool tells the model to say it is not covered).
+host-name       | is proxmox up?                                | first=host_status; has=proxmox
+host-alias      | is the hypervisor reachable?                  | first=host_status; has=proxmox
+host-alias-mbp  | can you reach my macbook pro?                 | first=host_status; lacks=home
+host-ssh-port   | can I ssh to the home server?                 | first=host_status; has=home
+host-all        | are all my hosts up?                          | first=host_status; has=media; has=proxmox; has=home
+host-uncovered  | is nas.xiehang.com reachable?                 | lacks=pass; has=covered
+
+# status: custom health endpoints, covers aliases, a vendor page and its products, and a service that is not listed (left for a human: looking at the list first is fine).
+svc-harbor      | is Harbor healthy?                            | first=service_status; has=harbor
+svc-alias-push  | can I push images to the registry?            | first=service_status; has=harbor
+svc-ai-llm      | is the LLM on ai up?                          | first=service_status; has=llm
+svc-tts         | is text to speech working?                    | first=service_status; has=tts
+svc-media-llm   | is llama.cpp on media running?                | first=service_status; has=media
+svc-chatops     | is the chat bot healthy?                      | first=service_status
+svc-vendor      | is GitHub up?                                 | first=service_status; has=github
+svc-claude-code | is claude code down?                          | first=service_status
+svc-codex       | is codex down?                                | first=service_status
+svc-uncovered   | is Netflix down?                              |
+
+# Mixed groups: a host and its services, one question.
+media-overall   | is the media server and everything on it OK?  | tool=host_status; tool=service_status; has=harbor
+
+# kubernetes: list tools, chaining from a list to per-target tools, misses.
+namespaces      | list all namespaces                           | first=namespace_list; has=kube-system
+nodes           | list the nodes                                | first=node_list
+node-usage      | show resource usage on all worker-* nodes     | tool=node_list; tool=node_resources; has=worker-0; has=worker-5
+node-two        | status of worker-0 and worker-1               | tool=node_status; notool=host_status; has=worker-0; has=worker-1
+pods-ns         | list pods in kube-system                      | first=pod_list; has=coredns
+missing-node    | show the status of node no-such-node          | first=node_status; has=no-such-node
