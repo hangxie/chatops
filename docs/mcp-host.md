@@ -9,8 +9,8 @@ It complements [`status`](mcp-status.md), which checks the services on those hos
 ## Tool: `host_status`
 
 - Argument: `hosts` (required), a non-empty list of configured host names, following the target-list convention of [`mcp-k8s.md`](mcp-k8s.md#targets). "Are media and pi up?" is one call.
-- Item names are a JSON Schema enum of the configured hosts, each described with its `covers`, as `service_status` does. `all` checks every host.
-- Result text: one line per host, `[HEALTH] <display> - <summary>`, then one indented line per check with its outcome (resolved and selected address, ping loss and round-trip time, SSH banner).
+- Item names are a JSON Schema enum of the configured hosts, each described with its address and `covers`, as `service_status` does. The address lets the model tell an unlisted name such as `nas.example.com` from a listed host, and the result repeats it, so a wrong mapping shows in the reply. `all` checks every host.
+- Result text: one line per host, `[HEALTH] <display> (<address>) - <summary>`, with the configured address left out when it equals the display name, then one indented line per check with its outcome (resolved and selected address, ping loss and round-trip time, SSH banner).
 - Structured output carries the same per-check results.
 - Annotations: `ReadOnlyHint: true`, `IdempotentHint: true`, `OpenWorldHint: true`.
 
@@ -121,16 +121,17 @@ Probe outcomes and the health rule are separate functions, with the ICMP and SSH
 - Its `00-default.yaml` ships one host, `localhost` with the ping check only, so the packaged `host` server starts out of the box. Other hosts are site-specific and stay commented examples.
 - Hosts go in a file of your own beside it, merged in file name order as `status` reads `mcp-status.d/`.
 - Unknown fields and duplicate names (also across files) stop `chatops-mcp` at startup.
+- Host `covers` should name the machine, not what runs on it. A host covering "the LLM host" pulls "is the LLM up?" to `host_status`; service names belong in the `status` service's `covers`.
 
 ```yaml
 hosts:
   - name: media              # tool argument value; lowercase letters, digits, "-"
     display: media
-    covers: [media server, the Harbor and LLM host]
+    covers: [media server, the media box]
     address: media.xiehang.com
   - name: ai
     display: ai
-    covers: [the Mac running the LLM and TTS]
+    covers: [the Mac, the MacBook]
     address: ai.xiehang.com
     checks: [ping, ssh]      # default; resolve always runs
     ssh_port: 22             # default

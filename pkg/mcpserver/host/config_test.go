@@ -64,7 +64,7 @@ func Test_Load(t *testing.T) {
 func Test_Load_packaged(t *testing.T) {
 	cfg, err := Load(packagedConfig)
 	require.NoError(t, err)
-	require.Equal(t, []Host{{Name: "localhost", Display: "localhost", Covers: []string{"this server", "the chatops host"}, Address: "localhost", Checks: []string{"ping"}}}, cfg.Hosts)
+	require.Equal(t, []Host{{Name: "localhost", Display: "localhost", Covers: []string{"this server", "this machine"}, Address: "localhost", Checks: []string{"ping"}}}, cfg.Hosts)
 }
 
 func Test_Config_validate(t *testing.T) {
