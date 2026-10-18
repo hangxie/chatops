@@ -42,6 +42,10 @@ getent group %{name} >/dev/null || groupadd -r %{name}
 getent passwd %{name} >/dev/null || useradd -r -M -g %{name} -d /nonexistent -s /sbin/nologin -c "ChatOps service" %{name}
 
 %post
+# These hold no secrets; rpm keeps an edited config file's old mode on upgrade, so set it here.
+for path in %{_sysconfdir}/%{name}/config.yaml %{_sysconfdir}/%{name}/mcp-status.d/00-default.yaml %{_sysconfdir}/%{name}/mcp-kubernetes.d/00-default.yaml %{_sysconfdir}/%{name}/mcp-host.d/00-default.yaml; do
+    if [ -e "$path" ]; then chmod 0644 "$path"; fi
+done
 %tmpfiles_create %{name}.conf
 %systemd_post %{name}.service
 

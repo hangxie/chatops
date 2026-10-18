@@ -16,10 +16,11 @@ if [ -e /etc/chatops/chatops.env ]; then
     chown root:chatops /etc/chatops/chatops.env
     chmod 0640 /etc/chatops/chatops.env
 fi
-# No chmod: dpkg ships these 0644 but keeps an edited conffile's mode, so an upgrade never loosens one.
+# These hold no secrets; dpkg keeps a conffile's old mode on upgrade, so set it here.
 for path in /etc/chatops/config.yaml /etc/chatops/mcp-status.d/00-default.yaml /etc/chatops/mcp-kubernetes.d/00-default.yaml /etc/chatops/mcp-host.d/00-default.yaml; do
     [ -e "$path" ] || continue
     chown root:chatops "$path"
+    chmod 0644 "$path"
 done
 
 if [ -d /run/systemd/system ]; then
