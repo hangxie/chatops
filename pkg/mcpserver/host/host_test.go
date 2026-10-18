@@ -75,6 +75,8 @@ func Test_Register_lists_host_status(t *testing.T) {
 	require.Equal(t, "host_status", tool.Name)
 	require.Contains(t, tool.Description, "Only the listed hosts are covered")
 	require.Contains(t, tool.Description, "not that the machine is off")
+	require.Contains(t, tool.Description, "the machine only, not the applications or services on it")
+	require.NotContains(t, tool.Description, "ChatOps", "a small model maps \"the chat bot\" to a tool that names it")
 	require.True(t, tool.Annotations.ReadOnlyHint)
 	require.True(t, tool.Annotations.IdempotentHint)
 	require.True(t, *tool.Annotations.OpenWorldHint)

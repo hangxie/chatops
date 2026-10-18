@@ -37,6 +37,8 @@ func Test_Register_lists_service_status(t *testing.T) {
 	tool := result.Tools[0]
 	require.Equal(t, "service_status", tool.Name)
 	require.Contains(t, tool.Description, "Only the listed services are covered")
+	require.Contains(t, tool.Description, "a service or application")
+	require.Contains(t, tool.Description, "for a self-hosted one, its health endpoint")
 	require.True(t, tool.Annotations.ReadOnlyHint)
 	require.True(t, tool.Annotations.IdempotentHint)
 	require.True(t, *tool.Annotations.OpenWorldHint)
