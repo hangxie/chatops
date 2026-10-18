@@ -30,7 +30,7 @@ func formatNodeList(out NodeListOutput) string {
 
 func formatNodeStatus(out NodeStatus) string {
 	if !out.Found {
-		return fmt.Sprintf("node %q not found", out.Node)
+		return kube.Miss("node", out.Node, "")
 	}
 	lines := []string{
 		fmt.Sprintf("[%s] %s (%s) %s", out.Ready, out.Node, rolesText(out.Roles), out.Version),
@@ -49,7 +49,7 @@ func formatNodeStatus(out NodeStatus) string {
 
 func formatNodeResources(out NodeResources) string {
 	if !out.Found {
-		return fmt.Sprintf("node %q not found", out.Node)
+		return kube.Miss("node", out.Node, "")
 	}
 	lines := []string{out.Node}
 	lines = append(lines, "capacity:    "+amountsText(out.Capacity))

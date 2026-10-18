@@ -33,11 +33,21 @@ func GetNamespaced[T any](ctx context.Context, client k8s.Interface, ref ObjectR
 	return obj, err == nil, "", err
 }
 
-// Miss renders a target that does not exist, followed by note when there is one.
+// wildcardHint steers a model that passed a pattern back to the list tool, since targets are exact names.
+const wildcardHint = "names are exact and wildcards are not supported; list the objects first, then pass the matching names"
+
+// Miss renders a target that does not exist, followed by note and the wildcard hint when they apply.
 func Miss(kind, target, note string) string {
-	text := fmt.Sprintf("%s %q not found", kind, target)
+	var notes []string
 	if note != "" {
-		text += ": " + note
+		notes = append(notes, note)
+	}
+	if strings.ContainsAny(target, "*?[") {
+		notes = append(notes, wildcardHint)
+	}
+	text := fmt.Sprintf("%s %q not found", kind, target)
+	if len(notes) > 0 {
+		text += ": " + strings.Join(notes, "; ")
 	}
 	return text
 }

@@ -303,6 +303,7 @@ Every tool that reports on specific objects takes a list of targets rather than 
 
 - Targets are fetched in parallel, at most four at a time, and the output keeps request order.
 - A target that does not exist is a normal entry with `found: false`: never a fuzzy match, never a tool error, so one bad name does not hide the others.
+- A missing target that contains a wildcard (`*`, `?`, `[`) adds a hint that names are exact, steering the model to the list tool instead of retrying the pattern.
 - A failure that is not a miss (unreachable cluster, RBAC-forbidden) fails the whole call, cancels the targets still in flight or queued, and reports the first failure with the target it hit.
 - Structured output wraps the entries in one list field named after the argument, e.g. `{"deployments": [...]}`, and each entry carries `found`.
 

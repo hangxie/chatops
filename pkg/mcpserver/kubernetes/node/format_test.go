@@ -44,6 +44,7 @@ func Test_formatNodeStatus(t *testing.T) {
 
 func Test_formatNodeStatus_not_found(t *testing.T) {
 	require.Equal(t, `node "ghost" not found`, formatNodeStatus(NodeStatus{Node: "ghost"}))
+	require.Equal(t, kube.Miss("node", "worker-*", ""), formatNodeStatus(NodeStatus{Node: "worker-*"}))
 }
 
 func Test_formatNodeResources(t *testing.T) {
@@ -87,6 +88,7 @@ func Test_formatNodeResources_disk_without_total(t *testing.T) {
 
 func Test_formatNodeResources_not_found(t *testing.T) {
 	require.Equal(t, `node "ghost" not found`, formatNodeResources(NodeResources{Node: "ghost"}))
+	require.Equal(t, kube.Miss("node", "worker-*", ""), formatNodeResources(NodeResources{Node: "worker-*"}))
 }
 
 func Test_conditionsText_order(t *testing.T) {

@@ -433,7 +433,7 @@ Per-object tools take a list, so a question about several objects is one call: `
 |---|---|
 | Argument | a list named after the resource (`nodes`, `pods`, `deployments`, ...); `{namespace, name}` objects for namespaced resources |
 | Targets per call | at most 50 distinct; 5 for every `_describe` and `_log` tool, whose output is a full object or raw container output |
-| Missing target | reported as not found, without failing the rest |
+| Missing target | reported as not found, without failing the rest; a name with a wildcard gets a hint to list the objects first |
 | Missing namespace | named as such |
 | Rows per `_list` tool, and per target of a `_pods` tool | at most `max_results` (default 50), with the full count in `total` and a "showing the first N of M" note, so the model narrows the call instead of assuming it saw everything |
 

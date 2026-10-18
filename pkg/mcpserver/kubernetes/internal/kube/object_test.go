@@ -50,8 +50,23 @@ func Test_GetNamespaced(t *testing.T) {
 }
 
 func Test_Miss(t *testing.T) {
-	require.Equal(t, `pod "argocd/x" not found`, Miss("pod", "argocd/x", ""))
-	require.Equal(t, `pod "nope/x" not found: namespace "nope" does not exist`, Miss("pod", "nope/x", `namespace "nope" does not exist`))
+	tests := map[string]struct {
+		kind, target, note string
+		want               string
+	}{
+		"plain":      {kind: "pod", target: "argocd/x", want: `pod "argocd/x" not found`},
+		"note":       {kind: "pod", target: "nope/x", note: `namespace "nope" does not exist`, want: `pod "nope/x" not found: namespace "nope" does not exist`},
+		"star":       {kind: "node", target: "worker-*", want: `node "worker-*" not found: ` + wildcardHint},
+		"question":   {kind: "pod", target: "argocd/web-?", want: `pod "argocd/web-?" not found: ` + wildcardHint},
+		"bracket":    {kind: "node", target: "worker-[0-3]", want: `node "worker-[0-3]" not found: ` + wildcardHint},
+		"star+note":  {kind: "pod", target: "nope/*", note: "gone", want: `pod "nope/*" not found: gone; ` + wildcardHint},
+		"dash-plain": {kind: "node", target: "worker-0", want: `node "worker-0" not found`},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, Miss(tc.kind, tc.target, tc.note))
+		})
+	}
 }
 
 func Test_FormatDescribed(t *testing.T) {
