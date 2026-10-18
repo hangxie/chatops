@@ -87,7 +87,7 @@ Start from the annotated sample at [`package/systemd/config.yaml`](package/syste
 | `agent.max_concurrent_turns` | `4` | Agent turns (model and tool calls) running at once across all conversations; posting a reply does not count; turns within one conversation always run one at a time, each after the previous reply is posted |
 | `agent.max_pending_messages` | `64` | Accepted but unfinished messages across all conversations; more are refused as busy |
 | `agent.show_stats` | `false` | Append each turn's statistics to its reply, failed turns included: every model and tool step with duration, tokens, and result size, then the totals. See [`docs/observability.md`](docs/observability.md) |
-| `agent.require_tool_call` | `true` | Force a tool call on each turn's first model call (`tool_choice: required`), so the model cannot answer from memory; off-topic messages go to the built-in `decline` tool. A first call that still returns text fails the turn. Set `false` for endpoints that reject `required`, such as vLLM without `--tool-call-parser` |
+| `agent.require_tool_call` | `true` | Force a tool call on each turn's first model call (`tool_choice: required`), so the model cannot answer from memory; off-topic messages go to the built-in `decline` tool. A first call that still returns text fails the turn. Set `false` for models that hang on `required`, such as Qwen3 on vLLM |
 | `agent.decline_reply` | `I can only help with operations questions about the systems I monitor.` | Reply when the model declines a message, whether by calling `decline` or by writing this exact text. Must not be empty |
 | `metrics.listen` | (none) | `host:port`, such as `127.0.0.1:9464`, serving Prometheus metrics at `/metrics` and probes at `/healthz` and `/readyz`; unset disables it. See [Metrics](#metrics) and [Health checks](#health-checks) |
 
@@ -120,7 +120,7 @@ Every provider speaks OpenAI chat-completions, but each one accepts a different 
 | Provider | `llm.disable_thinking` | `llm.stream` | `agent.require_tool_call` | Notes |
 |---|---|---|---|---|
 | llama.cpp | `true` | `true` | `true` | Needs a model whose chat template supports tools. Gemma 3's does not, and the server silently drops `tools` |
-| vLLM | `true` | `true` | `true` when started with `--tool-call-parser`, otherwise `false` | Keep `stream: true` behind LiteLLM, which cancels generation only when a streaming client disconnects |
+| vLLM | `true` | `true` | per model | Keep `stream: true` behind LiteLLM, which cancels generation only when a streaming client disconnects. vLLM enforces `required` with guided decoding: without `--tool-call-parser` it rejects it, and with one, qwen-3.5-4b's first call ran until the turn timeout on simple prompts, so Qwen3 needs `false`; llama-3.2-3b runs with `true` |
 | OpenRouter | `true` or `false` | `true` | `true` | Accepts every field chatops sends, `top_k` and `min_p` included |
 | Cloudflare Workers AI | `false` | `true` | `true` | `disable_thinking: true` fails every turn with `AiError: Invalid input` (code `8001`) |
 
@@ -344,6 +344,8 @@ scripts/model-check.sh -s /tmp/ops.sock -o qwen.md -n "qwen-3.5-4b, vLLM, requir
 - `-n` adds a note to the result file's header, such as the model and the settings that differ between runs.
 - Cases are numbered in run order. The summary table lists the tools each case called, so a warm-up call or an answer without a tool stands out.
 - The exit status is non-zero when any case fails.
+
+[`docs/models.md`](docs/models.md) records how the models we tried did.
 
 ### Metrics
 
