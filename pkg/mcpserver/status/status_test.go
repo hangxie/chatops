@@ -71,11 +71,12 @@ func Test_service_status_call(t *testing.T) {
 		services  int
 		errMsg    string
 	}{
-		"one":     {arguments: map[string]any{"service": "alpha"}, text: "[OK] Alpha - fine", services: 1},
-		"all":     {arguments: map[string]any{"service": "all"}, text: "[OK] Alpha - fine\n[UNKNOWN] Beta - unable to check: HTTP 503\n[DEGRADED] Gamma - slow\n  API latency", services: 3},
-		"unknown": {arguments: map[string]any{"service": "github"}, errMsg: "enum"},
-		"missing": {arguments: map[string]any{}, errMsg: "service"},
-		"extra":   {arguments: map[string]any{"service": "alpha", "region": "us"}, errMsg: `unexpected additional properties ["region"]`},
+		"one":        {arguments: map[string]any{"service": "alpha"}, text: "[OK] Alpha - fine", services: 1},
+		"all":        {arguments: map[string]any{"service": "all"}, text: "[OK] Alpha - fine\n[UNKNOWN] Beta - unable to check: HTTP 503\n[DEGRADED] Gamma - slow\n  API latency", services: 3},
+		"unreadable": {arguments: map[string]any{"service": "beta"}, errMsg: "unable to check Beta: HTTP 503"},
+		"unknown":    {arguments: map[string]any{"service": "github"}, errMsg: "enum"},
+		"missing":    {arguments: map[string]any{}, errMsg: "service"},
+		"extra":      {arguments: map[string]any{"service": "alpha", "region": "us"}, errMsg: `unexpected additional properties ["region"]`},
 	}
 
 	for name, tc := range tests {
