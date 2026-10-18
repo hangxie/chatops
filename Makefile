@@ -83,7 +83,7 @@ docker-build:  ## Build docker image for local test
 	@docker build . -f package/container/Dockerfile -t chatops:local
 
 .PHONY: test
-test: deps tools  ## Run unit tests
+test: deps  ## Run unit tests
 	@echo "==> Running unit tests"
 	@mkdir -p $(BUILD_DIR)/test
 	@set -euo pipefail ; \
