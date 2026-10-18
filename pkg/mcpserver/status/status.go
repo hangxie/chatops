@@ -21,7 +21,7 @@ var healthLabels = map[Health]string{
 
 // Input is the service_status tool's arguments.
 type Input struct {
-	Service string `json:"service"`
+	Services []string `json:"services"`
 }
 
 // Output is the structured result of the service_status tool.
@@ -53,13 +53,18 @@ func register(server *mcp.Server, c *checker) {
 	openWorld := true
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "service_status",
-		Description: "Report the current status of a service or application, from its vendor's status page or, for a self-hosted one, its health endpoint, including active incidents. Use service \"all\" to check every service. Only the listed services are covered: for any other service, do not call this tool; say it is not covered.",
+		Description: "Report the current status of a service or application, from its vendor's status page or, for a self-hosted one, its health endpoint, including active incidents. Use services [\"all\"] to check every service. Only the listed services are covered: for any other service, do not call this tool; say it is not covered.",
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
-				"service": {Type: "string", Description: "The service to check, or \"all\" for every one: " + strings.Join(choices, "; ") + ".", Enum: enum},
+				"services": {
+					Type:        "array",
+					Description: "The services to check, or [\"all\"] for every one: " + strings.Join(choices, "; ") + ".",
+					Items:       &jsonschema.Schema{Type: "string", Enum: enum},
+					MinItems:    jsonschema.Ptr(1),
+				},
 			},
-			Required:             []string{"service"},
+			Required:             []string{"services"},
 			AdditionalProperties: &jsonschema.Schema{Not: &jsonschema.Schema{}},
 		},
 		Annotations: &mcp.ToolAnnotations{
@@ -71,7 +76,7 @@ func register(server *mcp.Server, c *checker) {
 }
 
 func (c *checker) handle(ctx context.Context, _ *mcp.CallToolRequest, in Input) (*mcp.CallToolResult, Output, error) {
-	snapshots, err := c.check(ctx, in.Service)
+	snapshots, err := c.check(ctx, in.Services)
 	if err != nil {
 		return nil, Output{}, err
 	}

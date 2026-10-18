@@ -46,19 +46,24 @@ func Test_checker_check(t *testing.T) {
 	beta := Snapshot{Service: "Beta", Health: HealthUnknown, Summary: "unable to check: HTTP 503"}
 	gamma := Snapshot{Service: "Gamma", Health: HealthDegraded, Summary: "slow", Incidents: []Incident{{Name: "API latency"}}}
 	tests := map[string]struct {
-		name   string
+		names  []string
 		want   []Snapshot
 		errMsg string
 	}{
-		"one":         {name: "alpha", want: []Snapshot{alpha}},
-		"unreadable":  {name: "beta", errMsg: "unable to check Beta: HTTP 503"},
-		"all-ordered": {name: "all", want: []Snapshot{alpha, beta, gamma}},
-		"unknown":     {name: "delta", errMsg: `unknown service "delta"`},
+		"one":           {names: []string{"alpha"}, want: []Snapshot{alpha}},
+		"request-order": {names: []string{"gamma", "alpha"}, want: []Snapshot{gamma, alpha}},
+		"dedupe":        {names: []string{"alpha", "gamma", "alpha"}, want: []Snapshot{alpha, gamma}},
+		"one-readable":  {names: []string{"beta", "alpha"}, want: []Snapshot{beta, alpha}},
+		"unreadable":    {names: []string{"beta"}, errMsg: "unable to check Beta: HTTP 503"},
+		"all-ordered":   {names: []string{"all"}, want: []Snapshot{alpha, beta, gamma}},
+		"all-mixed":     {names: []string{"gamma", "all"}, want: []Snapshot{alpha, beta, gamma}},
+		"unknown":       {names: []string{"alpha", "delta"}, errMsg: `unknown service "delta"`},
+		"empty":         {errMsg: "services must name at least one service"},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			got, err := fakeChecker().check(context.Background(), tc.name)
+			got, err := fakeChecker().check(context.Background(), tc.names)
 			if tc.errMsg != "" {
 				require.EqualError(t, err, tc.errMsg)
 				return
@@ -74,14 +79,14 @@ func Test_checker_check_all_unreadable(t *testing.T) {
 		{name: "a", display: "A", check: fixed(Snapshot{}, errors.New("HTTP 503"))},
 		{name: "b", display: "B", check: fixed(Snapshot{}, errors.New("dial tcp: connection refused"))},
 	}}
-	_, err := c.check(context.Background(), "all")
+	_, err := c.check(context.Background(), []string{"all"})
 	require.EqualError(t, err, "unable to check any of the 2 services, first: A: HTTP 503")
 }
 
 func Test_checker_check_cancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := fakeChecker().check(ctx, "all")
+	_, err := fakeChecker().check(ctx, []string{"all"})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -104,7 +109,7 @@ func Test_checker_check_bounds_concurrency(t *testing.T) {
 		c.services = append(c.services, service{name: name, display: name, check: slow})
 	}
 
-	got, err := c.check(context.Background(), "all")
+	got, err := c.check(context.Background(), []string{"all"})
 	require.NoError(t, err)
 	require.Len(t, got, 8)
 	require.LessOrEqual(t, peak.Load(), int32(maxConcurrentChecks))

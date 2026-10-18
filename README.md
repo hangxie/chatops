@@ -298,7 +298,7 @@ nc -U /run/chatops/ops.sock                  # then talk to it, one message per 
 At `--log-level debug`, `serve` logs a `tool call requested` line with the arguments the model passed to each tool, up to 1 KiB, which shows which tool and inputs the model chose:
 
 ```text
-level=DEBUG msg="tool call requested" tool=status__service_status arguments="{\"service\": \"openai\"}"
+level=DEBUG msg="tool call requested" tool=status__service_status arguments="{\"services\": [\"openai\"]}"
 ```
 
 Turn it on only while troubleshooting.
