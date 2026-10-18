@@ -206,8 +206,9 @@ Failure handling:
 | A forced first round returns no tool calls | protocol error: the text is never posted, the turn fails with the usual apology, and there is no retry with `auto` |
 | The turn's snapshot has no MCP tools | no model call; the reply says no tools are available, not the off-topic decline |
 | A configured server is down when the model declines | the decline reply names the down servers, so an outage does not read as off-topic |
-| The model declines, by calling `decline` or in text, while a tool failure is unresolved (§5) | never posted as off-topic; the reply is the failure lines |
+| The model declines, by calling `decline` or writing the exact configured sentence, while a tool failure is unresolved (§5) | never posted as off-topic; the reply is the failure lines |
 | The model declines after every failure was resolved | the normal decline |
+| The model refuses in other words while a failure is unresolved | the text plus the failure lines; no fuzzy matching, since a false match would hide a real answer |
 
 A down server's tools stay in the snapshot, so a call to one fails as a tool error the model can report.
 
@@ -287,7 +288,7 @@ chatops/
 - **Phase 3 — Kubernetes:** read-only slice done: 34 tools across nodes, namespaces, workloads (deployment, statefulset, daemonset, replicaset, job, pod), services, storage (pv, pvc), configmaps, and events. Mutation waits for Phase 4. See [`mcp-k8s.md`](mcp-k8s.md).
 - **Phase 4 — policy and approval:** not started. Roles, rules, execution-time checks, suspended turns, Slack approval buttons; a startup warning is logged until policy exists, so until then deploy only read-only tools or fully trusted channels.
 - **Chatops-reported tool failures (§5):** done.
-- **Decline tool and forced first call (§7.1):** designed, not implemented.
+- **Decline tool and forced first call (§7.1):** done. `agent.require_tool_call` is the opt-out, and `agent.decline_reply` the fixed reply.
 - **Phase 5 — hardening:** metrics done (per-reply stats and Prometheus, see [`observability.md`](observability.md)); reconnect handling, structured audit events, and integration tests remain.
 
 ## 12. Testing strategy

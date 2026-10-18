@@ -86,6 +86,8 @@ Start from the annotated sample at [`package/systemd/config.yaml`](package/syste
 | `agent.max_concurrent_turns` | `4` | Agent turns (model and tool calls) running at once across all conversations; posting a reply does not count; turns within one conversation always run one at a time, each after the previous reply is posted |
 | `agent.max_pending_messages` | `64` | Accepted but unfinished messages across all conversations; more are refused as busy |
 | `agent.show_stats` | `false` | Append each turn's statistics to its reply, failed turns included: every model and tool step with duration, tokens, and result size, then the totals. See [`docs/observability.md`](docs/observability.md) |
+| `agent.require_tool_call` | `true` | Force a tool call on each turn's first model call (`tool_choice: required`), so the model cannot answer from memory; off-topic messages go to the built-in `decline` tool. A first call that still returns text fails the turn. Set `false` for endpoints that reject `required`, such as vLLM without `--tool-call-parser` |
+| `agent.decline_reply` | `I can only help with operations questions about the systems I monitor.` | Reply when the model declines a message, whether by calling `decline` or by writing this exact text. Must not be empty |
 | `metrics.listen` | (none) | `host:port`, such as `127.0.0.1:9464`, serving Prometheus metrics at `/metrics` and probes at `/healthz` and `/readyz`; unset disables it. See [Metrics](#metrics) and [Health checks](#health-checks) |
 
 About MCP servers:
@@ -171,6 +173,15 @@ Tool errors:
 - One line per failing call: the error's first line, cut to 200 characters. Error text can name internal hosts.
 - A failure is cleared only when the same tool with the same arguments later succeeds in the turn; a success on another namespace or target leaves it listed.
 - Server errors, lost connections, and timeouts are listed. Unknown tools and invalid arguments are the model's own mistakes, fed back to it, and are not listed.
+
+Declines and outages are kept apart:
+
+| Situation | Reply |
+|---|---|
+| The model declines | `agent.decline_reply`, plus `Unavailable tool servers: ...` when any MCP server is down |
+| The model declines while a tool failure is unresolved | only the tool errors, never the off-topic sentence |
+| The model refuses in its own words, such as `Sorry, I can only help...` | the text as written, with the tool errors appended; only the `decline` call or the exact `decline_reply` text counts as a decline |
+| No MCP tool is available at all | a "no tools are available" reply, without calling the model |
 
 | Backend | Reaches users through | Public endpoint |
 |---|---|---|

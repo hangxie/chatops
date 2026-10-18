@@ -115,7 +115,7 @@ Recorded from the agent's steps:
 ### Notes on the metrics
 
 - There is no separate answered or failed counter. The `_count` of `chatops_response_duration_seconds` by `outcome` counts them, and `_sum`/`_count` gives the average response time.
-- "Answered" means a final answer was produced and delivered, not that it was correct. A scope-gate decline counts as answered, since its text is indistinguishable from help without a structured signal from the model.
+- "Answered" means a final answer was produced and delivered, not that it was correct. A decline counts as answered; it shows as a `chatops.decline` tool step (server `chatops`, tool `decline`), so declines can be counted from the tool-call metrics. A decline dropped because the model also called other tools is only logged.
 - `chatops_response_duration_seconds` observes delivered replies only. An undelivered one counts in `chatops_reply_failures_total` instead; its turn's step metrics are still recorded.
 - `chatops_queue_wait_seconds` runs from receipt to taking a turn slot, so it includes waiting behind earlier messages of the same conversation.
 - A tool the model named but no server serves is labeled `(unknown)` for both `server` and `tool`, so model output never becomes a label.

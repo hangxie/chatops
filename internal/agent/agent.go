@@ -21,10 +21,11 @@ type Model interface {
 	Complete(ctx context.Context, req llm.Request) (llm.Response, error)
 }
 
-// Tools exposes the MCP tool catalog and executes calls.
+// Tools exposes the MCP tool catalog, executes calls, and reports which servers are down.
 type Tools interface {
 	Catalog() *mcp.Catalog
 	Call(ctx context.Context, tool mcp.Tool, args json.RawMessage) (mcp.Result, error)
+	Health() []mcp.ServerHealth
 }
 
 // Agent runs conversation turns against a model and a tool set.
@@ -46,7 +47,7 @@ type Turn struct {
 	Stats Stats
 }
 
-// New builds an agent. A nil logger uses slog.Default. limits.SystemPrompt must be non-empty; config validation enforces that.
+// New builds an agent; a nil logger uses slog.Default, and config validation ensures a prompt and a decline reply.
 func New(model Model, tools Tools, limits config.Agent, logger *slog.Logger) *Agent {
 	if logger == nil {
 		logger = slog.Default()
@@ -73,21 +74,29 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 	ctx, cancel := context.WithTimeoutCause(ctx, timeout, fmt.Errorf("turn exceeded %s: %w", timeout, context.DeadlineExceeded))
 	defer cancel()
 
+	userMessage := llm.Message{Role: llm.RoleUser, Content: input}
 	// One snapshot per turn: tool-list changes apply from the next turn.
 	catalog := a.tools.Catalog()
-	specs := toolSpecs(catalog)
+	if len(catalog.Tools()) == 0 {
+		turn.Reply, turn.Messages = noToolsReply, []llm.Message{userMessage}
+		return turn, nil
+	}
+	specs := append(toolSpecs(catalog), declineSpec)
 
 	messages := make([]llm.Message, 0, len(history)+2)
 	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: a.limits.SystemPrompt})
 	messages = append(messages, history...)
-	userMessage := llm.Message{Role: llm.RoleUser, Content: input}
 	messages = append(messages, userMessage)
 	steps := &turn.Stats.Steps
 	failures := newFailureLog()
 
 	for iteration := 1; ; iteration++ {
+		req := llm.Request{Messages: messages, Tools: specs}
+		if iteration == 1 && a.limits.RequireToolCall {
+			req.ToolChoice = llm.ToolChoiceRequired
+		}
 		start := time.Now()
-		resp, err := a.model.Complete(ctx, llm.Request{Messages: messages, Tools: specs})
+		resp, err := a.model.Complete(ctx, req)
 		step := modelStep(resp, err, time.Since(start))
 		// Dependencies may ignore ctx, so a late success must not count as an answer.
 		if ctx.Err() != nil {
@@ -101,8 +110,23 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 			return turn, fmt.Errorf("model: %w", err)
 		}
 		if len(resp.Message.ToolCalls) == 0 {
-			turn.Reply, turn.Messages = withFailures(resp.Message.Content, failures.unresolved()), []llm.Message{userMessage}
+			if req.ToolChoice == llm.ToolChoiceRequired {
+				(*steps)[len(*steps)-1].Outcome = OutcomeError
+				return turn, fmt.Errorf("model: %w", errNoToolCall)
+			}
+			turn.Reply, turn.Messages = a.answerReply(resp.Message.Content, failures), []llm.Message{userMessage}
 			return turn, nil
+		}
+		toolCalls, declined := splitDecline(resp.Message.ToolCalls)
+		if len(toolCalls) == 0 {
+			*steps = append(*steps, declineStep())
+			turn.Reply, turn.Messages = a.declineReply(failures), []llm.Message{userMessage}
+			return turn, nil
+		}
+		if declined {
+			// Dropped from the transcript too, since every call sent back to the model needs a result.
+			a.logger.Warn("decline dropped because the model also called other tools")
+			resp.Message.ToolCalls = toolCalls
 		}
 		if iteration >= a.limits.MaxIterations {
 			(*steps)[len(*steps)-1].Outcome = OutcomeStopped
@@ -120,20 +144,31 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 		}
 
 		messages = append(messages, resp.Message)
-		for _, call := range resp.Message.ToolCalls {
-			content, step, failure := a.runTool(ctx, catalog, call)
-			*steps = append(*steps, step)
-			if ctx.Err() != nil {
-				return turn, context.Cause(ctx)
-			}
-			if step.Outcome == OutcomeOK {
-				failures.succeed(call)
-			} else {
-				failures.fail(call, failureLine(step, failure))
-			}
-			messages = append(messages, llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: content})
+		results, err := a.runCalls(ctx, catalog, resp.Message.ToolCalls, failures, steps)
+		if err != nil {
+			return turn, err
 		}
+		messages = append(messages, results...)
 	}
+}
+
+// runCalls runs calls in order, recording each step and failure, and returns one tool message per call.
+func (a *Agent) runCalls(ctx context.Context, catalog *mcp.Catalog, calls []llm.ToolCall, failures *failureLog, steps *[]Step) ([]llm.Message, error) {
+	results := make([]llm.Message, 0, len(calls))
+	for _, call := range calls {
+		content, step, failure := a.runTool(ctx, catalog, call)
+		*steps = append(*steps, step)
+		if ctx.Err() != nil {
+			return nil, context.Cause(ctx)
+		}
+		if step.Outcome == OutcomeOK {
+			failures.succeed(call)
+		} else {
+			failures.fail(call, failureLine(step, failure))
+		}
+		results = append(results, llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: content})
+	}
+	return results, nil
 }
 
 func (a *Agent) logStats(stats Stats) {

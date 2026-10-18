@@ -224,6 +224,9 @@ func validateAgent(agent Agent, add addFunc) {
 	if strings.TrimSpace(agent.SystemPrompt) == "" {
 		add("agent.system_prompt", "required")
 	}
+	if strings.TrimSpace(agent.DeclineReply) == "" {
+		add("agent.decline_reply", "must not be empty")
+	}
 	positive := []struct {
 		field string
 		ok    bool

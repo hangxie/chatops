@@ -171,6 +171,7 @@ func Test_Config_Validate(t *testing.T) {
 			},
 			errs: []string{
 				"agent.system_prompt: required",
+				"agent.decline_reply: must not be empty",
 				"agent.max_iterations: must be positive",
 				"agent.turn_timeout: must be positive",
 				"agent.tool_timeout: must be positive",
@@ -182,6 +183,7 @@ func Test_Config_Validate(t *testing.T) {
 			},
 		},
 		"agent-empty-prompt":     {mutate: func(c *Config) { c.Agent.SystemPrompt = "   " }, errs: []string{"agent.system_prompt: required"}},
+		"agent-empty-decline":    {mutate: func(c *Config) { c.Agent.DeclineReply = " " }, errs: []string{"agent.decline_reply: must not be empty"}},
 		"history-turns-zero":     {mutate: func(c *Config) { c.Agent.HistoryTurns = 0 }},
 		"history-turns-positive": {mutate: func(c *Config) { c.Agent.HistoryTurns = 5 }},
 		"tool-timeout-exceeds-turn": {
