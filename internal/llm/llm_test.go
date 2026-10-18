@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -52,12 +53,13 @@ func Test_New(t *testing.T) {
 }
 
 func Test_Client_Complete(t *testing.T) {
-	var gotPath, gotAuth, gotContentType string
+	var gotPath, gotAuth, gotContentType, gotAccept string
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotAuth = r.Header.Get("Authorization")
 		gotContentType = r.Header.Get("Content-Type")
+		gotAccept = r.Header.Get("Accept")
 		data, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(data, &gotBody)
 		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"hi"}}],"usage":{"prompt_tokens":7,"completion_tokens":2}}`)
@@ -74,8 +76,11 @@ func Test_Client_Complete(t *testing.T) {
 	require.Equal(t, "/v1/chat/completions", gotPath)
 	require.Equal(t, "Bearer k", gotAuth)
 	require.Equal(t, "application/json", gotContentType)
+	require.Equal(t, "application/json", gotAccept)
 	require.Equal(t, "m", gotBody["model"])
 	require.Equal(t, "none", gotBody["reasoning_effort"])
+	_, streamed := gotBody["stream"]
+	require.False(t, streamed)
 }
 
 func Test_Client_Complete_sends_sampling(t *testing.T) {
@@ -226,4 +231,66 @@ func Test_Client_Complete_cancelled(t *testing.T) {
 	cancel()
 	_, err = client.Complete(ctx, Request{})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func Test_Client_Complete_stream(t *testing.T) {
+	var gotAccept string
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAccept = r.Header.Get("Accept")
+		data, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(data, &gotBody)
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\n"+
+			"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2}}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	client, err := New(config.LLM{BaseURL: server.URL, Model: "m", Stream: true}, server.Client())
+	require.NoError(t, err)
+	resp, err := client.Complete(context.Background(), Request{Messages: []Message{{Role: RoleUser, Content: "hello"}}})
+	require.NoError(t, err)
+	require.Equal(t, Response{Message: Message{Role: RoleAssistant, Content: "hi"}, Usage: &Usage{PromptTokens: 7, CompletionTokens: 2}}, resp)
+	require.Equal(t, "text/event-stream, application/json", gotAccept)
+	require.Equal(t, true, gotBody["stream"])
+	require.Equal(t, map[string]any{"include_usage": true}, gotBody["stream_options"])
+}
+
+func Test_Client_Complete_stream_error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"error\":{\"message\":\"boom\"}}\n\n")
+	}))
+	defer server.Close()
+
+	client, err := New(config.LLM{BaseURL: server.URL, Model: "m", Stream: true}, server.Client())
+	require.NoError(t, err)
+	_, err = client.Complete(context.Background(), Request{Messages: []Message{{Role: RoleUser, Content: "x"}}})
+	require.EqualError(t, err, "llm: stream error: boom")
+}
+
+// A proxy only cancels upstream generation when it sees the client go away mid-stream.
+func Test_Client_Complete_deadline_reaches_server(t *testing.T) {
+	serverSawCancel := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"thinking\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(serverSawCancel)
+	}))
+	defer server.Close()
+
+	client, err := New(config.LLM{BaseURL: server.URL, Model: "m", Stream: true}, server.Client())
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err = client.Complete(ctx, Request{Messages: []Message{{Role: RoleUser, Content: "x"}}})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	select {
+	case <-serverSawCancel:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server never saw the request cancelled")
+	}
 }

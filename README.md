@@ -70,6 +70,7 @@ Start from the annotated sample at [`package/systemd/config.yaml`](package/syste
 | `llm.model` | (required) | Model name sent with each request |
 | `llm.api_key_env` | (none) | Environment variable holding the API key, sent as a bearer token; requires an `https` `base_url` unless the host is loopback |
 | `llm.disable_thinking` | `false` | Send `reasoning_effort: "none"` and `chat_template_kwargs: {"enable_thinking": false}`; the packaged sample turns it on; leave off for endpoints that reject unknown fields |
+| `llm.stream` | `true` | Stream completions, so a timed-out turn stops generation even behind proxies such as LiteLLM. Set `false` for endpoints that reject `stream_options` or mishandle streamed tool calls |
 | `llm.sampling.*` | (unset) | Optional generation parameters; see [Sampling](#sampling) |
 | `mcp.servers.<id>.transport` | (required) | `stdio` or `streamable-http` |
 | `mcp.servers.<id>.command`, `args` | | stdio only: the server process to launch |

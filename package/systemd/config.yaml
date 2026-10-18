@@ -47,6 +47,10 @@ llm:
   # enabled. Some endpoints, such as Cloudflare Workers AI, reject the extra
   # request fields and need disable_thinking: false.
   disable_thinking: true
+  # Streaming lets a timed-out turn stop generation: proxies such as LiteLLM
+  # cancel the upstream request only when a streaming client disconnects. Set
+  # false for endpoints that reject stream_options or garble streamed tool calls.
+  stream: true
   sampling:
     # Generation parameters sent with every completion; omit any one to use the
     # endpoint's own default. temperature 0 is greedy and deterministic, the most

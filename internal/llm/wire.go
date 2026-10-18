@@ -13,9 +13,12 @@ import (
 // Chat Completions wire types, limited to the fields chatops uses.
 
 type wireRequest struct {
-	Model    string        `json:"model"`
-	Messages []wireMessage `json:"messages"`
-	Tools    []wireTool    `json:"tools,omitempty"`
+	Model string `json:"model"`
+	// Proxies such as LiteLLM cancel upstream generation only when a streaming client disconnects.
+	Stream        bool               `json:"stream,omitempty"`
+	StreamOptions *wireStreamOptions `json:"stream_options,omitempty"`
+	Messages      []wireMessage      `json:"messages"`
+	Tools         []wireTool         `json:"tools,omitempty"`
 	// ToolChoice is omitted for the endpoint default; endpoints reject it without tools.
 	ToolChoice string `json:"tool_choice,omitempty"`
 	// ReasoningEffort "none" disables thinking on OpenAI, Gemini, and Ollama.
@@ -33,6 +36,10 @@ type wireRequest struct {
 	RepetitionPenalty *float64 `json:"repetition_penalty,omitempty"`
 	Seed              *int     `json:"seed,omitempty"`
 	Stop              []string `json:"stop,omitempty"`
+}
+
+type wireStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type wireMessage struct {
@@ -67,15 +74,19 @@ type wireFunctionCall struct {
 }
 
 type wireResponse struct {
-	Choices []struct {
-		Message wireMessage `json:"message"`
-		// FinishReason is optional because some local servers omit it.
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-	} `json:"usage"`
+	Choices []wireChoice `json:"choices"`
+	Usage   *wireUsage   `json:"usage"`
+}
+
+type wireChoice struct {
+	Message wireMessage `json:"message"`
+	// FinishReason is optional because some local servers omit it.
+	FinishReason string `json:"finish_reason"`
+}
+
+type wireUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
 }
 
 func (r wireResponse) usage() *Usage {
@@ -88,8 +99,12 @@ func (r wireResponse) usage() *Usage {
 // thinkBlock matches a leading reasoning block some servers leave even with thinking disabled.
 var thinkBlock = regexp.MustCompile(`(?s)^\s*<think>.*?</think>`)
 
-func toWireRequest(model string, disableThinking bool, sampling config.Sampling, req Request) wireRequest {
-	wire := wireRequest{Model: model, Messages: make([]wireMessage, 0, len(req.Messages))}
+func toWireRequest(cfg config.LLM, req Request) wireRequest {
+	wire := wireRequest{Model: cfg.Model, Messages: make([]wireMessage, 0, len(req.Messages))}
+	if cfg.Stream {
+		wire.Stream = true
+		wire.StreamOptions = &wireStreamOptions{IncludeUsage: true}
+	}
 	for _, msg := range req.Messages {
 		wire.Messages = append(wire.Messages, toWireMessage(msg))
 	}
@@ -103,10 +118,11 @@ func toWireRequest(model string, disableThinking bool, sampling config.Sampling,
 		wire.ToolChoice = req.ToolChoice
 	}
 	// Each endpoint honors a different switch, so send both; opt-in since strict endpoints reject them.
-	if disableThinking {
+	if cfg.DisableThinking {
 		wire.ReasoningEffort = "none"
 		wire.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
 	}
+	sampling := cfg.Sampling
 	wire.Temperature = sampling.Temperature
 	wire.TopP = sampling.TopP
 	wire.TopK = sampling.TopK

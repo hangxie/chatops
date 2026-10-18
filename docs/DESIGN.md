@@ -47,7 +47,7 @@ The daemon talks to `chatops-mcp` exactly as it talks to any third-party MCP ser
 - Production chat integrations beyond Slack and Discord for now; the `stdio` terminal is for development only, and the `unix` socket is for local access ([`chat.md`](chat.md) lists planned backends).
 - Unattended production mutations by default.
 - Durable conversation storage; history is in memory and lost on restart.
-- Model response streaming; replies are posted as final threaded messages.
+- Streaming replies to chat; replies are posted as final threaded messages.
 - MCP capabilities beyond tools (prompts, resources, elicitation, sampling).
 
 ## 4. High-level architecture
@@ -306,7 +306,7 @@ chatops/
 3. The first real integration is read-only Kubernetes via the built-in `chatops-mcp`.
 4. Trust model: static Slack user ID to roles map, with per-tool rules.
 5. Approval happens in Slack via buttons, by users holding the rule's approver role; self-approval is off by default.
-6. No streaming; final replies in thread.
+6. Model responses are streamed by default so a timed-out turn stops generation behind proxies such as LiteLLM; chat still gets final replies in thread.
 7. First deployment target is systemd using the rpm/deb packaging covering both binaries.
 8. `chatops-mcp serve` runs one tool group per process (`--tool`).
 9. A tool group's `--config` is a directory whose `*.yaml` files merge in file name order by one shared rule (mappings by key, lists appended, later scalars win, `null` ignored). Local settings live in their own file and never require editing a packaged one.

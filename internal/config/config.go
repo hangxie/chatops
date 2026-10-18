@@ -71,8 +71,10 @@ type LLM struct {
 	Model     string `yaml:"model"`
 	APIKeyEnv string `yaml:"api_key_env"`
 	// DisableThinking stops small reasoning models from spending the budget on thinking.
-	DisableThinking bool     `yaml:"disable_thinking"`
-	Sampling        Sampling `yaml:"sampling"`
+	DisableThinking bool `yaml:"disable_thinking"`
+	// Stream lets a proxy see a timed-out request disconnect and cancel generation upstream.
+	Stream   bool     `yaml:"stream"`
+	Sampling Sampling `yaml:"sampling"`
 }
 
 // Sampling holds optional generation parameters; a nil field is omitted so the endpoint default applies.
@@ -164,7 +166,7 @@ func Load(path string) (*Config, error) {
 
 // Parse decodes, defaults, and validates; unknown fields are rejected so typos are not ignored.
 func Parse(data []byte) (*Config, error) {
-	cfg := Config{Agent: defaultAgent()}
+	cfg := Config{LLM: LLM{Stream: true}, Agent: defaultAgent()}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	err := decoder.Decode(&cfg)
