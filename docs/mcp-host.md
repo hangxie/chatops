@@ -16,6 +16,8 @@ It complements [`status`](mcp-status.md), which checks the services on those hos
 
 One tool runs every check, rather than one tool per check: users ask about the host, and a small model answers best from one call.
 
+The description says the tool checks the machine only, not what runs on it, and never names chatops. In the model check, qwen-3.5-4b sent "is the chat bot healthy?" and "is llama.cpp on media running?" to `host_status`, probably because the first matched "the ChatOps server" in the old description and the second the host name.
+
 ## Only configured hosts
 
 The tool never takes a free-form address. A bot that pings any name a user types is a network scanner for everyone in the channel, reaching hosts behind its own firewall. Hosts come from the `--config` directory, as `status` services do.

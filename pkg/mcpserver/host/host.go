@@ -66,7 +66,7 @@ func register(server *mcp.Server, c *checker, choices string) {
 	openWorld := true
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "host_status",
-		Description: "Report whether hosts are reachable from the ChatOps server: resolve each name, ping it, and read its SSH identification. Results state what was observed from here; unreachable means no probe answered, not that the machine is off. Use hosts [\"all\"] to check every host. Only the listed hosts are covered: for any other host or address, do not call this tool; say it is not covered.",
+		Description: "Report whether machines are reachable over the network from where chatops-mcp runs: resolve each name, ping it, and read its SSH identification. This checks the machine only, not the applications or services on it. Results state what was observed from here; unreachable means no probe answered, not that the machine is off. Use hosts [\"all\"] to check every host. Only the listed hosts are covered: for any other host or address, do not call this tool; say it is not covered.",
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{

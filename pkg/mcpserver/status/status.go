@@ -53,7 +53,7 @@ func register(server *mcp.Server, c *checker) {
 	openWorld := true
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "service_status",
-		Description: "Report the current status of a service, from its vendor's status page or its own health endpoint, including active incidents. Use service \"all\" to check every service. Only the listed services are covered: for any other service, do not call this tool; say it is not covered.",
+		Description: "Report the current status of a service or application, from its vendor's status page or, for a self-hosted one, its health endpoint, including active incidents. Use service \"all\" to check every service. Only the listed services are covered: for any other service, do not call this tool; say it is not covered.",
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
