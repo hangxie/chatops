@@ -29,7 +29,7 @@ type fakeModel struct {
 
 func (m *fakeModel) Complete(ctx context.Context, req llm.Request) (llm.Response, error) {
 	m.mu.Lock()
-	m.requests = append(m.requests, llm.Request{Messages: slices.Clone(req.Messages), Tools: slices.Clone(req.Tools)})
+	m.requests = append(m.requests, llm.Request{Messages: slices.Clone(req.Messages), Tools: slices.Clone(req.Tools), ToolChoice: req.ToolChoice})
 	i := len(m.requests) - 1
 	m.mu.Unlock()
 	if i >= len(m.responses) {
@@ -55,16 +55,19 @@ type toolCallRecord struct {
 	args string
 }
 
-// fakeTools serves a catalog of SDK tool definitions and answers calls with handle.
+// fakeTools serves a catalog of SDK tool definitions, answers calls with handle, and reports health.
 type fakeTools struct {
 	catalog *mcp.Catalog
 	handle  func(ctx context.Context, tool mcp.Tool, args json.RawMessage) (mcp.Result, error)
+	health  []mcp.ServerHealth
 
 	mu    sync.Mutex
 	calls []toolCallRecord
 }
 
 func (f *fakeTools) Catalog() *mcp.Catalog { return f.catalog }
+
+func (f *fakeTools) Health() []mcp.ServerHealth { return f.health }
 
 func (f *fakeTools) Call(ctx context.Context, tool mcp.Tool, args json.RawMessage) (mcp.Result, error) {
 	f.mu.Lock()
@@ -94,11 +97,15 @@ func pong(context.Context, mcp.Tool, json.RawMessage) (mcp.Result, error) {
 	return mcp.Result{Text: "pong"}, nil
 }
 
-const testPrompt = "You are a test assistant."
+const (
+	testPrompt  = "You are a test assistant."
+	testDecline = "Off-topic."
+)
 
 func testLimits() config.Agent {
 	return config.Agent{
 		SystemPrompt:       testPrompt,
+		DeclineReply:       testDecline,
 		MaxIterations:      4,
 		TurnTimeout:        5 * time.Second,
 		ToolTimeout:        time.Second,
@@ -131,7 +138,8 @@ func Test_Agent_Run_plain_reply(t *testing.T) {
 	require.Equal(t, llm.Message{Role: llm.RoleSystem, Content: testPrompt}, req.Messages[0])
 	require.Equal(t, history, req.Messages[1:3])
 	require.Equal(t, llm.Message{Role: llm.RoleUser, Content: "hi"}, req.Messages[3])
-	require.Equal(t, []string{"builtin__get", "builtin__ping"}, specNames(req.Tools))
+	require.Equal(t, []string{"builtin__get", "builtin__ping", "decline"}, specNames(req.Tools))
+	require.Empty(t, req.ToolChoice)
 	require.Equal(t, "Reply pong.", req.Tools[1].Description)
 	require.JSONEq(t, `{"type":"object","additionalProperties":false}`, string(req.Tools[1].Parameters))
 	require.Empty(t, tools.calls)
@@ -440,13 +448,14 @@ func Test_Agent_Run_tool_output_stays_in_tool_message(t *testing.T) {
 }
 
 func Test_Agent_Run_empty_catalog(t *testing.T) {
-	model := &fakeModel{responses: []func(context.Context) (llm.Response, error){reply("no tools here")}}
-	tools := &fakeTools{}
-
-	turn, err := New(model, tools, testLimits(), nil).Run(context.Background(), nil, "x")
+	// An empty catalog is an outage, answered without a model call rather than as an off-topic decline.
+	model := &fakeModel{}
+	turn, err := New(model, &fakeTools{}, testLimits(), nil).Run(context.Background(), nil, "x")
 	require.NoError(t, err)
-	require.Equal(t, "no tools here", turn.Reply)
-	require.Empty(t, model.requests[0].Tools)
+	require.Equal(t, noToolsReply, turn.Reply)
+	require.Equal(t, []llm.Message{{Role: llm.RoleUser, Content: "x"}}, turn.Messages)
+	require.Empty(t, model.requests)
+	require.Equal(t, OutcomeAnswered, turn.Stats.Outcome)
 }
 
 func Test_Agent_Run_system_prompt(t *testing.T) {

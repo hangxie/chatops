@@ -47,6 +47,8 @@ agent:
   max_concurrent_turns: 2
   max_pending_messages: 16
   show_stats: true
+  require_tool_call: false
+  decline_reply: "Out of scope."
 metrics:
   listen: 127.0.0.1:9464
 `
@@ -87,6 +89,8 @@ func Test_Parse_full(t *testing.T) {
 			MaxConcurrentTurns: 2,
 			MaxPendingMessages: 16,
 			ShowStats:          true,
+			RequireToolCall:    false,
+			DeclineReply:       "Out of scope.",
 		},
 		Metrics: Metrics{Listen: "127.0.0.1:9464"},
 	}, cfg)
@@ -108,6 +112,8 @@ func Test_Parse_defaults(t *testing.T) {
 		HistoryTTL:         24 * time.Hour,
 		MaxConcurrentTurns: 4,
 		MaxPendingMessages: 64,
+		RequireToolCall:    true,
+		DeclineReply:       DefaultDeclineReply,
 	}, cfg.Agent)
 	require.Empty(t, cfg.MCP.Servers)
 }
@@ -227,7 +233,7 @@ func Test_Load_packaged_sample_agent_defaults(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "package", "systemd", "config.yaml"))
 	require.NoError(t, err)
 	// Uncommenting the agent limits shown with their defaults must not change the parsed config.
-	uncommented := regexp.MustCompile(`(?m)^  # ((max_|turn_|tool_|history_ttl)[a-z_]*:)`).ReplaceAll(data, []byte("  $1"))
+	uncommented := regexp.MustCompile(`(?m)^  # ((max_|turn_|tool_|history_ttl|require_tool_call|decline_reply)[a-z_]*:)`).ReplaceAll(data, []byte("  $1"))
 	require.NotEqual(t, data, uncommented)
 
 	cfg, err := Parse(uncommented)

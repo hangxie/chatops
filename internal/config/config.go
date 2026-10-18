@@ -129,7 +129,14 @@ type Agent struct {
 	MaxPendingMessages int `yaml:"max_pending_messages"`
 	// ShowStats appends each turn's step timings, tokens, and sizes to its reply.
 	ShowStats bool `yaml:"show_stats"`
+	// RequireToolCall forces a tool call, the built-in decline included, on each turn's first model call.
+	RequireToolCall bool `yaml:"require_tool_call"`
+	// DeclineReply is posted when the model declines a message as off-topic.
+	DeclineReply string `yaml:"decline_reply"`
 }
+
+// DefaultDeclineReply is the off-topic reply when agent.decline_reply is unset.
+const DefaultDeclineReply = "I can only help with operations questions about the systems I monitor."
 
 func defaultAgent() Agent {
 	return Agent{
@@ -141,6 +148,8 @@ func defaultAgent() Agent {
 		HistoryTTL:         24 * time.Hour,
 		MaxConcurrentTurns: 4,
 		MaxPendingMessages: 64,
+		RequireToolCall:    true,
+		DeclineReply:       DefaultDeclineReply,
 	}
 }
 
