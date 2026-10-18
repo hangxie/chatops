@@ -31,6 +31,7 @@ func Test_toWireRequest(t *testing.T) {
 		"plain": {
 			want: `{
 				"model": "m",
+				"stream": true, "stream_options": {"include_usage": true},
 				"messages": [
 					{"role":"system","content":"be brief"},
 					{"role":"user","content":"ping it"},
@@ -45,6 +46,7 @@ func Test_toWireRequest(t *testing.T) {
 			disableThinking: true,
 			want: `{
 				"model": "m",
+				"stream": true, "stream_options": {"include_usage": true},
 				"messages": [
 					{"role":"system","content":"be brief"},
 					{"role":"user","content":"ping it"},
@@ -72,6 +74,7 @@ func Test_toWireRequest(t *testing.T) {
 			},
 			want: `{
 				"model": "m",
+				"stream": true, "stream_options": {"include_usage": true},
 				"messages": [
 					{"role":"system","content":"be brief"},
 					{"role":"user","content":"ping it"},
@@ -89,7 +92,7 @@ func Test_toWireRequest(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			encoded, err := json.Marshal(toWireRequest("m", tc.disableThinking, tc.sampling, req))
+			encoded, err := json.Marshal(toWireRequest(config.LLM{Model: "m", DisableThinking: tc.disableThinking, Stream: true, Sampling: tc.sampling}, req))
 			require.NoError(t, err)
 			require.JSONEq(t, tc.want, string(encoded))
 		})
@@ -99,7 +102,15 @@ func Test_toWireRequest(t *testing.T) {
 func Test_toWireRequest_no_tools(t *testing.T) {
 	// tool_choice is dropped without tools, which endpoints would reject.
 	req := Request{Messages: []Message{{Role: RoleUser, Content: "hi"}}, ToolChoice: ToolChoiceRequired}
-	encoded, err := json.Marshal(toWireRequest("m", false, config.Sampling{}, req))
+	encoded, err := json.Marshal(toWireRequest(config.LLM{Model: "m", Stream: true}, req))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"model":"m","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`, string(encoded))
+}
+
+func Test_toWireRequest_stream_off(t *testing.T) {
+	// Both fields are omitted, since endpoints that mishandle streaming may also reject stream_options.
+	req := Request{Messages: []Message{{Role: RoleUser, Content: "hi"}}}
+	encoded, err := json.Marshal(toWireRequest(config.LLM{Model: "m"}, req))
 	require.NoError(t, err)
 	require.JSONEq(t, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`, string(encoded))
 }
@@ -115,7 +126,7 @@ func Test_toWireRequest_tool_choice(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			encoded, err := json.Marshal(toWireRequest("m", false, config.Sampling{}, Request{Tools: tools, ToolChoice: tc.choice}))
+			encoded, err := json.Marshal(toWireRequest(config.LLM{Model: "m"}, Request{Tools: tools, ToolChoice: tc.choice}))
 			require.NoError(t, err)
 			var got map[string]any
 			require.NoError(t, json.Unmarshal(encoded, &got))

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -79,12 +80,10 @@ const maxResponseBytes = 1 << 20
 
 // Client is an OpenAI-compatible Chat Completions client.
 type Client struct {
-	httpClient      *http.Client
-	baseURL         string
-	apiKey          string
-	model           string
-	disableThinking bool
-	sampling        config.Sampling
+	httpClient *http.Client
+	baseURL    string
+	apiKey     string
+	cfg        config.LLM
 }
 
 // New builds a client from config; a nil httpClient uses a default, and deadlines come from ctx.
@@ -106,18 +105,16 @@ func New(cfg config.LLM, httpClient *http.Client) (*Client, error) {
 		httpClient = &withoutRedirects
 	}
 	return &Client{
-		httpClient:      httpClient,
-		baseURL:         baseURL,
-		apiKey:          apiKey,
-		model:           cfg.Model,
-		disableThinking: cfg.DisableThinking,
-		sampling:        cfg.Sampling,
+		httpClient: httpClient,
+		baseURL:    baseURL,
+		apiKey:     apiKey,
+		cfg:        cfg,
 	}, nil
 }
 
 // Complete sends req and returns the model's assistant message.
 func (c *Client) Complete(ctx context.Context, req Request) (_ Response, err error) {
-	body, err := json.Marshal(toWireRequest(c.model, c.disableThinking, c.sampling, req))
+	body, err := json.Marshal(toWireRequest(c.cfg, req))
 	if err != nil {
 		return Response{}, fmt.Errorf("llm: encode request: %w", err)
 	}
@@ -127,6 +124,9 @@ func (c *Client) Complete(ctx context.Context, req Request) (_ Response, err err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
+	if c.cfg.Stream {
+		httpReq.Header.Set("Accept", "text/event-stream, application/json")
+	}
 	if c.apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
@@ -145,22 +145,38 @@ func (c *Client) Complete(ctx context.Context, req Request) (_ Response, err err
 		return Response{}, fmt.Errorf("llm: completion HTTP %s: %s", httpResp.Status, bytes.TrimSpace(snippet))
 	}
 
-	data, err := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBytes+1))
+	wire, err := readResponse(httpResp)
 	if err != nil {
-		return Response{}, fmt.Errorf("llm: read completion response: %w", err)
-	}
-	if len(data) > maxResponseBytes {
-		return Response{}, fmt.Errorf("llm: completion response exceeds %d bytes", maxResponseBytes)
-	}
-	var wire wireResponse
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return Response{}, fmt.Errorf("llm: decode completion response: %w", err)
+		// A deadline hit mid-stream surfaces as a read error; report the cause.
+		if ctx.Err() != nil {
+			return Response{}, fmt.Errorf("llm: read completion response: %w", context.Cause(ctx))
+		}
+		return Response{}, fmt.Errorf("llm: %w", err)
 	}
 	msg, err := fromWireResponse(wire)
 	if err != nil {
 		return Response{}, fmt.Errorf("llm: %w", err)
 	}
 	return Response{Message: msg, Usage: wire.usage()}, nil
+}
+
+// readResponse parses a stream, or a plain JSON body from an endpoint that ignores stream.
+func readResponse(httpResp *http.Response) (wireResponse, error) {
+	if mediaType, _, _ := mime.ParseMediaType(httpResp.Header.Get("Content-Type")); mediaType == "text/event-stream" {
+		return readStream(httpResp.Body)
+	}
+	data, err := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBytes+1))
+	if err != nil {
+		return wireResponse{}, fmt.Errorf("read completion response: %w", err)
+	}
+	if len(data) > maxResponseBytes {
+		return wireResponse{}, fmt.Errorf("completion response exceeds %d bytes", maxResponseBytes)
+	}
+	var wire wireResponse
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return wireResponse{}, fmt.Errorf("decode completion response: %w", err)
+	}
+	return wire, nil
 }
 
 // refuseRedirect keeps the API key from reaching another origin or a downgraded scheme.

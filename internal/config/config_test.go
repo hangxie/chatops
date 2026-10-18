@@ -63,6 +63,7 @@ func Test_Parse_full(t *testing.T) {
 			Model:           "qwen3-0b6",
 			APIKeyEnv:       "LLM_API_KEY",
 			DisableThinking: true,
+			Stream:          true,
 		},
 		MCP: MCP{Servers: map[string]Server{
 			"builtin": {
@@ -116,6 +117,24 @@ func Test_Parse_defaults(t *testing.T) {
 		DeclineReply:       DefaultDeclineReply,
 	}, cfg.Agent)
 	require.Empty(t, cfg.MCP.Servers)
+}
+
+func Test_Parse_stream(t *testing.T) {
+	tests := map[string]struct {
+		yaml string
+		want bool
+	}{
+		"default": {yaml: "", want: true},
+		"off":     {yaml: "  stream: false\n", want: false},
+		"on":      {yaml: "  stream: true\n", want: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := Parse([]byte(minimalChat + "llm:\n  base_url: http://localhost:8080/v1\n  model: m\n" + tc.yaml + "agent:\n  system_prompt: p\n"))
+			require.NoError(t, err)
+			require.Equal(t, tc.want, cfg.LLM.Stream)
+		})
+	}
 }
 
 func Test_Parse_sampling(t *testing.T) {
@@ -222,6 +241,7 @@ func Test_Load_packaged_sample(t *testing.T) {
 	require.Contains(t, cfg.Agent.SystemPrompt, "Answer only the latest user request")
 	require.Contains(t, cfg.Agent.SystemPrompt, "/no_think")
 	require.True(t, cfg.LLM.DisableThinking)
+	require.True(t, cfg.LLM.Stream)
 	require.Equal(t, 0, cfg.Agent.HistoryTurns)
 	require.NotNil(t, cfg.LLM.Sampling.Temperature)
 	require.Equal(t, 0.0, *cfg.LLM.Sampling.Temperature)
