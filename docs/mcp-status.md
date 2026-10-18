@@ -9,8 +9,8 @@ It gives the bot a useful read-only tool that needs only outbound HTTP(S) and no
 
 ## Tool: `service_status`
 
-- Argument: `service` (required), one configured service name, or `all` for every one.
-- The argument is a JSON Schema enum of the configured names, so a small model can map "is gmail down?" to the right service. A service not in the enum is reported as not covered rather than guessed at.
+- Argument: `services` (required), a non-empty list of configured service names, following the target-list convention of [`mcp-k8s.md`](mcp-k8s.md#targets). "Are Harbor and the media LLM up?" is one call, and `all` checks every service.
+- Item names are a JSON Schema enum of the configured names, so a small model can map "is gmail down?" to the right service. A service not in the enum is reported as not covered rather than guessed at.
 - Result text: one line per service, `[HEALTH] <display> - <summary>`, with each active incident indented beneath it (name, status, URL). Structured output carries the same snapshots.
 - Annotations: `ReadOnlyHint: true`, `IdempotentHint: true`, `OpenWorldHint: true` (it reaches external pages).
 
@@ -26,8 +26,8 @@ A vendor page that cannot be read is a tool failure only when nothing was read:
 | Request | Unreadable pages | Result |
 |---|---|---|
 | one service | its page | tool error `unable to check <display>: <error>`, which chatops lists in the reply |
-| `all` | every page | tool error naming the count and the first error; likely chatops's own network |
-| `all` | some pages | `UNKNOWN` rows; a tool error would make the model retry and lose the readable rows |
+| several, or `all` | every page | tool error naming the count and the first error; likely chatops's own network |
+| several, or `all` | some pages | `UNKNOWN` rows; a tool error would make the model retry and lose the readable rows |
 
 No service, URL, or product name is hardcoded. The code knows only page formats; every service comes from the config directory, and the tool description tells the model that only the listed services are covered.
 

@@ -81,15 +81,32 @@ func newChecker(cfg Config) (*checker, error) {
 	return c, nil
 }
 
-// check checks the named service, or every one when name is "all"; it fails only if no page could be read.
-func (c *checker) check(ctx context.Context, name string) ([]Snapshot, error) {
-	targets := c.services
-	if name != allServices {
+// targets maps the requested names to services in request order, dropping repeats; "all" means every service.
+func (c *checker) targets(names []string) ([]service, error) {
+	if len(names) == 0 {
+		return nil, errors.New("services must name at least one service")
+	}
+	if slices.Contains(names, allServices) {
+		return c.services, nil
+	}
+	var targets []service
+	for _, name := range names {
 		i := slices.IndexFunc(c.services, func(s service) bool { return s.name == name })
 		if i < 0 {
 			return nil, fmt.Errorf("unknown service %q", name)
 		}
-		targets = c.services[i : i+1]
+		if !slices.ContainsFunc(targets, func(s service) bool { return s.name == name }) {
+			targets = append(targets, c.services[i])
+		}
+	}
+	return targets, nil
+}
+
+// check checks the named services; it fails only if no page could be read.
+func (c *checker) check(ctx context.Context, names []string) ([]Snapshot, error) {
+	targets, err := c.targets(names)
+	if err != nil {
+		return nil, err
 	}
 	snapshots := make([]Snapshot, len(targets))
 	errs := make([]error, len(targets))
