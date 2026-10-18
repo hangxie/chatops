@@ -81,7 +81,7 @@ func newChecker(cfg Config) (*checker, error) {
 	return c, nil
 }
 
-// check checks the named service, or every service concurrently when name is "all".
+// check checks the named service, or every one when name is "all"; it fails only if no page could be read.
 func (c *checker) check(ctx context.Context, name string) ([]Snapshot, error) {
 	targets := c.services
 	if name != allServices {
@@ -92,30 +92,37 @@ func (c *checker) check(ctx context.Context, name string) ([]Snapshot, error) {
 		targets = c.services[i : i+1]
 	}
 	snapshots := make([]Snapshot, len(targets))
+	errs := make([]error, len(targets))
 	slots := make(chan struct{}, maxConcurrentChecks)
 	var wg sync.WaitGroup
 	for i, s := range targets {
 		wg.Go(func() {
 			slots <- struct{}{}
 			defer func() { <-slots }()
-			snapshots[i] = c.checkOne(ctx, s)
+			snapshots[i], errs[i] = c.checkOne(ctx, s)
 		})
 	}
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return snapshots, nil
+	if slices.ContainsFunc(errs, func(err error) bool { return err == nil }) {
+		return snapshots, nil
+	}
+	if len(targets) == 1 {
+		return nil, fmt.Errorf("unable to check %s: %w", targets[0].display, errs[0])
+	}
+	return nil, fmt.Errorf("unable to check any of the %d services, first: %s: %w", len(targets), targets[0].display, errs[0])
 }
 
-// checkOne reports a status page it cannot read as unknown health rather than failing the call.
-func (c *checker) checkOne(ctx context.Context, s service) Snapshot {
+// checkOne reports a status page it cannot read as unknown health, returning the error alongside.
+func (c *checker) checkOne(ctx context.Context, s service) (Snapshot, error) {
 	snapshot, err := s.check(ctx, c.client)
 	if err != nil {
 		snapshot = Snapshot{Health: HealthUnknown, Summary: "unable to check: " + err.Error()}
 	}
 	snapshot.Service = s.display
-	return snapshot
+	return snapshot, err
 }
 
 func fetchJSON(ctx context.Context, client *http.Client, endpoint string, destination any) (err error) {

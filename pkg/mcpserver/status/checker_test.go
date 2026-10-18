@@ -51,7 +51,7 @@ func Test_checker_check(t *testing.T) {
 		errMsg string
 	}{
 		"one":         {name: "alpha", want: []Snapshot{alpha}},
-		"unreachable": {name: "beta", want: []Snapshot{beta}},
+		"unreadable":  {name: "beta", errMsg: "unable to check Beta: HTTP 503"},
 		"all-ordered": {name: "all", want: []Snapshot{alpha, beta, gamma}},
 		"unknown":     {name: "delta", errMsg: `unknown service "delta"`},
 	}
@@ -67,6 +67,15 @@ func Test_checker_check(t *testing.T) {
 			require.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func Test_checker_check_all_unreadable(t *testing.T) {
+	c := &checker{services: []service{
+		{name: "a", display: "A", check: fixed(Snapshot{}, errors.New("HTTP 503"))},
+		{name: "b", display: "B", check: fixed(Snapshot{}, errors.New("dial tcp: connection refused"))},
+	}}
+	_, err := c.check(context.Background(), "all")
+	require.EqualError(t, err, "unable to check any of the 2 services, first: A: HTTP 503")
 }
 
 func Test_checker_check_cancelled(t *testing.T) {
