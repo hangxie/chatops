@@ -16,6 +16,8 @@ type wireRequest struct {
 	Model    string        `json:"model"`
 	Messages []wireMessage `json:"messages"`
 	Tools    []wireTool    `json:"tools,omitempty"`
+	// ToolChoice is omitted for the endpoint default; endpoints reject it without tools.
+	ToolChoice string `json:"tool_choice,omitempty"`
 	// ReasoningEffort "none" disables thinking on OpenAI, Gemini, and Ollama.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// ChatTemplateKwargs carries enable_thinking for vLLM, SGLang, and llama.cpp.
@@ -96,6 +98,9 @@ func toWireRequest(model string, disableThinking bool, sampling config.Sampling,
 			Type:     "function",
 			Function: wireFunction(tool),
 		})
+	}
+	if len(wire.Tools) > 0 {
+		wire.ToolChoice = req.ToolChoice
 	}
 	// Each endpoint honors a different switch, so send both; opt-in since strict endpoints reject them.
 	if disableThinking {
