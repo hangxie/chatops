@@ -37,7 +37,8 @@ llm:
   # model: "nvidia/nemotron-3.5-lightning:free"
   # api_key_env: OR_API_KEY
 
-  # Cloudflare Workers AI; also set disable_thinking: false below
+  # Cloudflare Workers AI; also set disable_thinking: false below (see the
+  # README "Model providers" table for other per-provider settings)
   # base_url: https://api.cloudflare.com/client/v4/accounts/<CF Account ID>/ai/v1
   # model: "@cf/zai-org/glm-4.7-flash"
   # api_key_env: CF_API_KEY

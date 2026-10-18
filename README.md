@@ -113,6 +113,21 @@ Each `llm.sampling` parameter is sent only when set, so an unset one keeps the e
 | `min_p` | 0–1 | vLLM/llama.cpp extension |
 | `repetition_penalty` | >0 | vLLM/llama.cpp extension |
 
+### Model providers
+
+Every provider speaks OpenAI chat-completions, but each one accepts a different set of optional request fields. A field a provider does not accept usually fails every turn with HTTP 400, so set these three options for your provider:
+
+| Provider | `llm.disable_thinking` | `llm.stream` | `agent.require_tool_call` | Notes |
+|---|---|---|---|---|
+| llama.cpp | `true` | `true` | `true` | Needs a model whose chat template supports tools. Gemma 3's does not, and the server silently drops `tools` |
+| vLLM | `true` | `true` | `true` when started with `--tool-call-parser`, otherwise `false` | Keep `stream: true` behind LiteLLM, which cancels generation only when a streaming client disconnects |
+| OpenRouter | `true` or `false` | `true` | `true` | Accepts every field chatops sends, `top_k` and `min_p` included |
+| Cloudflare Workers AI | `false` | `true` | `true` | `disable_thinking: true` fails every turn with `AiError: Invalid input` (code `8001`) |
+
+The packaged sample's `system_prompt` ends with `/no_think`, a Qwen3-only switch. Drop it for other model families.
+
+If a provider returns HTTP 400 for every turn, turn off `disable_thinking`, then `stream`, then `require_tool_call`, one at a time, and send a test message after each change. The option that fixes it is the field the provider rejects.
+
 ### Conversation history
 
 `agent.history_turns` sets how many of a conversation's earlier user messages are replayed as context on each new message.
