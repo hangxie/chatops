@@ -104,7 +104,7 @@ Each `llm.sampling` parameter is sent only when set, so an unset one keeps the e
 |---|---|---|
 | `temperature` | 0–2 | `0` is greedy and deterministic, the most reliable choice for an ops assistant |
 | `top_p` | 0–1 | |
-| `max_tokens` | >0 | |
+| `max_tokens` | >0 | The packaged sample sets `1024`. Without a cap, a runaway generation keeps the endpoint busy after `agent.turn_timeout` gives up on it. A reply cut off at the cap fails the turn |
 | `frequency_penalty`, `presence_penalty` | −2–2 | |
 | `seed` | | |
 | `stop` | list of strings | |
