@@ -2,7 +2,8 @@
 # Each host:
 #   name:     tool argument value; lowercase letters, digits, and "-"
 #   display:  name shown in results
-#   covers:   what users may call the host, so the model can map "is the media box up?" to media
+#   covers:   what users may call the host, so the model can map "is the media box up?" to media;
+#             name the machine, not its services, which belong in mcp-status.d
 #   address:  DNS name or IP address, without a scheme or port
 #   checks:   ping, ssh, or both (default both); the name is always resolved first
 #   ssh_port: SSH port (default 22); only with the ssh check
@@ -13,7 +14,7 @@
 hosts:
   - name: localhost
     display: localhost
-    covers: [this server, the chatops host]
+    covers: [this server, this machine]
     address: localhost
     checks: [ping]            # a host without sshd would otherwise show DEGRADED
 
@@ -21,7 +22,7 @@ hosts:
 # hosts:
 #   - name: media
 #     display: media
-#     covers: [the media server, the Harbor and LLM host]
+#     covers: [the media server, the media box]
 #     address: media.example.lan
 #   - name: nas
 #     display: NAS

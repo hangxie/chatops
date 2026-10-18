@@ -124,11 +124,12 @@ func (h Host) sshPort() int {
 	return h.SSHPort
 }
 
-// choices describes each host for the tool schema, with what it covers.
+// choices describes each host for the tool schema, with its address and what it covers.
 func (c Config) choices() string {
 	var choices []string
 	for _, h := range c.Hosts {
-		choice := h.Name
+		// The address lets the model tell an unlisted name from a listed host.
+		choice := h.Name + " at " + h.Address
 		if len(h.Covers) != 0 {
 			choice += " (" + strings.Join(h.Covers, ", ") + ")"
 		}

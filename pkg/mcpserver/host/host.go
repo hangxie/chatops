@@ -31,6 +31,7 @@ type Output struct {
 // Report is what the checks observed about one host.
 type Report struct {
 	Host      string   `json:"host"`
+	Target    string   `json:"target" jsonschema:"the configured DNS name or IP address"`
 	Health    Health   `json:"health" jsonschema:"up, degraded, unreachable, or unknown"`
 	Summary   string   `json:"summary"`
 	Address   string   `json:"address,omitempty"`
@@ -65,7 +66,7 @@ func register(server *mcp.Server, c *checker, choices string) {
 	openWorld := true
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "host_status",
-		Description: "Report whether hosts are reachable from the ChatOps server: resolve each name, ping it, and read its SSH identification. Results state what was observed from here; unreachable means no probe answered, not that the machine is off. Use hosts [\"all\"] to check every host. Only the listed hosts are covered: for any other host, do not call this tool; say it is not covered.",
+		Description: "Report whether hosts are reachable from the ChatOps server: resolve each name, ping it, and read its SSH identification. Results state what was observed from here; unreachable means no probe answered, not that the machine is off. Use hosts [\"all\"] to check every host. Only the listed hosts are covered: for any other host or address, do not call this tool; say it is not covered.",
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
@@ -143,7 +144,7 @@ func (c *checker) check(ctx context.Context, names []string) ([]Report, error) {
 // checkOne resolves the host, then runs its enabled probes concurrently against the selected address.
 func (c *checker) checkOne(ctx context.Context, h Host) Report {
 	res := resolve(ctx, c.lookup, c.timeout, h.Address)
-	report := Report{Host: h.Display, Canonical: res.canonical, Checks: []Check{res.check}}
+	report := Report{Host: h.Display, Target: h.Address, Canonical: res.canonical, Checks: []Check{res.check}}
 	if res.check.Outcome != OutcomePass {
 		report.Health, report.Summary = HealthUnknown, res.check.Detail
 		return report
@@ -173,7 +174,12 @@ func (c *checker) checkOne(ctx context.Context, h Host) Report {
 func format(reports []Report) string {
 	var lines []string
 	for _, r := range reports {
-		lines = append(lines, fmt.Sprintf("[%s] %s - %s", strings.ToUpper(string(r.Health)), r.Host, r.Summary))
+		host := r.Host
+		// The configured address shows a wrong host mapping in the reply, such as nas.example.com answered as home.
+		if r.Target != "" && r.Target != r.Host {
+			host += " (" + r.Target + ")"
+		}
+		lines = append(lines, fmt.Sprintf("[%s] %s - %s", strings.ToUpper(string(r.Health)), host, r.Summary))
 		for _, check := range r.Checks {
 			lines = append(lines, fmt.Sprintf("  %s %s: %s", check.Name, strings.ToUpper(string(check.Outcome)), check.Detail))
 		}

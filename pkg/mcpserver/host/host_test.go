@@ -79,7 +79,7 @@ func Test_Register_lists_host_status(t *testing.T) {
 	require.True(t, tool.Annotations.IdempotentHint)
 	require.True(t, *tool.Annotations.OpenWorldHint)
 	hosts := tool.InputSchema.(map[string]any)["properties"].(map[string]any)["hosts"].(map[string]any)
-	require.Equal(t, `The hosts to check, or ["all"] for every one: media (the media server); pi; nas.`, hosts["description"])
+	require.Equal(t, `The hosts to check, or ["all"] for every one: media at media.lan (the media server); pi at pi.lan; nas at nas.lan.`, hosts["description"])
 	require.Equal(t, []any{"all", "media", "pi", "nas"}, hosts["items"].(map[string]any)["enum"])
 	require.EqualValues(t, 1, hosts["minItems"])
 	require.NotNil(t, tool.OutputSchema)
@@ -126,6 +126,7 @@ func Test_host_status_call(t *testing.T) {
 			for i, r := range reports {
 				report := r.(map[string]any)
 				require.Equal(t, tc.want[i], report["host"])
+				require.NotEmpty(t, report["target"])
 				require.Equal(t, string(tc.health[i]), report["health"], report)
 			}
 		})
@@ -136,6 +137,7 @@ func Test_checker_checkOne(t *testing.T) {
 	c := testChecker(t)
 	media := c.checkOne(context.Background(), c.hosts[0])
 	require.Equal(t, HealthUp, media.Health)
+	require.Equal(t, "media.lan", media.Target)
 	require.Equal(t, "every check passed", media.Summary)
 	require.Equal(t, "127.0.0.1", media.Address)
 	require.Equal(t, []string{"127.0.0.1"}, media.Addresses)
@@ -144,7 +146,7 @@ func Test_checker_checkOne(t *testing.T) {
 	require.Equal(t, Check{Name: "ssh", Outcome: OutcomePass, Detail: "OpenSSH_9.6"}, media.Checks[2])
 
 	pi := c.checkOne(context.Background(), c.hosts[1])
-	require.Equal(t, Report{Host: "pi", Health: HealthUnknown, Summary: "name does not exist in DNS", Checks: []Check{{Name: "resolve", Outcome: OutcomeFail, Detail: "name does not exist in DNS"}}}, pi)
+	require.Equal(t, Report{Host: "pi", Target: "pi.lan", Health: HealthUnknown, Summary: "name does not exist in DNS", Checks: []Check{{Name: "resolve", Outcome: OutcomeFail, Detail: "name does not exist in DNS"}}}, pi)
 
 	nas := c.checkOne(context.Background(), c.hosts[2])
 	require.Equal(t, HealthUnreachable, nas.Health)
@@ -175,17 +177,19 @@ func Test_checker_check_cancelled(t *testing.T) {
 
 func Test_format(t *testing.T) {
 	text := format([]Report{
-		{Host: "media", Health: HealthDegraded, Summary: "ping passed; ssh failed", Checks: []Check{
+		{Host: "media", Target: "media.lan", Health: HealthDegraded, Summary: "ping passed; ssh failed", Checks: []Check{
 			{Name: "resolve", Outcome: OutcomePass, Detail: "192.168.0.201"},
 			{Name: "ping", Outcome: OutcomePass, Detail: "3/3 replies, average 1.2ms"},
 			{Name: "ssh", Outcome: OutcomeFail, Detail: "connection refused", Responded: true},
 		}},
-		{Host: "pi", Health: HealthUnknown, Summary: "name does not exist in DNS", Checks: []Check{{Name: "resolve", Outcome: OutcomeFail, Detail: "name does not exist in DNS"}}},
+		{Host: "pi", Target: "pi.lan", Health: HealthUnknown, Summary: "name does not exist in DNS", Checks: []Check{{Name: "resolve", Outcome: OutcomeFail, Detail: "name does not exist in DNS"}}},
+		{Host: "localhost", Target: "localhost", Health: HealthUp, Summary: "every check passed"},
 	})
-	require.Equal(t, `[DEGRADED] media - ping passed; ssh failed
+	require.Equal(t, `[DEGRADED] media (media.lan) - ping passed; ssh failed
   resolve PASS: 192.168.0.201
   ping PASS: 3/3 replies, average 1.2ms
   ssh FAIL: connection refused
-[UNKNOWN] pi - name does not exist in DNS
-  resolve FAIL: name does not exist in DNS`, text)
+[UNKNOWN] pi (pi.lan) - name does not exist in DNS
+  resolve FAIL: name does not exist in DNS
+[UP] localhost - every check passed`, text)
 }
