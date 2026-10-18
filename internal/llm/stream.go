@@ -35,6 +35,7 @@ type wireChunk struct {
 type streamState struct {
 	content      strings.Builder
 	calls        []wireToolCall
+	byIndex      map[int]int // stream index to position in calls
 	finishReason string
 	usage        *wireUsage
 	size         int
@@ -71,6 +72,12 @@ func readStream(body io.Reader) (wireResponse, error) {
 	if !done && state.finishReason == "" {
 		return wireResponse{}, errors.New("stream ended before the response finished")
 	}
+	// A nameless call means the provider split one call across indices, which cannot be reassembled safely.
+	for index, pos := range state.byIndex {
+		if state.calls[pos].Function.Name == "" {
+			return wireResponse{}, fmt.Errorf("stream tool call index %d has no name", index)
+		}
+	}
 	return state.response(), nil
 }
 
@@ -91,13 +98,10 @@ func (s *streamState) add(chunk wireChunk) error {
 	s.content.WriteString(choice.Delta.Content)
 	s.size += len(choice.Delta.Content)
 	for _, delta := range choice.Delta.ToolCalls {
-		if delta.Index < 0 || delta.Index > len(s.calls) {
-			return fmt.Errorf("stream tool call index %d out of order", delta.Index)
+		if delta.Index < 0 {
+			return fmt.Errorf("stream tool call index %d out of range", delta.Index)
 		}
-		if delta.Index == len(s.calls) {
-			s.calls = append(s.calls, wireToolCall{Type: "function"})
-		}
-		call := &s.calls[delta.Index]
+		call := s.call(delta.Index)
 		// Some servers repeat the ID and name on every chunk, so keep the first.
 		if call.ID == "" {
 			call.ID = delta.ID
@@ -112,6 +116,20 @@ func (s *streamState) add(chunk wireChunk) error {
 		return fmt.Errorf("completion response exceeds %d bytes", maxResponseBytes)
 	}
 	return nil
+}
+
+// call finds the call an index identifies; indices may be sparse, and calls keep the order they first appeared in.
+func (s *streamState) call(index int) *wireToolCall {
+	if s.byIndex == nil {
+		s.byIndex = map[int]int{}
+	}
+	pos, ok := s.byIndex[index]
+	if !ok {
+		pos = len(s.calls)
+		s.calls = append(s.calls, wireToolCall{Type: "function"})
+		s.byIndex[index] = pos
+	}
+	return &s.calls[pos]
 }
 
 func (s *streamState) response() wireResponse {

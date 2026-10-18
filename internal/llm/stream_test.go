@@ -75,9 +75,39 @@ data: [DONE]
 `,
 			errMsg: "response truncated at the token limit (finish_reason length)",
 		},
-		"tool-call-index-gap": {
-			body:   `data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"x__z"}}]}}]}` + "\n",
-			errMsg: "stream tool call index 1 out of order",
+		"sparse-indices": {
+			body: `data: {"choices":[{"delta":{"tool_calls":[{"index":16,"id":"a","function":{"name":"x__y","arguments":"{\"n\":"}}]}}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":3,"id":"b","function":{"name":"x__z","arguments":"{}"}}]}}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":16,"function":{"arguments":"1}"}}]}}]}
+data: [DONE]
+`,
+			want: Message{Role: RoleAssistant, ToolCalls: []ToolCall{
+				{ID: "a", Name: "x__y", Arguments: `{"n":1}`},
+				{ID: "b", Name: "x__z", Arguments: `{}`},
+			}},
+		},
+		"interleaved": {
+			body: `data: {"choices":[{"delta":{"tool_calls":[{"index":16,"id":"a","function":{"name":"x__y","arguments":"{\"node\":"}}]}}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":3,"id":"b","function":{"name":"x__y","arguments":"{\"node\":"}}]}}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":16,"function":{"arguments":"\"worker-0\"}"}}]}}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":3,"function":{"arguments":"\"worker-1\"}"}}]}}]}
+data: [DONE]
+`,
+			want: Message{Role: RoleAssistant, ToolCalls: []ToolCall{
+				{ID: "a", Name: "x__y", Arguments: `{"node":"worker-0"}`},
+				{ID: "b", Name: "x__y", Arguments: `{"node":"worker-1"}`},
+			}},
+		},
+		"new-index-is-a-new-call": {
+			body: `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"x__y","arguments":"{}"}}]}}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{}"}}]}}]}
+data: [DONE]
+`,
+			errMsg: "stream tool call index 1 has no name",
+		},
+		"negative-index": {
+			body:   `data: {"choices":[{"delta":{"tool_calls":[{"index":-1,"id":"b","function":{"name":"x__z"}}]}}]}` + "\n",
+			errMsg: "stream tool call index -1 out of range",
 		},
 		"error-event": {
 			body: `data: {"error":{"message":"model crashed"}}
