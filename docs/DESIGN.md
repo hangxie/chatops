@@ -220,6 +220,33 @@ Trade-offs:
 - Some endpoints reject `required`; vLLM does unless it runs with `--tool-call-parser`. A config opt-out sends `auto` on every round, keeps `decline` advertised, and makes plain first-round text the answer again.
 - A question that needs no tool, such as "what can you do?", can only be declined.
 
+### 7.2 Model failover
+
+`llm.models` lists one or more OpenAI-compatible endpoints. Each entry carries its own endpoint quirks (`disable_thinking`, `stream`, `sampling`), so a local vLLM and a hosted provider can back each other up.
+
+A turn picks its first model by `llm.schedule`, then keeps it for every model call of the turn:
+
+| Schedule | First model of a turn | Fits |
+|---|---|---|
+| `ordered` (default) | the first in the list | one preferred model with backups |
+| `round_robin` | the next in the list, rotating per turn | equal peers sharing load |
+| `sticky` | the last one that answered | avoiding a dead primary on every turn |
+
+A model call fails over to the next model in the list, wrapping around, and the turn stays on the model that answered:
+
+- Only errors another endpoint may not share fail over: connection errors, a model's own `timeout`, and the HTTP statuses in its `retry_http_codes`.
+- `retry_http_codes` defaults to 429 and 5xx. A model may add codes specific to its endpoint, such as 401 and 403 for a key that can expire.
+- Other HTTP statuses, malformed replies, and `finish_reason: length` fail the call, since they usually mean a request or prompt problem that the backup would share.
+- `llm.max_model_retry` caps the models tried per call. It defaults to, and cannot exceed, the number of models, so no model is tried twice in one call.
+- A model's `timeout` bounds each attempt, so a hung model leaves the rest of `agent.turn_timeout` to the next one. When the turn deadline passes, the call stops without failing over.
+- The rotation is per turn, not per call, because models differ in how they call tools, and one turn planned by one model and answered by another is hard to debug.
+
+Each model has a `name`, defaulting to its `model` and unique across the list, so two endpoints serving one model stay apart. The name identifies the model everywhere:
+
+- Every failover logs a warning naming both models, counts in `chatops_model_failovers_total`, and names the answering model in the stats footer.
+- Model call metrics observe each attempt against its own model and duration, so a failover's wait is not charged to the backup. The footer and turn stats keep the combined duration, which is what the user waited.
+- A connection that drops while the reply is read fails over like one that never connects. A reply that arrives whole but fails to parse does not.
+
 ## 8. Authorization, approval, and security
 
 Default deny. The effective tool set is the intersection of configured servers, policy rules, and the requester's roles.
@@ -313,6 +340,7 @@ chatops/
 10. The daemon's `config.yaml` stays a single file, since a second file silently overriding LLM or credential settings is too surprising.
 11. The first round of every turn forces a tool call, with a built-in `decline` tool for off-topic messages, so the model's first step is always a real tool call rather than an answer from memory or a call described in prose (§7.1).
 12. Tool failures reach the user as lines chatops appends to the reply, never only through the model's wording (§5).
+13. A turn stays on one model and fails over only on errors a different endpoint may not share (§7.2).
 
 ## 14. References
 
