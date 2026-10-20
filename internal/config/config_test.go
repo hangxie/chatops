@@ -18,10 +18,20 @@ chat:
     bot_token_env: SLACK_BOT_TOKEN
     app_token_env: SLACK_APP_TOKEN
 llm:
-  base_url: https://llama-cpp.homelab/v1
-  model: qwen3-0b6
-  api_key_env: LLM_API_KEY
-  disable_thinking: true
+  models:
+    - base_url: https://llama-cpp.homelab/v1
+      model: qwen3-0b6
+      api_key_env: LLM_API_KEY
+      disable_thinking: true
+      timeout: 20s
+    - base_url: https://openrouter.ai/api/v1
+      name: openrouter
+      model: nvidia/nemotron
+      api_key_env: OR_API_KEY
+      stream: false
+      retry_http_codes: [401, 403, 5xx]
+  schedule: sticky
+  max_model_retry: 2
 mcp:
   servers:
     builtin:
@@ -59,11 +69,12 @@ func Test_Parse_full(t *testing.T) {
 	require.Equal(t, &Config{
 		Chat: Chat{"slack": {Type: ChatSlack, BotTokenEnv: "SLACK_BOT_TOKEN", AppTokenEnv: "SLACK_APP_TOKEN"}},
 		LLM: LLM{
-			BaseURL:         "https://llama-cpp.homelab/v1",
-			Model:           "qwen3-0b6",
-			APIKeyEnv:       "LLM_API_KEY",
-			DisableThinking: true,
-			Stream:          true,
+			Models: []Model{
+				{BaseURL: "https://llama-cpp.homelab/v1", Model: "qwen3-0b6", Name: "qwen3-0b6", APIKeyEnv: "LLM_API_KEY", DisableThinking: true, Timeout: 20 * time.Second},
+				{BaseURL: "https://openrouter.ai/api/v1", Model: "nvidia/nemotron", Name: "openrouter", APIKeyEnv: "OR_API_KEY", Stream: pval(false), RetryHTTPCodes: []string{"401", "403", "5xx"}},
+			},
+			Schedule:      ScheduleSticky,
+			MaxModelRetry: 2,
 		},
 		MCP: MCP{Servers: map[string]Server{
 			"builtin": {
@@ -101,7 +112,7 @@ func Test_Parse_full(t *testing.T) {
 const minimalChat = "chat:\n  console:\n    type: stdio\n"
 
 func Test_Parse_defaults(t *testing.T) {
-	cfg, err := Parse([]byte(minimalChat + "llm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
+	cfg, err := Parse([]byte(minimalChat + "llm:\n  models:\n    - base_url: http://localhost:8080/v1\n      model: m\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
 	require.Equal(t, Agent{
 		SystemPrompt:       "p",
@@ -116,6 +127,7 @@ func Test_Parse_defaults(t *testing.T) {
 		RequireToolCall:    true,
 		DeclineReply:       DefaultDeclineReply,
 	}, cfg.Agent)
+	require.Equal(t, LLM{Models: []Model{{BaseURL: "http://localhost:8080/v1", Model: "m", Name: "m"}}, Schedule: ScheduleOrdered, MaxModelRetry: 1}, cfg.LLM)
 	require.Empty(t, cfg.MCP.Servers)
 }
 
@@ -125,33 +137,33 @@ func Test_Parse_stream(t *testing.T) {
 		want bool
 	}{
 		"default": {yaml: "", want: true},
-		"off":     {yaml: "  stream: false\n", want: false},
-		"on":      {yaml: "  stream: true\n", want: true},
+		"off":     {yaml: "      stream: false\n", want: false},
+		"on":      {yaml: "      stream: true\n", want: true},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			cfg, err := Parse([]byte(minimalChat + "llm:\n  base_url: http://localhost:8080/v1\n  model: m\n" + tc.yaml + "agent:\n  system_prompt: p\n"))
+			cfg, err := Parse([]byte(minimalChat + "llm:\n  models:\n    - base_url: http://localhost:8080/v1\n      model: m\n" + tc.yaml + "agent:\n  system_prompt: p\n"))
 			require.NoError(t, err)
-			require.Equal(t, tc.want, cfg.LLM.Stream)
+			require.Equal(t, tc.want, cfg.LLM.Models[0].Streaming())
 		})
 	}
 }
 
 func Test_Parse_sampling(t *testing.T) {
-	cfg, err := Parse([]byte(minimalChat + "llm:\n  base_url: http://localhost:8080/v1\n  model: m\n  sampling:\n    temperature: 0\n    top_p: 0.9\n    seed: 7\n    stop: [\"</s>\"]\nagent:\n  system_prompt: p\n"))
+	cfg, err := Parse([]byte(minimalChat + "llm:\n  models:\n    - base_url: http://localhost:8080/v1\n      model: m\n      sampling:\n        temperature: 0\n        top_p: 0.9\n        seed: 7\n        stop: [\"</s>\"]\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
-	require.Equal(t, Sampling{Temperature: pval(0.0), TopP: pval(0.9), Seed: pval(7), Stop: []string{"</s>"}}, cfg.LLM.Sampling)
+	require.Equal(t, Sampling{Temperature: pval(0.0), TopP: pval(0.9), Seed: pval(7), Stop: []string{"</s>"}}, cfg.LLM.Models[0].Sampling)
 
 	// Omitting the sampling block leaves every parameter unset, so none is sent.
-	bare, err := Parse([]byte(minimalChat + "llm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
+	bare, err := Parse([]byte(minimalChat + "llm:\n  models:\n    - base_url: http://localhost:8080/v1\n      model: m\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
-	require.Equal(t, Sampling{}, bare.LLM.Sampling)
+	require.Equal(t, Sampling{}, bare.LLM.Models[0].Sampling)
 }
 
 func Test_Parse_single_document_marker(t *testing.T) {
-	cfg, err := Parse([]byte("---\n" + minimalChat + "llm:\n  base_url: http://localhost:8080/v1\n  model: m\nagent:\n  system_prompt: p\n"))
+	cfg, err := Parse([]byte("---\n" + minimalChat + "llm:\n  models:\n    - base_url: http://localhost:8080/v1\n      model: m\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
-	require.Equal(t, "m", cfg.LLM.Model)
+	require.Equal(t, "m", cfg.LLM.Models[0].Model)
 }
 
 func Test_Parse_errors(t *testing.T) {
@@ -160,11 +172,15 @@ func Test_Parse_errors(t *testing.T) {
 		errMsg string
 	}{
 		"unknown-field": {
-			input:  "llm:\n  base_url: http://x/v1\n  model: m\n  temperature: 1\n",
+			input:  "llm:\n  models:\n    - base_url: http://x/v1\n      model: m\n      temperature: 1\n",
 			errMsg: "field temperature not found",
 		},
+		"old-single-model": {
+			input:  "llm:\n  base_url: http://x/v1\n  model: m\n",
+			errMsg: "field base_url not found",
+		},
 		"bad-duration": {
-			input:  "llm:\n  base_url: http://x/v1\n  model: m\nagent:\n  turn_timeout: soon\n",
+			input:  "llm:\n  models:\n    - base_url: http://x/v1\n      model: m\nagent:\n  turn_timeout: soon\n",
 			errMsg: "parse config",
 		},
 		"not-yaml": {
@@ -172,24 +188,28 @@ func Test_Parse_errors(t *testing.T) {
 			errMsg: "parse config",
 		},
 		"two-documents": {
-			input:  "llm:\n  base_url: http://x/v1\n  model: m\n---\nllm:\n  model: other\n",
+			input:  "llm:\n  models:\n    - base_url: http://x/v1\n      model: m\n---\nllm:\n  model: other\n",
 			errMsg: "parse config: multiple YAML documents are not supported",
 		},
 		"trailing-empty-document": {
-			input:  "llm:\n  base_url: http://x/v1\n  model: m\n---\n",
+			input:  "llm:\n  models:\n    - base_url: http://x/v1\n      model: m\n---\n",
 			errMsg: "parse config: multiple YAML documents are not supported",
 		},
 		"bad-second-document": {
-			input:  "llm:\n  base_url: http://x/v1\n  model: m\n---\nllm: [\n",
+			input:  "llm:\n  models:\n    - base_url: http://x/v1\n      model: m\n---\nllm: [\n",
 			errMsg: "parse config: multiple YAML documents are not supported",
 		},
 		"empty": {
 			input:  "",
-			errMsg: "llm.base_url: required",
+			errMsg: "llm.models: at least one model is required",
 		},
 		"invalid": {
-			input:  "llm:\n  model: m\n",
-			errMsg: "llm.base_url: required",
+			input:  "llm:\n  models:\n    - model: m\n",
+			errMsg: "llm.models[0].base_url: required",
+		},
+		"retry-more-than-models": {
+			input:  minimalChat + "llm:\n  models:\n    - base_url: http://x/v1\n      model: m\n  max_model_retry: 2\nagent:\n  system_prompt: p\n",
+			errMsg: "llm.max_model_retry: must not exceed the 1 configured models, got 2",
 		},
 	}
 
@@ -209,7 +229,7 @@ func Test_Load(t *testing.T) {
 
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	require.Equal(t, "qwen3-0b6", cfg.LLM.Model)
+	require.Equal(t, "qwen3-0b6", cfg.LLM.Models[0].Model)
 
 	_, err = Load(filepath.Join(dir, "missing.yaml"))
 	require.ErrorContains(t, err, "read config")
@@ -223,9 +243,13 @@ func Test_Load_packaged_sample(t *testing.T) {
 		"homelab-discord": {Type: ChatDiscord, BotTokenEnv: "DISCORD_BOT_TOKEN", ReplyMode: ReplyChannel},
 		"homelab-unix":    {Type: ChatUnix, Path: "/run/chatops/ops.sock", Mode: "0600"},
 	}, cfg.Chat)
-	// The local endpoint is active: the only example that works without an account or key.
-	require.Equal(t, "http://localhost:8080/v1", cfg.LLM.BaseURL)
-	require.Empty(t, cfg.LLM.APIKeyEnv)
+	// The local endpoint is the only active model: it needs no account or key, and backups are opt-in.
+	require.Len(t, cfg.LLM.Models, 1)
+	local := cfg.LLM.Models[0]
+	require.Equal(t, "http://localhost:8080/v1", local.BaseURL)
+	require.Empty(t, local.APIKeyEnv)
+	require.Equal(t, ScheduleOrdered, cfg.LLM.Schedule)
+	require.Equal(t, 1, cfg.LLM.MaxModelRetry)
 	// Each built-in group runs as its own server named after the group, so tool prefixes name the group.
 	require.Len(t, cfg.MCP.Servers, 4)
 	for _, group := range []string{"ping", "status", "kubernetes", "host"} {
@@ -240,11 +264,11 @@ func Test_Load_packaged_sample(t *testing.T) {
 	// The shipped prompt must carry the behavioral guard, and thinking is disabled by both config and prompt.
 	require.Contains(t, cfg.Agent.SystemPrompt, "Answer only the latest user request")
 	require.Contains(t, cfg.Agent.SystemPrompt, "/no_think")
-	require.True(t, cfg.LLM.DisableThinking)
-	require.True(t, cfg.LLM.Stream)
+	require.True(t, local.DisableThinking)
+	require.True(t, local.Streaming())
 	require.Equal(t, 0, cfg.Agent.HistoryTurns)
-	require.NotNil(t, cfg.LLM.Sampling.Temperature)
-	require.Equal(t, 0.0, *cfg.LLM.Sampling.Temperature)
+	require.NotNil(t, local.Sampling.Temperature)
+	require.Equal(t, 0.0, *local.Sampling.Temperature)
 	// Metrics and health probes are on, bound to loopback.
 	require.Equal(t, Metrics{Listen: "127.0.0.1:9464"}, cfg.Metrics)
 }

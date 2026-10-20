@@ -24,49 +24,72 @@ chat:
   # console:
   #   type: stdio
 
-# Any OpenAI-compatible endpoint; keep one block uncommented. API keys go in
-# chatops.env under the name api_key_env gives.
+# Any OpenAI-compatible endpoints. The first model answers; the others are
+# backups tried in order when a model is unreachable, exceeds its timeout, or
+# returns a status in its retry_http_codes. API keys go in chatops.env under
+# the name api_key_env gives.
 llm:
-  # Local llama.cpp, vLLM, or Ollama server
-  base_url: http://localhost:8080/v1
-  model: CHANGEME   # the model name your endpoint serves
-  # api_key_env: LLM_API_KEY
+  models:
+    # Local llama.cpp, vLLM, or Ollama server
+    - base_url: http://localhost:8080/v1
+      model: CHANGEME   # the model name your endpoint serves
+      # Identifies the model in logs, metrics, and reply stats; defaults to
+      # model and must be unique, so set it when two entries serve one model.
+      # name: local
+      # api_key_env: LLM_API_KEY
+      # Disabling thinking is recommended for small models to save context
+      # window and response time; larger models generally behave better with
+      # thinking enabled. Some endpoints, such as Cloudflare Workers AI, reject
+      # the extra request fields and need disable_thinking: false.
+      disable_thinking: true
+      # Streaming lets a timed-out turn stop generation: proxies such as LiteLLM
+      # cancel the upstream request only when a streaming client disconnects. Set
+      # false for endpoints that reject stream_options or garble streamed tool
+      # calls.
+      stream: true
+      # Bounds one call to this model, so a hung endpoint leaves the rest of
+      # agent.turn_timeout to the next model; unset waits for the turn deadline.
+      # timeout: 30s
+      # HTTP statuses that move a call to the next model: codes from 400 to
+      # 599, or 4xx and 5xx. A list replaces the default; see "Retry codes per
+      # provider" in docs/models.md for each provider's list.
+      # retry_http_codes: [429, 5xx]
+      sampling:
+        # Generation parameters sent with every completion; omit any one to use
+        # the endpoint's own default. temperature 0 is greedy and deterministic,
+        # the most reliable choice for an ops assistant. top_k, min_p, and
+        # repetition_penalty are vLLM/llama.cpp extensions that strict OpenAI
+        # endpoints reject.
+        temperature: 0
+        # top_p: 0.9
+        # top_k: 40
+        # min_p: 0.0
+        # max_tokens: 1024
+        # frequency_penalty: 0
+        # presence_penalty: 0
+        # repetition_penalty: 1.0
+        # seed: 42
+        # stop: ["</s>"]
 
-  # OpenRouter
-  # base_url: https://openrouter.ai/api/v1
-  # model: "nvidia/nemotron-3.5-lightning:free"
-  # api_key_env: OR_API_KEY
+    # OpenRouter
+    # - base_url: https://openrouter.ai/api/v1
+    #   model: "nvidia/nemotron-3.5-lightning:free"
+    #   api_key_env: OR_API_KEY
 
-  # Cloudflare Workers AI; also set disable_thinking: false below (see the
-  # README "Model providers" table for other per-provider settings)
-  # base_url: https://api.cloudflare.com/client/v4/accounts/<CF Account ID>/ai/v1
-  # model: "@cf/zai-org/glm-4.7-flash"
-  # api_key_env: CF_API_KEY
+    # Cloudflare Workers AI (see the README "Model providers" table for other
+    # per-provider settings)
+    # - base_url: https://api.cloudflare.com/client/v4/accounts/<CF Account ID>/ai/v1
+    #   model: "@cf/zai-org/glm-4.7-flash"
+    #   api_key_env: CF_API_KEY
+    #   disable_thinking: false
 
-  # Disabling thinking is recommended for small models to save context window
-  # and response time; larger models generally behave better with thinking
-  # enabled. Some endpoints, such as Cloudflare Workers AI, reject the extra
-  # request fields and need disable_thinking: false.
-  disable_thinking: true
-  # Streaming lets a timed-out turn stop generation: proxies such as LiteLLM
-  # cancel the upstream request only when a streaming client disconnects. Set
-  # false for endpoints that reject stream_options or garble streamed tool calls.
-  stream: true
-  sampling:
-    # Generation parameters sent with every completion; omit any one to use the
-    # endpoint's own default. temperature 0 is greedy and deterministic, the most
-    # reliable choice for an ops assistant. top_k, min_p, and repetition_penalty
-    # are vLLM/llama.cpp extensions that strict OpenAI endpoints reject.
-    temperature: 0
-    # top_p: 0.9
-    # top_k: 40
-    # min_p: 0.0
-    # max_tokens: 1024
-    # frequency_penalty: 0
-    # presence_penalty: 0
-    # repetition_penalty: 1.0
-    # seed: 42
-    # stop: ["</s>"]
+  # Which model a turn starts with: ordered (always the first), round_robin
+  # (the next one each turn), or sticky (the last one that answered). A turn
+  # keeps its model unless that model fails.
+  # schedule: ordered
+  # Models tried per model call; defaults to, and cannot exceed, the number of
+  # models, so each one is tried at most once.
+  # max_model_retry: 1
 
 mcp:
   # The server name prefixes its tools (kubernetes__pod_list for the model,
@@ -135,7 +158,7 @@ agent:
   # decline_reply: "I can only help with operations questions about the systems I monitor."
   # Required: the agent's instructions, prepended to every turn. Edit and restart
   # to tune behavior without rebuilding. The trailing /no_think backs up
-  # llm.disable_thinking for Qwen3 templates that ignore the request flag.
+  # disable_thinking for Qwen3 templates that ignore the request flag.
   system_prompt: >-
     You are ChatOps, an operations assistant answering in a chat thread. First
     decide whether the message is an operational request about a system your

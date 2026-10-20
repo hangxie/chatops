@@ -61,6 +61,7 @@ With `agent.show_stats: true`, the conversation manager appends the steps and to
 
 - Tools appear as `<server>.<tool>`, using the configured server name, which is unique across servers. The model-facing `<server>__<tool>` would render as bold in chat Markdown.
 - A call to an unknown tool shows the name the model asked for.
+- A model step that failed over names the model that answered, or failed last: `answer 4.0s (via openrouter, 900→20 tok)`. Its duration includes the failed attempts, since the user waited for them.
 - The reply size is measured before sending and is approximate: platform rendering (Slack mrkdwn) changes it slightly.
 - The post cannot report its own latency. Measuring it would need a follow-up message or an edit, which is not worth the extra chat traffic.
 
@@ -79,7 +80,7 @@ The footer travels to the chat backend separately from the answer, so each backe
 - Collectors live in a dedicated registry wired explicitly in `serve`, never the global default registry. It also exports Go runtime and process metrics.
 - The endpoint is unauthenticated, like most exporters. Bind it to loopback or a scrape-only network.
 - Once configured, metrics are part of the daemon's health. An unexpected server exit stops `serve` with an error, as a failed listen does at startup, so a supervisor restarts the process instead of it answering chat with no metrics.
-- Labels stay low-cardinality: `backend` is the configured chat backend name, `server` and `tool` come from administrator-configured MCP servers. User, channel, conversation, and message text never become labels.
+- Labels stay low-cardinality: `backend` is the configured chat backend name, `model` is a configured `llm.models[].name`, `server` and `tool` come from administrator-configured MCP servers. User, channel, conversation, and message text never become labels.
 
 ### Question metrics
 
@@ -102,8 +103,9 @@ Recorded from the agent's steps:
 | Metric | Type | Labels |
 |---|---|---|
 | `chatops_turn_iterations` | histogram | |
-| `chatops_model_call_duration_seconds` | histogram | `phase` (`plan`, `answer`, `model`), `outcome` (`ok`, `timeout`, `error`) |
-| `chatops_model_tokens_total` | counter | `phase`, `kind` (`prompt`, `completion`) |
+| `chatops_model_call_duration_seconds` | histogram | `phase` (`plan`, `answer`, `model`), `outcome` (`ok`, `timeout`, `error`), `model` |
+| `chatops_model_tokens_total` | counter | `phase`, `kind` (`prompt`, `completion`), `model` |
+| `chatops_model_failovers_total` | counter | `model` (the one that failed) |
 | `chatops_tool_call_duration_seconds` | histogram | `server`, `tool`, `outcome` (`ok`, `error`, `timeout`) |
 | `chatops_tool_result_bytes` | histogram | `server`, `tool` |
 | `chatops_tool_result_truncated_total` | counter | `server`, `tool` |
@@ -118,6 +120,7 @@ Recorded from the agent's steps:
 - "Answered" means a final answer was produced and delivered, not that it was correct. A decline counts as answered; it shows as a `chatops.decline` tool step (server `chatops`, tool `decline`), so declines can be counted from the tool-call metrics. A decline dropped because the model also called other tools is only logged.
 - `chatops_response_duration_seconds` observes delivered replies only. An undelivered one counts in `chatops_reply_failures_total` instead; its turn's step metrics are still recorded.
 - `chatops_queue_wait_seconds` runs from receipt to taking a turn slot, so it includes waiting behind earlier messages of the same conversation.
+- `chatops_model_call_duration_seconds` observes each attempt of a failed-over call against its own model: a failed attempt as phase `model` with outcome `timeout` or `error`, the last one with the call's phase. A turn's model calls therefore add up to more observations than `chatops_turn_iterations` counts.
 - A tool the model named but no server serves is labeled `(unknown)` for both `server` and `tool`, so model output never becomes a label.
 - With no reconnect yet, `chatops_mcp_server_up` stays 0 once a session ends; the daemon logs a warning when that happens.
 

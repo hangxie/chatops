@@ -66,18 +66,23 @@ Start from the annotated sample at [`package/systemd/config.yaml`](package/syste
 | `chat.<name>.bot_token_env` | (none) | discord: environment variable holding the Discord bot token; required |
 | `chat.<name>.reply_mode` | slack `thread`, discord `channel` | slack and discord: where a top-level message is answered, `thread` or `channel`; a message in an existing thread is always answered in that thread |
 | `chat.<name>.path`, `mode` | (none) | unix only: filesystem path of the socket to create (required) and optional octal permission bits (e.g. `0600`, the default owner-only) |
-| `llm.base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions` |
-| `llm.model` | (required) | Model name sent with each request |
-| `llm.api_key_env` | (none) | Environment variable holding the API key, sent as a bearer token; requires an `https` `base_url` unless the host is loopback |
-| `llm.disable_thinking` | `false` | Send `reasoning_effort: "none"` and `chat_template_kwargs: {"enable_thinking": false}`; the packaged sample turns it on; leave off for endpoints that reject unknown fields |
-| `llm.stream` | `true` | Stream completions, so a timed-out turn stops generation even behind proxies such as LiteLLM. Set `false` for endpoints that reject `stream_options` or mishandle streamed tool calls |
-| `llm.sampling.*` | (unset) | Optional generation parameters; see [Sampling](#sampling) |
+| `llm.models[].name` | the `model` value | Identifies the model in logs, metrics, and reply stats; must be unique, so set it when two entries serve the same model |
+| `llm.models[].base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions`. At least one model is required; see [Backup models](#backup-models) |
+| `llm.models[].model` | (required) | Model name sent with each request |
+| `llm.models[].api_key_env` | (none) | Environment variable holding the API key, sent as a bearer token; requires an `https` `base_url` unless the host is loopback |
+| `llm.models[].disable_thinking` | `false` | Send `reasoning_effort: "none"` and `chat_template_kwargs: {"enable_thinking": false}`; the packaged sample turns it on; leave off for endpoints that reject unknown fields |
+| `llm.models[].stream` | `true` | Stream completions, so a timed-out turn stops generation even behind proxies such as LiteLLM. Set `false` for endpoints that reject `stream_options` or mishandle streamed tool calls |
+| `llm.models[].timeout` | (none) | Limit for one call to this model; a call that runs past it moves to the next model. Unset, a call can use the rest of `agent.turn_timeout` |
+| `llm.models[].retry_http_codes` | `[429, 5xx]` | HTTP statuses from this model that move a call to the next model: codes from 400 to 599, or the classes `4xx` and `5xx`. A list replaces the default; `[]` fails over only on connection errors and `timeout` |
+| `llm.models[].sampling.*` | (unset) | Optional generation parameters; see [Sampling](#sampling) |
+| `llm.schedule` | `ordered` | Which model a turn starts with: `ordered` (always the first), `round_robin` (the next one each turn), or `sticky` (the last one that answered) |
+| `llm.max_model_retry` | number of models | Models tried per model call, each at most once; must not exceed the number of models |
 | `mcp.servers.<id>.transport` | (required) | `stdio` or `streamable-http` |
 | `mcp.servers.<id>.command`, `args` | | stdio only: the server process to launch |
 | `mcp.servers.<id>.env` | (none) | stdio only: extra environment variables; values are stored in the file, so never put secrets here |
 | `mcp.servers.<id>.secret_env` | (none) | stdio only: maps a variable for the server to the `chatops` environment variable holding its value, for secrets such as tokens; a name may not appear in both `env` and `secret_env` |
 | `mcp.servers.<id>.url`, `bearer_token_env` | | streamable-http only: endpoint and optional bearer token variable; a token requires an `https` URL unless the host is loopback |
-| `agent.system_prompt` | (required) | Instructions prepended to every turn; edit it to tune behavior without rebuilding, then restart the daemon. Startup fails if it is empty. The packaged sample ends with `/no_think` as a Qwen3 prompt-level backup to `llm.disable_thinking`; drop it for other models |
+| `agent.system_prompt` | (required) | Instructions prepended to every turn; edit it to tune behavior without rebuilding, then restart the daemon. Startup fails if it is empty. The packaged sample ends with `/no_think` as a Qwen3 prompt-level backup to `disable_thinking`; drop it for other models |
 | `agent.max_iterations` | `20` | Maximum model calls per turn |
 | `agent.turn_timeout` | `120s` | Wall-clock limit for one turn; a turn that runs past it fails even if a late model or tool reply arrives |
 | `agent.tool_timeout` | `30s` | Limit for one tool call; a timed-out call is reported to the model, which may continue; must not exceed `turn_timeout` |
@@ -99,7 +104,7 @@ About MCP servers:
 
 ### Sampling
 
-Each `llm.sampling` parameter is sent only when set, so an unset one keeps the endpoint default.
+Each `llm.models[].sampling` parameter is sent only when set, so an unset one keeps the endpoint default.
 
 | Parameter | Range | Note |
 |---|---|---|
@@ -115,9 +120,9 @@ Each `llm.sampling` parameter is sent only when set, so an unset one keeps the e
 
 ### Model providers
 
-Every provider speaks OpenAI chat-completions, but each one accepts a different set of optional request fields. A field a provider does not accept usually fails every turn with HTTP 400, so set these three options for your provider:
+Every provider speaks OpenAI chat-completions, but each one accepts a different set of optional request fields. A field a provider does not accept usually fails every turn with HTTP 400, so set these three options for your provider. The first two are per model in `llm.models`:
 
-| Provider | `llm.disable_thinking` | `llm.stream` | `agent.require_tool_call` | Notes |
+| Provider | `disable_thinking` | `stream` | `agent.require_tool_call` | Notes |
 |---|---|---|---|---|
 | llama.cpp | `true` | `true` | `true` | Needs a model whose chat template supports tools. Gemma 3's does not, and the server silently drops `tools` |
 | vLLM | `true` | `true` | per model | Keep `stream: true` behind LiteLLM, which cancels generation only when a streaming client disconnects. vLLM enforces `required` with guided decoding: without `--tool-call-parser` it rejects it, and with one, qwen-3.5-4b's first call ran until the turn timeout on simple prompts, so Qwen3 needs `false`; llama-3.2-3b runs with `true` |
@@ -127,6 +132,37 @@ Every provider speaks OpenAI chat-completions, but each one accepts a different 
 The packaged sample's `system_prompt` ends with `/no_think`, a Qwen3-only switch. Drop it for other model families.
 
 If a provider returns HTTP 400 for every turn, turn off `disable_thinking`, then `stream`, then `require_tool_call`, one at a time, and send a test message after each change. The option that fixes it is the field the provider rejects.
+
+### Backup models
+
+`llm.models` can list several models, such as a local vLLM backed by a hosted provider:
+
+```yaml
+llm:
+  models:
+    - name: homelab
+      base_url: https://vllm.homelab/v1
+      model: qwen-3.5-4b
+      disable_thinking: true
+      timeout: 30s
+    - name: openrouter
+      base_url: https://openrouter.ai/api/v1
+      model: "nvidia/nemotron-3.5-lightning:free"
+      api_key_env: OR_API_KEY
+  schedule: ordered
+```
+
+On the primary, `retry_http_codes: [401, 403, 429, 5xx]` would also fail over when its key stops working.
+
+- A turn starts on the model `schedule` picks and stays on it for every model call.
+- A call moves to the next model, wrapping around, only when the model is unreachable, runs past its `timeout`, or returns a status in its `retry_http_codes` (default 429 and 5xx). Any other error, such as HTTP 400, fails the call, because the backup would likely reject the same request.
+- Add statuses such as `401` to `retry_http_codes` for a model whose key can expire or be revoked, so its backup takes over; see [Retry codes per provider](docs/models.md#retry-codes-per-provider).
+- Once a call fails over, the turn stays on the model that answered.
+- When `agent.turn_timeout` passes, the call stops without trying another model, so give the primary a `timeout` well below it.
+- Each failover is logged at warn level and counted in `chatops_model_failovers_total`, and the stats footer names the model that answered (`answer 4.0s (via openrouter, ...)`). Logs, metrics, and the footer identify a model by its `name`.
+- `agent.require_tool_call` applies to every model, so pick models that agree on it.
+
+See [`docs/DESIGN.md`](docs/DESIGN.md) §7.2 for the design.
 
 ### Conversation history
 
@@ -405,11 +441,11 @@ The deb and rpm packages install both binaries, a `chatops` system user, and a s
 
 | Path | Purpose |
 |---|---|
-| `/etc/chatops/config.yaml` | Config file; set `llm.base_url` and `llm.model` before starting. It holds no secrets, so every install and upgrade makes it world-readable (`0644`) for troubleshooting; never put a secret in an MCP server's `env:` |
+| `/etc/chatops/config.yaml` | Config file; set `base_url` and `model` under `llm.models` before starting. It holds no secrets, so every install and upgrade makes it world-readable (`0644`) for troubleshooting; never put a secret in an MCP server's `env:` |
 | `/etc/chatops/mcp-status.d/` | Config directory of the `status` tool group; `00-default.yaml` is the shipped service list, and your own services go in files of your own beside it |
 | `/etc/chatops/mcp-kubernetes.d/` | Config directory of the `kubernetes` tool group; `00-default.yaml` points at the kubeconfig at `/etc/chatops/kubeconfig` (which you provide; make it `root:chatops` `0640`) |
 | `/etc/chatops/mcp-host.d/` | Config directory of the `host` tool group; `00-default.yaml` checks only `localhost`, so list your hosts in a file of your own beside it |
-| `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `DISCORD_BOT_TOKEN`, and the LLM key named by `llm.api_key_env`), and `LOG_LEVEL`/`LOG_FORMAT`, which apply from the first log line; readable only by root and the `chatops` group (`0640`) |
+| `/etc/chatops/chatops.env` | Secrets (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `DISCORD_BOT_TOKEN`, and the LLM keys named by `api_key_env` under `llm.models`), and `LOG_LEVEL`/`LOG_FORMAT`, which apply from the first log line; readable only by root and the `chatops` group (`0640`) |
 | `/run/chatops/` | Socket directory of the `homelab-unix` backend, `0755` and owned by `chatops`; a tmpfiles.d entry (`/usr/lib/tmpfiles.d/chatops.conf`) recreates it at every boot |
 | `chatops.service` | Runs `chatops serve --config /etc/chatops/config.yaml`, which starts every backend under `chat:`, with JSON logs to the journal; restarts on failure |
 

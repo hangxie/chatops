@@ -25,6 +25,14 @@ type fakeModel struct {
 	mu        sync.Mutex
 	responses []func(context.Context) (llm.Response, error)
 	requests  []llm.Request
+	sessions  int
+}
+
+func (m *fakeModel) Session() llm.Model {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sessions++
+	return m
 }
 
 func (m *fakeModel) Complete(ctx context.Context, req llm.Request) (llm.Response, error) {
@@ -456,6 +464,25 @@ func Test_Agent_Run_empty_catalog(t *testing.T) {
 	require.Equal(t, []llm.Message{{Role: llm.RoleUser, Content: "x"}}, turn.Messages)
 	require.Empty(t, model.requests)
 	require.Equal(t, OutcomeAnswered, turn.Stats.Outcome)
+}
+
+func Test_Agent_Run_one_session_per_turn(t *testing.T) {
+	model := &fakeModel{responses: []func(context.Context) (llm.Response, error){
+		calls(llm.ToolCall{ID: "c1", Name: "builtin__ping", Arguments: "{}"}), reply("pong"), reply("again"),
+	}}
+	agent := New(model, newFakeTools(t, pong), testLimits(), nil)
+	_, err := agent.Run(context.Background(), nil, "ping")
+	require.NoError(t, err)
+	// Both model calls of a turn share one session, so the turn stays on one model.
+	require.Equal(t, 1, model.sessions)
+	_, err = agent.Run(context.Background(), nil, "ping")
+	require.NoError(t, err)
+	require.Equal(t, 2, model.sessions)
+
+	// A turn that never calls the model does not take a session, so round_robin does not skip a model.
+	_, err = New(model, &fakeTools{}, testLimits(), nil).Run(context.Background(), nil, "x")
+	require.NoError(t, err)
+	require.Equal(t, 2, model.sessions)
 }
 
 func Test_Agent_Run_system_prompt(t *testing.T) {

@@ -12,7 +12,7 @@ func pval[T any](v T) *T { return &v }
 func validConfig() Config {
 	return Config{
 		Chat: Chat{"console": {Type: ChatStdio}},
-		LLM:  LLM{BaseURL: "http://localhost:8080/v1", Model: "m"},
+		LLM:  validLLM(),
 		MCP: MCP{Servers: map[string]Server{
 			"builtin": {Transport: TransportStdio, Command: "chatops-mcp"},
 			"remote":  {Transport: TransportStreamableHTTP, URL: "https://example.internal/mcp"},
@@ -72,33 +72,11 @@ func Test_Config_Validate(t *testing.T) {
 		"stdio-with-env":    {mutate: func(c *Config) { c.Chat = Chat{"console": {Type: ChatStdio, BotTokenEnv: "X"}} }, errs: []string{"chat.console: bot_token_env and app_token_env are not allowed for a stdio backend"}},
 		"no-chat":           {mutate: func(c *Config) { c.Chat = nil }, errs: []string{"chat: at least one backend is required"}},
 		"no-servers":        {mutate: func(c *Config) { c.MCP.Servers = nil }},
-		"missing-base-url":  {mutate: func(c *Config) { c.LLM.BaseURL = "" }, errs: []string{"llm.base_url: required"}},
-		"relative-base-url": {mutate: func(c *Config) { c.LLM.BaseURL = "localhost/v1" }, errs: []string{`llm.base_url: must be an absolute http or https URL, got "localhost/v1"`}},
-		"ftp-base-url":      {mutate: func(c *Config) { c.LLM.BaseURL = "ftp://host/v1" }, errs: []string{`llm.base_url: must be an absolute http or https URL, got "ftp://host/v1"`}},
-		"missing-model":     {mutate: func(c *Config) { c.LLM.Model = "" }, errs: []string{"llm.model: required"}},
-		"bad-api-key-env":   {mutate: func(c *Config) { c.LLM.APIKeyEnv = "1KEY" }, errs: []string{`llm.api_key_env: invalid environment variable name "1KEY"`}},
-		"good-api-key-env":  {mutate: func(c *Config) { c.LLM.APIKeyEnv = "LLM_API_KEY" }},
-		"sampling-valid": {mutate: func(c *Config) {
-			c.LLM.Sampling = Sampling{
-				Temperature: pval(0.0), TopP: pval(1.0), TopK: pval(0), MinP: pval(0.0),
-				MaxTokens: pval(256), FrequencyPenalty: pval(-2.0), PresencePenalty: pval(2.0),
-				RepetitionPenalty: pval(1.0), Seed: pval(-5), Stop: []string{"END"},
-			}
-		}},
-		"sampling-temperature-high": {mutate: func(c *Config) { c.LLM.Sampling.Temperature = pval(2.5) }, errs: []string{"llm.sampling.temperature: must be between 0 and 2, got 2.5"}},
-		"sampling-top-p-low":        {mutate: func(c *Config) { c.LLM.Sampling.TopP = pval(-0.1) }, errs: []string{"llm.sampling.top_p: must be between 0 and 1, got -0.1"}},
-		"sampling-min-p-high":       {mutate: func(c *Config) { c.LLM.Sampling.MinP = pval(1.5) }, errs: []string{"llm.sampling.min_p: must be between 0 and 1, got 1.5"}},
-		"sampling-freq-penalty":     {mutate: func(c *Config) { c.LLM.Sampling.FrequencyPenalty = pval(3.0) }, errs: []string{"llm.sampling.frequency_penalty: must be between -2 and 2, got 3"}},
-		"sampling-pres-penalty":     {mutate: func(c *Config) { c.LLM.Sampling.PresencePenalty = pval(-3.0) }, errs: []string{"llm.sampling.presence_penalty: must be between -2 and 2, got -3"}},
-		"sampling-rep-penalty":      {mutate: func(c *Config) { c.LLM.Sampling.RepetitionPenalty = pval(0.0) }, errs: []string{"llm.sampling.repetition_penalty: must be positive"}},
-		"sampling-top-k-negative":   {mutate: func(c *Config) { c.LLM.Sampling.TopK = pval(-1) }, errs: []string{"llm.sampling.top_k: must not be negative"}},
-		"sampling-max-tokens-zero":  {mutate: func(c *Config) { c.LLM.Sampling.MaxTokens = pval(0) }, errs: []string{"llm.sampling.max_tokens: must be positive"}},
-		"sampling-empty-stop":       {mutate: func(c *Config) { c.LLM.Sampling.Stop = []string{"ok", ""} }, errs: []string{"llm.sampling.stop: entry 1 is empty"}},
-		"bad-server-id":             {mutate: func(c *Config) { c.MCP.Servers["Bad_ID"] = Server{Transport: TransportStdio, Command: "x"} }, errs: []string{`mcp.servers.Bad_ID: id must match ^[a-z][a-z0-9-]{0,31}$`}},
-		"missing-transport":         {mutate: func(c *Config) { c.MCP.Servers["x"] = Server{Command: "x"} }, errs: []string{`mcp.servers.x.transport: must be "stdio" or "streamable-http", got ""`}},
-		"unknown-transport":         {mutate: func(c *Config) { c.MCP.Servers["x"] = Server{Transport: "sse"} }, errs: []string{`mcp.servers.x.transport: must be "stdio" or "streamable-http", got "sse"`}},
-		"stdio-no-command":          {mutate: func(c *Config) { c.MCP.Servers["x"] = Server{Transport: TransportStdio} }, errs: []string{"mcp.servers.x.command: required for stdio"}},
-		"stdio-with-url":            {mutate: func(c *Config) { c.MCP.Servers["x"] = Server{Transport: TransportStdio, Command: "x", URL: "http://h"} }, errs: []string{"mcp.servers.x.url: not allowed for stdio"}},
+		"bad-server-id":     {mutate: func(c *Config) { c.MCP.Servers["Bad_ID"] = Server{Transport: TransportStdio, Command: "x"} }, errs: []string{`mcp.servers.Bad_ID: id must match ^[a-z][a-z0-9-]{0,31}$`}},
+		"missing-transport": {mutate: func(c *Config) { c.MCP.Servers["x"] = Server{Command: "x"} }, errs: []string{`mcp.servers.x.transport: must be "stdio" or "streamable-http", got ""`}},
+		"unknown-transport": {mutate: func(c *Config) { c.MCP.Servers["x"] = Server{Transport: "sse"} }, errs: []string{`mcp.servers.x.transport: must be "stdio" or "streamable-http", got "sse"`}},
+		"stdio-no-command":  {mutate: func(c *Config) { c.MCP.Servers["x"] = Server{Transport: TransportStdio} }, errs: []string{"mcp.servers.x.command: required for stdio"}},
+		"stdio-with-url":    {mutate: func(c *Config) { c.MCP.Servers["x"] = Server{Transport: TransportStdio, Command: "x", URL: "http://h"} }, errs: []string{"mcp.servers.x.url: not allowed for stdio"}},
 		"stdio-with-bearer": {mutate: func(c *Config) {
 			c.MCP.Servers["x"] = Server{Transport: TransportStdio, Command: "x", BearerTokenEnv: "T"}
 		}, errs: []string{"mcp.servers.x.bearer_token_env: not allowed for stdio"}},
@@ -143,12 +121,6 @@ func Test_Config_Validate(t *testing.T) {
 		}},
 		"http-no-bearer": {mutate: func(c *Config) {
 			c.MCP.Servers["x"] = Server{Transport: TransportStreamableHTTP, URL: "http://h/mcp"}
-		}},
-		"api-key-plaintext": {mutate: func(c *Config) {
-			c.LLM = LLM{BaseURL: "http://llm.example.internal/v1", Model: "m", APIKeyEnv: "LLM_API_KEY"}
-		}, errs: []string{`llm.api_key_env: requires an https base_url unless the host is loopback, got "http://llm.example.internal/v1"`}},
-		"api-key-https": {mutate: func(c *Config) {
-			c.LLM = LLM{BaseURL: "https://llm.example.internal/v1", Model: "m", APIKeyEnv: "LLM_API_KEY"}
 		}},
 		"stdio-secret-env": {mutate: func(c *Config) {
 			c.MCP.Servers["x"] = Server{Transport: TransportStdio, Command: "x", SecretEnv: map[string]string{"VAULT_TOKEN": "CHATOPS_VAULT_TOKEN"}}

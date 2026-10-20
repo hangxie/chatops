@@ -3,6 +3,7 @@ package llm
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/hangxie/chatops/internal/config"
 )
@@ -67,7 +69,26 @@ type Response struct {
 	Message Message
 	// Usage is nil when the endpoint does not report token counts.
 	Usage *Usage
+	// Model names the configured model that answered, or the last one tried when a call fails.
+	Model string
+	// Attempts lists every model a pool tried for this call, in order; the last one is Model.
+	Attempts []Attempt
 }
+
+// Attempt is one model's try at a call.
+type Attempt struct {
+	Model    string
+	Duration time.Duration
+	// Err is nil for the attempt that answered.
+	Err error
+}
+
+// ErrUnavailable marks failures another endpoint may not share: connection errors, the model's retry_http_codes, and its timeout.
+var ErrUnavailable = errors.New("model unavailable")
+
+type unavailableError struct{ error }
+
+func (e unavailableError) Unwrap() []error { return []error{e.error, ErrUnavailable} }
 
 // Usage is the token count of one completion.
 type Usage struct {
@@ -83,11 +104,11 @@ type Client struct {
 	httpClient *http.Client
 	baseURL    string
 	apiKey     string
-	cfg        config.LLM
+	cfg        config.Model
 }
 
 // New builds a client from config; a nil httpClient uses a default, and deadlines come from ctx.
-func New(cfg config.LLM, httpClient *http.Client) (*Client, error) {
+func New(cfg config.Model, httpClient *http.Client) (*Client, error) {
 	baseURL, err := normalizeBaseURL(cfg.BaseURL)
 	if err != nil {
 		return nil, err
@@ -113,7 +134,23 @@ func New(cfg config.LLM, httpClient *http.Client) (*Client, error) {
 }
 
 // Complete sends req and returns the model's assistant message.
-func (c *Client) Complete(ctx context.Context, req Request) (_ Response, err error) {
+func (c *Client) Complete(ctx context.Context, req Request) (Response, error) {
+	callCtx := ctx
+	if c.cfg.Timeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeoutCause(ctx, c.cfg.Timeout, fmt.Errorf("model call exceeded %s: %w", c.cfg.Timeout, context.DeadlineExceeded))
+		defer cancel()
+	}
+	resp, err := c.complete(callCtx, req)
+	// A caller that gave up must not be failed over; its own deadline ends the turn.
+	if err != nil && ctx.Err() == nil && (errors.As(err, new(transportError)) || callCtx.Err() != nil) {
+		err = unavailableError{err}
+	}
+	resp.Model = cmp.Or(c.cfg.Name, c.cfg.Model)
+	return resp, err
+}
+
+func (c *Client) complete(ctx context.Context, req Request) (_ Response, err error) {
 	body, err := json.Marshal(toWireRequest(c.cfg, req))
 	if err != nil {
 		return Response{}, fmt.Errorf("llm: encode request: %w", err)
@@ -124,7 +161,7 @@ func (c *Client) Complete(ctx context.Context, req Request) (_ Response, err err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
-	if c.cfg.Stream {
+	if c.cfg.Streaming() {
 		httpReq.Header.Set("Accept", "text/event-stream, application/json")
 	}
 	if c.apiKey != "" {
@@ -133,7 +170,7 @@ func (c *Client) Complete(ctx context.Context, req Request) (_ Response, err err
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return Response{}, fmt.Errorf("llm: request completion: %w", err)
+		return Response{}, transportError{fmt.Errorf("llm: request completion: %w", err)}
 	}
 	defer func() {
 		if closeErr := httpResp.Body.Close(); closeErr != nil {
@@ -142,9 +179,15 @@ func (c *Client) Complete(ctx context.Context, req Request) (_ Response, err err
 	}()
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(httpResp.Body, 512))
-		return Response{}, fmt.Errorf("llm: completion HTTP %s: %s", httpResp.Status, bytes.TrimSpace(snippet))
+		err := fmt.Errorf("llm: completion HTTP %s: %s", httpResp.Status, bytes.TrimSpace(snippet))
+		if c.cfg.RetriesStatus(httpResp.StatusCode) {
+			return Response{}, transportError{err}
+		}
+		return Response{}, err
 	}
 
+	// A connection dropped mid-reply is the endpoint failing, unlike a reply that fails to parse.
+	httpResp.Body = transportReader{httpResp.Body}
 	wire, err := readResponse(httpResp)
 	if err != nil {
 		// A deadline hit mid-stream surfaces as a read error; report the cause.
@@ -158,6 +201,21 @@ func (c *Client) Complete(ctx context.Context, req Request) (_ Response, err err
 		return Response{}, fmt.Errorf("llm: %w", err)
 	}
 	return Response{Message: msg, Usage: wire.usage()}, nil
+}
+
+// transportError is a failure of the endpoint rather than of the request or the reply.
+type transportError struct{ error }
+
+func (e transportError) Unwrap() error { return e.error }
+
+type transportReader struct{ io.ReadCloser }
+
+func (r transportReader) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if err != nil && err != io.EOF {
+		err = transportError{err}
+	}
+	return n, err
 }
 
 // readResponse parses a stream, or a plain JSON body from an endpoint that ignores stream.

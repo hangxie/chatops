@@ -16,9 +16,9 @@ import (
 // maxRepeatedFailures is how often one exact call may fail in a row before the turn stops instead of running it again.
 const maxRepeatedFailures = 2
 
-// Model completes one model request.
-type Model interface {
-	Complete(ctx context.Context, req llm.Request) (llm.Response, error)
+// Models hands each turn the model it completes with, so a turn stays on one model unless that model fails over.
+type Models interface {
+	Session() llm.Model
 }
 
 // Tools exposes the MCP tool catalog, executes calls, and reports which servers are down.
@@ -30,7 +30,7 @@ type Tools interface {
 
 // Agent runs conversation turns against a model and a tool set.
 type Agent struct {
-	model  Model
+	models Models
 	tools  Tools
 	limits config.Agent
 	logger *slog.Logger
@@ -48,11 +48,11 @@ type Turn struct {
 }
 
 // New builds an agent; a nil logger uses slog.Default, and config validation ensures a prompt and a decline reply.
-func New(model Model, tools Tools, limits config.Agent, logger *slog.Logger) *Agent {
+func New(models Models, tools Tools, limits config.Agent, logger *slog.Logger) *Agent {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Agent{model: model, tools: tools, limits: limits, logger: logger}
+	return &Agent{models: models, tools: tools, limits: limits, logger: logger}
 }
 
 // Run answers input; model failures and an ended turn are errors, tool failures go back to the model.
@@ -82,6 +82,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 		return turn, nil
 	}
 	specs := append(toolSpecs(catalog), declineSpec)
+	model := a.models.Session()
 
 	messages := make([]llm.Message, 0, len(history)+2)
 	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: a.limits.SystemPrompt})
@@ -96,11 +97,11 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 			req.ToolChoice = llm.ToolChoiceRequired
 		}
 		start := time.Now()
-		resp, err := a.model.Complete(ctx, req)
+		resp, err := model.Complete(ctx, req)
 		step := modelStep(resp, err, time.Since(start))
 		// Dependencies may ignore ctx, so a late success must not count as an answer.
 		if ctx.Err() != nil {
-			step.Outcome = errorOutcome(context.Cause(ctx))
+			step.Outcome = ErrorOutcome(context.Cause(ctx))
 		}
 		*steps = append(*steps, step)
 		if ctx.Err() != nil {

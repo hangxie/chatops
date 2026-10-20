@@ -62,6 +62,27 @@ func Test_footer(t *testing.T) {
 			replyBytes: 80,
 			want:       "plan 1.5s (stopped)\ntotal 1.5s · 0 tools · reply 80B · stopped",
 		},
+		"failed-over": {
+			stats: agent.Stats{Outcome: agent.OutcomeAnswered, Duration: 4 * time.Second, Steps: []agent.Step{
+				{Phase: agent.PhaseAnswer, Outcome: agent.OutcomeOK, Duration: 4 * time.Second, Usage: &llm.Usage{PromptTokens: 900, CompletionTokens: 20}, Model: "nemotron", Attempts: []llm.Attempt{{Model: "qwen"}, {Model: "nemotron"}}},
+			}},
+			replyBytes: 12,
+			want:       "answer 4.0s (via nemotron, 900→20 tok)\ntotal 4.0s · 0 tools · 900→20 tok · reply 12B",
+		},
+		"failed-over-and-failed": {
+			stats: agent.Stats{Outcome: agent.OutcomeError, Duration: 2 * time.Second, Steps: []agent.Step{
+				{Phase: agent.PhaseModel, Outcome: agent.OutcomeError, Duration: 2 * time.Second, Model: "nemotron", Attempts: []llm.Attempt{{Model: "qwen"}, {Model: "nemotron"}}},
+			}},
+			replyBytes: 68,
+			want:       "model 2.0s (via nemotron, error)\ntotal 2.0s · 0 tools · reply 68B · failed",
+		},
+		"single-attempt": {
+			stats: agent.Stats{Outcome: agent.OutcomeAnswered, Duration: time.Second, Steps: []agent.Step{
+				{Phase: agent.PhaseAnswer, Outcome: agent.OutcomeOK, Duration: time.Second, Model: "qwen", Attempts: []llm.Attempt{{Model: "qwen"}}},
+			}},
+			replyBytes: 12,
+			want:       "answer 1.0s\ntotal 1.0s · 0 tools · reply 12B",
+		},
 		"no-steps": {
 			stats:      agent.Stats{Outcome: agent.OutcomeError},
 			replyBytes: 68,
