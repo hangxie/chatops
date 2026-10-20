@@ -27,6 +27,7 @@ type Metrics struct {
 	iterations prometheus.Histogram
 	modelCall  *prometheus.HistogramVec
 	tokens     *prometheus.CounterVec
+	failovers  *prometheus.CounterVec
 	toolCall   *prometheus.HistogramVec
 	toolBytes  *prometheus.HistogramVec
 	truncated  *prometheus.CounterVec
@@ -59,8 +60,9 @@ func New(version string) *Metrics {
 			Buckets: []float64{1, 2, 3, 4, 5, 6, 8, 10, 15, 20},
 		}),
 		modelCall: histogram("chatops_model_call_duration_seconds", "Model call latency.",
-			[]float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 60, 120}, "phase", "outcome"),
-		tokens: counter("chatops_model_tokens_total", "Tokens reported by the model endpoint.", "phase", "kind"),
+			[]float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 60, 120}, "phase", "outcome", "model"),
+		tokens:    counter("chatops_model_tokens_total", "Tokens reported by the model endpoint.", "phase", "kind", "model"),
+		failovers: counter("chatops_model_failovers_total", "Model calls moved to the next model after this one failed.", "model"),
 		toolCall: histogram("chatops_tool_call_duration_seconds", "Tool call latency, from the model's request to the result.",
 			[]float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30}, "server", "tool", "outcome"),
 		toolBytes: histogram("chatops_tool_result_bytes", "Tool result size before truncation.",
@@ -77,7 +79,7 @@ func New(version string) *Metrics {
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		buildInfo,
 		m.received, m.rejected, m.replyFailures, m.response, m.queueWait,
-		m.iterations, m.modelCall, m.tokens, m.toolCall, m.toolBytes, m.truncated,
+		m.iterations, m.modelCall, m.tokens, m.failovers, m.toolCall, m.toolBytes, m.truncated,
 	)
 	return m
 }

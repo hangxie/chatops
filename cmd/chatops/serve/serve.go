@@ -55,7 +55,7 @@ func (c Cmd) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	model, err := llm.New(cfg.LLM, nil)
+	models, err := llm.NewPool(cfg.LLM, nil, logger)
 	if err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ func (c Cmd) Run(ctx context.Context) error {
 
 	// The manager's lifetime is independent of the backend contexts so that, once chat.Run returns (clean
 	// shutdown or a fatal backend error), Shutdown can still drain accepted turns and deliver their replies.
-	conversations := conversation.New(context.Background(), agent.New(model, tools, cfg.Agent, logger), cfg.Agent, logger, observer)
+	conversations := conversation.New(context.Background(), agent.New(models, tools, cfg.Agent, logger), cfg.Agent, logger, observer)
 	defer conversations.Shutdown(shutdownGrace)
 	if exporter != nil {
 		exporter.Watch(metrics.Sources{

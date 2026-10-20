@@ -24,6 +24,7 @@ func withoutDurations(steps []Step) []Step {
 
 func Test_modelStep(t *testing.T) {
 	usage := &llm.Usage{PromptTokens: 10, CompletionTokens: 2}
+	attempts := []llm.Attempt{{Model: "a", Duration: 700 * time.Millisecond, Err: errors.New("503")}, {Model: "b", Duration: 300 * time.Millisecond}}
 	tests := map[string]struct {
 		resp llm.Response
 		err  error
@@ -44,6 +45,15 @@ func Test_modelStep(t *testing.T) {
 		"timeout": {
 			err:  fmt.Errorf("request: %w", context.DeadlineExceeded),
 			want: Step{Phase: PhaseModel, Outcome: OutcomeTimeout, Duration: time.Second},
+		},
+		"failed-over": {
+			resp: llm.Response{Message: llm.Message{Content: "hi"}, Model: "b", Attempts: attempts},
+			want: Step{Phase: PhaseAnswer, Outcome: OutcomeOK, Duration: time.Second, Model: "b", Attempts: attempts},
+		},
+		"failed-after-failover": {
+			resp: llm.Response{Model: "b", Attempts: attempts},
+			err:  errors.New("503"),
+			want: Step{Phase: PhaseModel, Outcome: OutcomeError, Duration: time.Second, Model: "b", Attempts: attempts},
 		},
 	}
 

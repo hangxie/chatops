@@ -14,18 +14,44 @@ How well each model we tried drives chatops, measured with [`scripts/model-check
 
 The provider decides which request fields are accepted; see [Model providers](../README.md#model-providers) for why each one is set.
 
-| Served by | `llm.disable_thinking` | `llm.stream` | `agent.require_tool_call` | `/no_think` in `system_prompt` | `agent.turn_timeout` |
+| Served by | `disable_thinking` | `stream` | `agent.require_tool_call` | `/no_think` in `system_prompt` | `agent.turn_timeout` |
 |---|---|---|---|---|---|
 | Cloudflare Workers AI | `false`: `true` fails every turn with code `8001` | `true` | `true` | no | `120s` |
 | llama.cpp, Qwen3 family | `true` | `true` | `true` | yes | `120s` for 4B; `300s` for 27B |
 | vLLM behind LiteLLM | `true` | `true`, so a timeout stops generation | depends on the model: `false` for Qwen3 (see below) | Qwen3 family only | `120s` |
 
 - Keep thinking off for small models (3–4B) on llama.cpp and vLLM.
-- None of the tested models needed `llm.stream: false`. Turn it off only for a provider that rejects `stream_options` or mangles streamed tool calls, which shows up as HTTP 400 or broken tool arguments on every turn.
+- None of the tested models needed `stream: false`. Turn it off only for a provider that rejects `stream_options` or mangles streamed tool calls, which shows up as HTTP 400 or broken tool arguments on every turn.
 - On vLLM, `require_tool_call: true` made qwen-3.5-4b's first call run away: a hung request generated about 2,600 tokens in 300 s. vLLM forces `required` as JSON through guided decoding, while the `qwen3_coder` parser expects the model's XML tool-call format. With `false`, every qwen-3.5-4b case answered, and it still sent greetings and jokes to the decline tool on its own.
 - llama-3.2-3b ran on vLLM with `require_tool_call: true` and did not run away: its tool calls are JSON, the format guided decoding forces, while Qwen3's are XML. Set this per model on vLLM, not per server.
 - On vLLM, run without `--enforce-eager`. With it, qwen-3.5-4b wrote about 8–11 tokens/s on an RTX 3050 (6 GB); without it, about 31.
 - Raise `agent.turn_timeout` for a server below about 20 tokens/s: a long list takes over 120 s to write there (see [Lessons](#lessons)).
+
+## Retry codes per provider
+
+These lists come from each provider's error documentation, read in October 2026. Providers change their error codes over time, so check the linked page before relying on a list, and watch `chatops_model_failovers_total` and the `model failed over` warnings after a change.
+
+The default `[429, 5xx]` covers outages and rate limits everywhere. Each provider also has statuses that mean "this endpoint or account cannot serve you right now", such as a revoked key or used-up credit, and the backup is not affected by them:
+
+| Provider | Recommended `retry_http_codes` | Added to the default, and why |
+|---|---|---|
+| llama.cpp, Ollama | `[401, 404, 429, 5xx]` | 401: wrong `--api-key`. 404: Ollama has not pulled the model. 503 is already covered: llama.cpp returns it while the model loads, Ollama when its queue is full |
+| vLLM | `[401, 404, 408, 429, 5xx]` | 401: wrong key. 404: `model` is not a name the server serves. 408: LiteLLM's status for an upstream timeout |
+| OpenRouter | `[401, 402, 408, 429, 5xx]` | 401: invalid key. 402: out of credits. 408: request timed out. 502 and 503 (model down, no provider available) are already covered |
+| Cloudflare Workers AI | `[401, 403, 408, 429, 5xx]` | 401, 403: bad token, or a model the account or plan cannot use. 408: timed out or aborted. 429 also means the free plan's daily allocation is used up |
+| Gemini | `[401, 402, 403, 429, 5xx]` | 401: missing, invalid, or expired key. 402: prepaid credit used up. 403: key lacks access. 429 also means the daily quota is used up |
+| OpenAI | `[401, 403, 429, 5xx]` | 401: revoked key or IP not allowed. 403: unsupported region. 429 also means no credit left or a spend limit reached |
+| Anthropic | `[401, 402, 403, 429, 5xx]` | 401: invalid or expired key. 402: billing problem. 403: key lacks permission. 529 (overloaded) is already covered by `5xx` |
+
+Never add these:
+
+- 400 on any provider. It mostly means the request itself is wrong, such as a context that is too long, and the backup would reject it too. Two account problems are 400s and therefore do not fail over: Anthropic's spend limits you set yourself, and Gemini's disabled billing (`failed_precondition`).
+- 403 on OpenRouter. Besides permissions, it means a moderation flag on the message, which should not be sent on to another model.
+- 413 and 422. They describe the request, not the endpoint.
+
+An error that arrives inside a stream after HTTP 200, which OpenRouter and Anthropic can send, has no status to match and does not fail over.
+
+Sources: [OpenRouter](https://openrouter.ai/docs/api-reference/errors), [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/platform/errors/), [Gemini](https://ai.google.dev/gemini-api/docs/api-errors), [OpenAI](https://developers.openai.com/api/docs/guides/error-codes), [Anthropic](https://platform.claude.com/docs/en/api/errors), [LiteLLM](https://docs.litellm.ai/docs/exception_mapping).
 
 ## Hardware
 

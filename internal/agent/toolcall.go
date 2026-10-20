@@ -47,7 +47,7 @@ func (a *Agent) callTool(ctx context.Context, catalog *mcp.Catalog, call llm.Too
 	log := a.logger.With("server", tool.Server, "tool", tool.MCPName, "duration", time.Since(start))
 	// Servers may ignore ctx, so a result after the deadline is discarded even on success.
 	if callCtx.Err() != nil {
-		step.Outcome = errorOutcome(callCtx.Err())
+		step.Outcome = ErrorOutcome(callCtx.Err())
 		log.Warn("tool call timed out", "error", err)
 		failure = fmt.Sprintf("tool call timed out after %s", a.limits.ToolTimeout)
 		return "error: " + failure, failure

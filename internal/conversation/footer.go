@@ -51,6 +51,10 @@ func stepText(step agent.Step) string {
 	if step.Outcome != agent.OutcomeOK {
 		details = append(details, string(step.Outcome))
 	}
+	// Only a failover names the model, since otherwise the turn ran on the one the schedule picked.
+	if len(step.Attempts) > 1 {
+		details = append([]string{"via " + step.Model}, details...)
+	}
 	text := name + " " + formatDuration(step.Duration)
 	if len(details) > 0 {
 		text += " (" + strings.Join(details, ", ") + ")"

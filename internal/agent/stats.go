@@ -40,6 +40,9 @@ type Step struct {
 	Duration time.Duration
 	// Usage is the model step's token count; nil when unreported.
 	Usage *llm.Usage
+	// Model names the model that answered, or failed last; Attempts has each model tried, with its own duration.
+	Model    string
+	Attempts []llm.Attempt
 	// Name is the tool's model-facing name; Server and Tool are empty when the name is unknown.
 	Name   string
 	Server string
@@ -83,17 +86,18 @@ func (s Stats) Tokens() (prompt, completion int, reported bool) {
 }
 
 func modelStep(resp llm.Response, err error, duration time.Duration) Step {
-	step := Step{Phase: PhasePlan, Outcome: OutcomeOK, Duration: duration, Usage: resp.Usage}
+	step := Step{Phase: PhasePlan, Outcome: OutcomeOK, Duration: duration, Usage: resp.Usage, Model: resp.Model, Attempts: resp.Attempts}
 	switch {
 	case err != nil:
-		step.Phase, step.Outcome = PhaseModel, errorOutcome(err)
+		step.Phase, step.Outcome = PhaseModel, ErrorOutcome(err)
 	case len(resp.Message.ToolCalls) == 0:
 		step.Phase = PhaseAnswer
 	}
 	return step
 }
 
-func errorOutcome(err error) Outcome {
+// ErrorOutcome is timeout for an error caused by a deadline, and error otherwise.
+func ErrorOutcome(err error) Outcome {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return OutcomeTimeout
 	}
@@ -102,7 +106,7 @@ func errorOutcome(err error) Outcome {
 
 func turnOutcome(steps []Step, err error) Outcome {
 	if err != nil {
-		return errorOutcome(err)
+		return ErrorOutcome(err)
 	}
 	if len(steps) > 0 && steps[len(steps)-1].Outcome == OutcomeStopped {
 		return OutcomeStopped

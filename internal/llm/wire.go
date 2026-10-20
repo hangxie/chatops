@@ -99,9 +99,9 @@ func (r wireResponse) usage() *Usage {
 // thinkBlock matches a leading reasoning block some servers leave even with thinking disabled.
 var thinkBlock = regexp.MustCompile(`(?s)^\s*<think>.*?</think>`)
 
-func toWireRequest(cfg config.LLM, req Request) wireRequest {
+func toWireRequest(cfg config.Model, req Request) wireRequest {
 	wire := wireRequest{Model: cfg.Model, Messages: make([]wireMessage, 0, len(req.Messages))}
-	if cfg.Stream {
+	if cfg.Streaming() {
 		wire.Stream = true
 		wire.StreamOptions = &wireStreamOptions{IncludeUsage: true}
 	}

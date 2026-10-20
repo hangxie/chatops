@@ -65,33 +65,6 @@ type ChatBackend struct {
 	Mode string `yaml:"mode"`
 }
 
-// LLM configures the OpenAI-compatible model endpoint.
-type LLM struct {
-	BaseURL   string `yaml:"base_url"`
-	Model     string `yaml:"model"`
-	APIKeyEnv string `yaml:"api_key_env"`
-	// DisableThinking stops small reasoning models from spending the budget on thinking.
-	DisableThinking bool `yaml:"disable_thinking"`
-	// Stream lets a proxy see a timed-out request disconnect and cancel generation upstream.
-	Stream   bool     `yaml:"stream"`
-	Sampling Sampling `yaml:"sampling"`
-}
-
-// Sampling holds optional generation parameters; a nil field is omitted so the endpoint default applies.
-// top_k, min_p, and repetition_penalty are vLLM/llama.cpp extensions that strict OpenAI endpoints reject.
-type Sampling struct {
-	Temperature       *float64 `yaml:"temperature"`
-	TopP              *float64 `yaml:"top_p"`
-	TopK              *int     `yaml:"top_k"`
-	MinP              *float64 `yaml:"min_p"`
-	MaxTokens         *int     `yaml:"max_tokens"`
-	FrequencyPenalty  *float64 `yaml:"frequency_penalty"`
-	PresencePenalty   *float64 `yaml:"presence_penalty"`
-	RepetitionPenalty *float64 `yaml:"repetition_penalty"`
-	Seed              *int     `yaml:"seed"`
-	Stop              []string `yaml:"stop"`
-}
-
 // MCP lists the administrator-configured MCP servers, keyed by server ID.
 type MCP struct {
 	Servers map[string]Server `yaml:"servers"`
@@ -166,7 +139,7 @@ func Load(path string) (*Config, error) {
 
 // Parse decodes, defaults, and validates; unknown fields are rejected so typos are not ignored.
 func Parse(data []byte) (*Config, error) {
-	cfg := Config{LLM: LLM{Stream: true}, Agent: defaultAgent()}
+	cfg := Config{Agent: defaultAgent()}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	err := decoder.Decode(&cfg)
@@ -180,6 +153,7 @@ func Parse(data []byte) (*Config, error) {
 			return nil, errors.New("parse config: multiple YAML documents are not supported")
 		}
 	}
+	cfg.LLM = cfg.LLM.withDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config:\n%w", err)
 	}

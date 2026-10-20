@@ -39,14 +39,27 @@ func (m *Metrics) Finished(_ string, stats agent.Stats) {
 			continue
 		}
 		models++
-		phase := string(step.Phase)
-		m.modelCall.WithLabelValues(phase, string(step.Outcome)).Observe(step.Duration.Seconds())
-		if step.Usage != nil {
-			m.tokens.WithLabelValues(phase, "prompt").Add(float64(step.Usage.PromptTokens))
-			m.tokens.WithLabelValues(phase, "completion").Add(float64(step.Usage.CompletionTokens))
-		}
+		m.model(step)
 	}
 	m.iterations.Observe(float64(models))
+}
+
+// model observes each attempt against its own model, so a failover's wait is not charged to the backup.
+func (m *Metrics) model(step agent.Step) {
+	phase := string(step.Phase)
+	duration := step.Duration
+	if n := len(step.Attempts); n > 0 {
+		for _, failed := range step.Attempts[:n-1] {
+			m.modelCall.WithLabelValues(string(agent.PhaseModel), string(agent.ErrorOutcome(failed.Err)), failed.Model).Observe(failed.Duration.Seconds())
+			m.failovers.WithLabelValues(failed.Model).Inc()
+		}
+		duration = step.Attempts[n-1].Duration
+	}
+	m.modelCall.WithLabelValues(phase, string(step.Outcome), step.Model).Observe(duration.Seconds())
+	if step.Usage != nil {
+		m.tokens.WithLabelValues(phase, "prompt", step.Model).Add(float64(step.Usage.PromptTokens))
+		m.tokens.WithLabelValues(phase, "completion", step.Model).Add(float64(step.Usage.CompletionTokens))
+	}
 }
 
 func (m *Metrics) tool(step agent.Step) {
