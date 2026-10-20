@@ -13,7 +13,9 @@ func validateLLM(llm LLM, add addFunc) {
 	for i, model := range llm.Models {
 		prefix := fmt.Sprintf("llm.models[%d]", i)
 		validateModel(prefix, model, add)
-		if first, ok := firstUse[model.Name]; ok && model.Name != "" {
+		if model.Name == "" {
+			add(prefix+".name", "required")
+		} else if first, ok := firstUse[model.Name]; ok {
 			add(prefix+".name", "%q is already used by llm.models[%d]; give each model a unique name", model.Name, first)
 		} else {
 			firstUse[model.Name] = i

@@ -66,7 +66,8 @@ func writeConfig(t *testing.T, llmURL string) string {
     app_token_env: CHATOPS_SERVE_TEST_APP
 llm:
   models:
-    - base_url: %s/v1
+    - name: test
+      base_url: %s/v1
       model: test-model
 agent:
   system_prompt: test prompt
@@ -304,9 +305,9 @@ func Test_Cmd_Run_dependency_errors(t *testing.T) {
 		config string
 		errMsg string
 	}{
-		"bad-llm": {config: chatSection + "llm:\n  models:\n    - base_url: http://localhost/v1?x=1\n      model: m\nagent:\n  system_prompt: p\n", errMsg: `llm.models[0]: llm base URL "http://localhost/v1?x=1" must not carry query`},
+		"bad-llm": {config: chatSection + "llm:\n  models:\n    - name: m\n      base_url: http://localhost/v1?x=1\n      model: m\nagent:\n  system_prompt: p\n", errMsg: `llm.models[0]: llm base URL "http://localhost/v1?x=1" must not carry query`},
 		"bad-mcp": {
-			config: chatSection + "llm:\n  models:\n    - base_url: http://localhost/v1\n      model: m\nagent:\n  system_prompt: p\nmcp:\n  servers:\n    x:\n      transport: stdio\n      command: /nonexistent/mcp\n",
+			config: chatSection + "llm:\n  models:\n    - name: m\n      base_url: http://localhost/v1\n      model: m\nagent:\n  system_prompt: p\nmcp:\n  servers:\n    x:\n      transport: stdio\n      command: /nonexistent/mcp\n",
 			errMsg: `mcp server "x": connect`,
 		},
 	}

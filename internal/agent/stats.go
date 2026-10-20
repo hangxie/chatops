@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/hangxie/chatops/internal/llm"
@@ -71,6 +72,17 @@ func (s Stats) ToolCalls() int {
 		}
 	}
 	return n
+}
+
+// Models lists the models that answered or failed last, each once, in first-use order.
+func (s Stats) Models() []string {
+	var models []string
+	for _, step := range s.Steps {
+		if step.Model != "" && !slices.Contains(models, step.Model) {
+			models = append(models, step.Model)
+		}
+	}
+	return models
 }
 
 // Tokens sums reported usage; reported is false when no step reported any.

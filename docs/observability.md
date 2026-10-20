@@ -178,6 +178,8 @@ When the daemon checks its own status through a conversation, that turn counts i
 
 Each turn emits one info-level log line, with the same totals as the footer.
 
+- It lists the models that answered, by `name`, in `models`. A model that failed over is not listed; the `model failed over` warning names it.
+- Other lines about a model response, such as `tool call rejected`, carry that model's `name` in `model`.
 - It is written whether or not the footer or metrics are enabled.
 - So a slow turn can be investigated after the fact.
 

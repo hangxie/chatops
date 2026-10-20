@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -55,6 +56,15 @@ func reply(text string) func(context.Context) (llm.Response, error) {
 func calls(toolCalls ...llm.ToolCall) func(context.Context) (llm.Response, error) {
 	return func(context.Context) (llm.Response, error) {
 		return llm.Response{Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: toolCalls}}, nil
+	}
+}
+
+// from sets the answering model's name, as the pool does.
+func from(model string, respond func(context.Context) (llm.Response, error)) func(context.Context) (llm.Response, error) {
+	return func(ctx context.Context) (llm.Response, error) {
+		resp, err := respond(ctx)
+		resp.Model = model
+		return resp, err
 	}
 }
 
@@ -322,11 +332,11 @@ func Test_Agent_Run_errors(t *testing.T) {
 	}{
 		"model-error": {
 			responses: []func(context.Context) (llm.Response, error){
-				func(context.Context) (llm.Response, error) { return llm.Response{}, errors.New("503") },
+				func(context.Context) (llm.Response, error) { return llm.Response{Model: "primary"}, errors.New("503") },
 			},
-			errMsg:  "model: 503",
+			errMsg:  "model primary: 503",
 			outcome: OutcomeError,
-			steps:   []Step{{Phase: PhaseModel, Outcome: OutcomeError}},
+			steps:   []Step{{Phase: PhaseModel, Outcome: OutcomeError, Model: "primary"}},
 		},
 		"turn-timeout": {
 			responses: []func(context.Context) (llm.Response, error){
@@ -504,10 +514,10 @@ func Test_Agent_Run_stats(t *testing.T) {
 	big := strings.Repeat("a", 2000)
 	model := &fakeModel{responses: []func(context.Context) (llm.Response, error){
 		func(context.Context) (llm.Response, error) {
-			return llm.Response{Message: llm.Message{ToolCalls: []llm.ToolCall{{ID: "c1", Name: "builtin__ping", Arguments: `{}`}}}, Usage: usage(100, 10)}, nil
+			return llm.Response{Message: llm.Message{ToolCalls: []llm.ToolCall{{ID: "c1", Name: "builtin__ping", Arguments: `{}`}}}, Usage: usage(100, 10), Model: "primary"}, nil
 		},
 		func(context.Context) (llm.Response, error) {
-			return llm.Response{Message: llm.Message{Content: "done"}, Usage: usage(300, 40)}, nil
+			return llm.Response{Message: llm.Message{Content: "done"}, Usage: usage(300, 40), Model: "backup"}, nil
 		},
 	}}
 	tools := newFakeTools(t, func(context.Context, mcp.Tool, json.RawMessage) (mcp.Result, error) {
@@ -520,13 +530,13 @@ func Test_Agent_Run_stats(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, OutcomeAnswered, turn.Stats.Outcome)
 	require.Equal(t, []Step{
-		{Phase: PhasePlan, Outcome: OutcomeOK, Usage: usage(100, 10)},
+		{Phase: PhasePlan, Outcome: OutcomeOK, Usage: usage(100, 10), Model: "primary"},
 		{Phase: PhaseTool, Name: "builtin__ping", Server: "builtin", Tool: "ping", Outcome: OutcomeOK, ResultBytes: 2000, SentBytes: len(truncate(big, 1024)), Truncated: true},
-		{Phase: PhaseAnswer, Outcome: OutcomeOK, Usage: usage(300, 40)},
+		{Phase: PhaseAnswer, Outcome: OutcomeOK, Usage: usage(300, 40), Model: "backup"},
 	}, withoutDurations(turn.Stats.Steps))
 	require.Positive(t, turn.Stats.Duration)
 	require.Contains(t, logs.String(), `"msg":"turn completed","outcome":"answered"`)
-	require.Contains(t, logs.String(), `"steps":3,"tools":1,"prompt_tokens":400,"completion_tokens":50`)
+	require.Contains(t, logs.String(), `"steps":3,"tools":1,"models":["primary","backup"],"prompt_tokens":400,"completion_tokens":50`)
 }
 
 func Test_Agent_Run_logs_without_usage(t *testing.T) {
@@ -538,6 +548,60 @@ func Test_Agent_Run_logs_without_usage(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, logs.String(), `"msg":"turn completed","outcome":"answered"`)
 	require.NotContains(t, logs.String(), "_tokens")
+	require.NotContains(t, logs.String(), `"models"`)
+}
+
+func Test_Agent_Run_logs_model_name(t *testing.T) {
+	ping := llm.ToolCall{ID: "c1", Name: "builtin__ping", Arguments: `{}`}
+	bad := llm.ToolCall{ID: "c1", Name: "builtin__get", Arguments: `{"name":1}`}
+	tests := map[string]struct {
+		responses []func(context.Context) (llm.Response, error)
+		limit     int
+		want      []string
+	}{
+		"tool-call-requested": {
+			responses: []func(context.Context) (llm.Response, error){from("primary", calls(ping)), from("primary", reply("pong"))},
+			want:      []string{`"msg":"tool call requested","model":"primary","tool":"builtin__ping"`},
+		},
+		"unknown-tool": {
+			responses: []func(context.Context) (llm.Response, error){from("primary", calls(llm.ToolCall{ID: "c1", Name: "builtin__rm", Arguments: `{}`})), from("primary", reply("done"))},
+			want:      []string{`"msg":"tool call rejected","model":"primary","tool":"builtin__rm","reason":"unknown tool"`},
+		},
+		"invalid-arguments": {
+			responses: []func(context.Context) (llm.Response, error){from("primary", calls(bad)), from("primary", reply("done"))},
+			want: []string{
+				`"msg":"tool call rejected","model":"primary","tool":"builtin__get","reason":"invalid arguments"`,
+				`"msg":"tool call arguments invalid","model":"primary","tool":"builtin__get"`,
+			},
+		},
+		"decline-dropped": {
+			responses: []func(context.Context) (llm.Response, error){from("primary", calls(llm.ToolCall{ID: "c0", Name: declineTool}, ping)), from("primary", reply("pong"))},
+			want:      []string{`"msg":"decline dropped because the model also called other tools","model":"primary"`},
+		},
+		"iteration-limit": {
+			responses: []func(context.Context) (llm.Response, error){from("primary", calls(ping)), from("backup", calls(ping)), from("backup", calls(ping))},
+			limit:     3,
+			want:      []string{`"msg":"agent iteration limit reached","model":"backup","iterations":3`},
+		},
+		"repeated-failure": {
+			responses: []func(context.Context) (llm.Response, error){from("primary", calls(bad)), from("primary", calls(bad)), from("backup", calls(bad))},
+			want:      []string{`"msg":"agent stopped on a repeated failing tool call","model":"backup","iterations":3`},
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			limits := testLimits()
+			limits.MaxIterations = cmp.Or(tc.limit, 10)
+			_, err := New(&fakeModel{responses: tc.responses}, newFakeTools(t, pong), limits, logger).Run(context.Background(), nil, "x")
+			require.NoError(t, err)
+			for _, want := range tc.want {
+				require.Contains(t, logs.String(), want)
+			}
+		})
+	}
 }
 
 const invalidNameError = `error: invalid arguments: validating root: validating /properties/name: type: 1 has type "integer", want "string"`

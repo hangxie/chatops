@@ -108,12 +108,13 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 			return turn, context.Cause(ctx)
 		}
 		if err != nil {
-			return turn, fmt.Errorf("model: %w", err)
+			return turn, fmt.Errorf("model %s: %w", resp.Model, err)
 		}
+		log := a.logger.With("model", resp.Model)
 		if len(resp.Message.ToolCalls) == 0 {
 			if req.ToolChoice == llm.ToolChoiceRequired {
 				(*steps)[len(*steps)-1].Outcome = OutcomeError
-				return turn, fmt.Errorf("model: %w", errNoToolCall)
+				return turn, fmt.Errorf("model %s: %w", resp.Model, errNoToolCall)
 			}
 			turn.Reply, turn.Messages = a.answerReply(resp.Message.Content, failures), []llm.Message{userMessage}
 			return turn, nil
@@ -126,26 +127,26 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 		}
 		if declined {
 			// Dropped from the transcript too, since every call sent back to the model needs a result.
-			a.logger.Warn("decline dropped because the model also called other tools")
+			log.Warn("decline dropped because the model also called other tools")
 			resp.Message.ToolCalls = toolCalls
 		}
 		if iteration >= a.limits.MaxIterations {
 			(*steps)[len(*steps)-1].Outcome = OutcomeStopped
 			turn.Reply = withFailures(fmt.Sprintf("I stopped after %d steps without reaching an answer. Try a narrower request.", iteration), failures.unresolved())
 			turn.Messages = []llm.Message{userMessage}
-			a.logger.Warn("agent iteration limit reached", "iterations", iteration)
+			log.Warn("agent iteration limit reached", "iterations", iteration)
 			return turn, nil
 		}
 		if failures.repeats(resp.Message.ToolCalls) {
 			(*steps)[len(*steps)-1].Outcome = OutcomeStopped
 			turn.Reply = withFailures("I stopped because the same tool call kept failing.", failures.unresolved())
 			turn.Messages = []llm.Message{userMessage}
-			a.logger.Warn("agent stopped on a repeated failing tool call", "iterations", iteration)
+			log.Warn("agent stopped on a repeated failing tool call", "iterations", iteration)
 			return turn, nil
 		}
 
 		messages = append(messages, resp.Message)
-		results, err := a.runCalls(ctx, catalog, resp.Message.ToolCalls, failures, steps)
+		results, err := a.runCalls(ctx, log, catalog, resp.Message.ToolCalls, failures, steps)
 		if err != nil {
 			return turn, err
 		}
@@ -154,10 +155,10 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, input string) (t
 }
 
 // runCalls runs calls in order, recording each step and failure, and returns one tool message per call.
-func (a *Agent) runCalls(ctx context.Context, catalog *mcp.Catalog, calls []llm.ToolCall, failures *failureLog, steps *[]Step) ([]llm.Message, error) {
+func (a *Agent) runCalls(ctx context.Context, log *slog.Logger, catalog *mcp.Catalog, calls []llm.ToolCall, failures *failureLog, steps *[]Step) ([]llm.Message, error) {
 	results := make([]llm.Message, 0, len(calls))
 	for _, call := range calls {
-		content, step, failure := a.runTool(ctx, catalog, call)
+		content, step, failure := a.runTool(ctx, log, catalog, call)
 		*steps = append(*steps, step)
 		if ctx.Err() != nil {
 			return nil, context.Cause(ctx)
@@ -174,6 +175,9 @@ func (a *Agent) runCalls(ctx context.Context, catalog *mcp.Catalog, calls []llm.
 
 func (a *Agent) logStats(stats Stats) {
 	attrs := []any{"outcome", stats.Outcome, "duration", stats.Duration, "steps", len(stats.Steps), "tools", stats.ToolCalls()}
+	if models := stats.Models(); len(models) > 0 {
+		attrs = append(attrs, "models", models)
+	}
 	// Unreported usage is left out rather than logged as zero.
 	if prompt, completion, reported := stats.Tokens(); reported {
 		attrs = append(attrs, "prompt_tokens", prompt, "completion_tokens", completion)

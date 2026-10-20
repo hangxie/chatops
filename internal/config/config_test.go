@@ -19,7 +19,8 @@ chat:
     app_token_env: SLACK_APP_TOKEN
 llm:
   models:
-    - base_url: https://llama-cpp.homelab/v1
+    - name: qwen3-0b6
+      base_url: https://llama-cpp.homelab/v1
       model: qwen3-0b6
       api_key_env: LLM_API_KEY
       disable_thinking: true
@@ -112,7 +113,7 @@ func Test_Parse_full(t *testing.T) {
 const minimalChat = "chat:\n  console:\n    type: stdio\n"
 
 func Test_Parse_defaults(t *testing.T) {
-	cfg, err := Parse([]byte(minimalChat + "llm:\n  models:\n    - base_url: http://localhost:8080/v1\n      model: m\nagent:\n  system_prompt: p\n"))
+	cfg, err := Parse([]byte(minimalChat + "llm:\n  models:\n    - name: m\n      base_url: http://localhost:8080/v1\n      model: m\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
 	require.Equal(t, Agent{
 		SystemPrompt:       "p",
@@ -142,7 +143,7 @@ func Test_Parse_stream(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			cfg, err := Parse([]byte(minimalChat + "llm:\n  models:\n    - base_url: http://localhost:8080/v1\n      model: m\n" + tc.yaml + "agent:\n  system_prompt: p\n"))
+			cfg, err := Parse([]byte(minimalChat + "llm:\n  models:\n    - name: m\n      base_url: http://localhost:8080/v1\n      model: m\n" + tc.yaml + "agent:\n  system_prompt: p\n"))
 			require.NoError(t, err)
 			require.Equal(t, tc.want, cfg.LLM.Models[0].Streaming())
 		})
@@ -150,18 +151,18 @@ func Test_Parse_stream(t *testing.T) {
 }
 
 func Test_Parse_sampling(t *testing.T) {
-	cfg, err := Parse([]byte(minimalChat + "llm:\n  models:\n    - base_url: http://localhost:8080/v1\n      model: m\n      sampling:\n        temperature: 0\n        top_p: 0.9\n        seed: 7\n        stop: [\"</s>\"]\nagent:\n  system_prompt: p\n"))
+	cfg, err := Parse([]byte(minimalChat + "llm:\n  models:\n    - name: m\n      base_url: http://localhost:8080/v1\n      model: m\n      sampling:\n        temperature: 0\n        top_p: 0.9\n        seed: 7\n        stop: [\"</s>\"]\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
 	require.Equal(t, Sampling{Temperature: pval(0.0), TopP: pval(0.9), Seed: pval(7), Stop: []string{"</s>"}}, cfg.LLM.Models[0].Sampling)
 
 	// Omitting the sampling block leaves every parameter unset, so none is sent.
-	bare, err := Parse([]byte(minimalChat + "llm:\n  models:\n    - base_url: http://localhost:8080/v1\n      model: m\nagent:\n  system_prompt: p\n"))
+	bare, err := Parse([]byte(minimalChat + "llm:\n  models:\n    - name: m\n      base_url: http://localhost:8080/v1\n      model: m\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
 	require.Equal(t, Sampling{}, bare.LLM.Models[0].Sampling)
 }
 
 func Test_Parse_single_document_marker(t *testing.T) {
-	cfg, err := Parse([]byte("---\n" + minimalChat + "llm:\n  models:\n    - base_url: http://localhost:8080/v1\n      model: m\nagent:\n  system_prompt: p\n"))
+	cfg, err := Parse([]byte("---\n" + minimalChat + "llm:\n  models:\n    - name: m\n      base_url: http://localhost:8080/v1\n      model: m\nagent:\n  system_prompt: p\n"))
 	require.NoError(t, err)
 	require.Equal(t, "m", cfg.LLM.Models[0].Model)
 }
@@ -172,7 +173,7 @@ func Test_Parse_errors(t *testing.T) {
 		errMsg string
 	}{
 		"unknown-field": {
-			input:  "llm:\n  models:\n    - base_url: http://x/v1\n      model: m\n      temperature: 1\n",
+			input:  "llm:\n  models:\n    - name: m\n      base_url: http://x/v1\n      model: m\n      temperature: 1\n",
 			errMsg: "field temperature not found",
 		},
 		"old-single-model": {
@@ -180,7 +181,7 @@ func Test_Parse_errors(t *testing.T) {
 			errMsg: "field base_url not found",
 		},
 		"bad-duration": {
-			input:  "llm:\n  models:\n    - base_url: http://x/v1\n      model: m\nagent:\n  turn_timeout: soon\n",
+			input:  "llm:\n  models:\n    - name: m\n      base_url: http://x/v1\n      model: m\nagent:\n  turn_timeout: soon\n",
 			errMsg: "parse config",
 		},
 		"not-yaml": {
@@ -188,15 +189,15 @@ func Test_Parse_errors(t *testing.T) {
 			errMsg: "parse config",
 		},
 		"two-documents": {
-			input:  "llm:\n  models:\n    - base_url: http://x/v1\n      model: m\n---\nllm:\n  model: other\n",
+			input:  "llm:\n  models:\n    - name: m\n      base_url: http://x/v1\n      model: m\n---\nllm:\n  model: other\n",
 			errMsg: "parse config: multiple YAML documents are not supported",
 		},
 		"trailing-empty-document": {
-			input:  "llm:\n  models:\n    - base_url: http://x/v1\n      model: m\n---\n",
+			input:  "llm:\n  models:\n    - name: m\n      base_url: http://x/v1\n      model: m\n---\n",
 			errMsg: "parse config: multiple YAML documents are not supported",
 		},
 		"bad-second-document": {
-			input:  "llm:\n  models:\n    - base_url: http://x/v1\n      model: m\n---\nllm: [\n",
+			input:  "llm:\n  models:\n    - name: m\n      base_url: http://x/v1\n      model: m\n---\nllm: [\n",
 			errMsg: "parse config: multiple YAML documents are not supported",
 		},
 		"empty": {
@@ -208,7 +209,7 @@ func Test_Parse_errors(t *testing.T) {
 			errMsg: "llm.models[0].base_url: required",
 		},
 		"retry-more-than-models": {
-			input:  minimalChat + "llm:\n  models:\n    - base_url: http://x/v1\n      model: m\n  max_model_retry: 2\nagent:\n  system_prompt: p\n",
+			input:  minimalChat + "llm:\n  models:\n    - name: m\n      base_url: http://x/v1\n      model: m\n  max_model_retry: 2\nagent:\n  system_prompt: p\n",
 			errMsg: "llm.max_model_retry: must not exceed the 1 configured models, got 2",
 		},
 	}

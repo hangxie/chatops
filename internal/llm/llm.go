@@ -3,7 +3,6 @@ package llm
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -146,7 +145,7 @@ func (c *Client) Complete(ctx context.Context, req Request) (Response, error) {
 	if err != nil && ctx.Err() == nil && (errors.As(err, new(transportError)) || callCtx.Err() != nil) {
 		err = unavailableError{err}
 	}
-	resp.Model = cmp.Or(c.cfg.Name, c.cfg.Model)
+	resp.Model = c.cfg.Name
 	return resp, err
 }
 
