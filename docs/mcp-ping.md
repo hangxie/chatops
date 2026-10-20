@@ -1,6 +1,9 @@
 # ping MCP tool group
 
-The `ping` group is a harmless connectivity tool for smoke tests and the simplest built-in group. It is the default `--tool` selection and takes no `--config`. Package: `pkg/mcpserver/ping`.
+The `ping` group is a harmless connectivity tool for smoke tests, and the simplest built-in group. Package: `pkg/mcpserver/ping`.
+
+- It is the default `--tool` selection.
+- It takes no `--config`.
 
 ## Tool: `ping`
 

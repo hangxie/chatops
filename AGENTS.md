@@ -17,14 +17,21 @@ This document defines expectations for contributors to the chatops Go project.
 
 - Follow idiomatic Go style; run `gofmt`/`goimports` on changes.
 - The repository builds two binaries: the `chatops` daemon (`cmd/chatops/`) and the `chatops-mcp` built-in MCP server (`cmd/chatops-mcp/`). There is no top-level `main.go`.
-- Use [kong](https://github.com/alecthomas/kong) for CLI parsing: each subcommand lives in `cmd/<binary>/<subcommand>/` as a `Cmd` struct with a `Run()` method, wired into the `cli` struct in `cmd/<binary>/main.go`. Subcommands shared by both binaries (such as `version`) live in `internal/<name>/`.
+- Use [kong](https://github.com/alecthomas/kong) for CLI parsing:
+    - Each subcommand lives in `cmd/<binary>/<subcommand>/` as a `Cmd` struct with a `Run()` method.
+    - It is wired into the `cli` struct in `cmd/<binary>/main.go`.
+    - Subcommands shared by both binaries (such as `version`) live in `internal/<name>/`.
 - Application code lives under `internal/`; MCP tool groups served by `chatops-mcp` live under `pkg/mcpserver/<group>/` so other programs can embed them.
 - Wire implementations explicitly; do not register them through `init()` or blank imports.
 - Handle errors explicitly and provide useful feedback.
-- Keep code comments short but clear: state intent or the non-obvious "why" concisely, and do not restate what the code already says. A comment should be one line, two in rare cases; if it needs three or more, rewrite the code to be clearer (better names, smaller functions, simpler flow) instead of explaining it.
+- Keep code comments short but clear:
+    - State intent or the non-obvious "why" concisely. Do not restate what the code already says.
+    - A comment should be one line, two in rare cases.
+    - If it needs three or more, rewrite the code to be clearer (better names, smaller functions, simpler flow) instead of explaining it.
 - Use `context.Context` for cancellable operations.
 - Avoid leaking goroutines or unnecessary memory allocations.
-- Non-test Go source files are preferred to be under 300 LOC and must never exceed 500 LOC; split larger files into cohesive units. Test files may exceed this limit when table coverage or fixtures make that clearer than splitting.
+- Non-test Go source files are preferred to be under 300 LOC, and must never exceed 500 LOC. Split larger files into cohesive units.
+- Test files may exceed this limit, when table coverage or fixtures make that clearer than splitting.
 
 ---
 

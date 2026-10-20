@@ -59,7 +59,7 @@ A message makes a round trip through the backend that received it:
 
 ## Configuration
 
-`chat:` maps a name you choose to a backend: its `type` plus that type's fields. Because each backend has its own name, you can run several of the same type, such as two Slack workspaces:
+`chat:` maps a name you choose to a backend: its `type` plus that type's fields. Each backend has its own name, so you can run several of the same type, such as two Slack workspaces:
 
     chat:
       eng-slack:
@@ -115,13 +115,14 @@ Formatting:
 
 - Replies post into the thread as escaped mrkdwn, without link previews. With `reply_mode: channel`, a top-level message is answered in its channel or DM instead.
 - Common Markdown the model emits is converted to mrkdwn.
-- A reply with a Markdown table is posted as Block Kit blocks. The first table that fits a native Slack table block is posted as one: Slack allows one per message, up to 100 rows, 20 columns, and 10,000 characters, with no empty cells.
+- A reply with a Markdown table is posted as Block Kit blocks.
+- The first table that fits a native Slack table block is posted as one. Slack allows one per message, up to 100 rows, 20 columns, and 10,000 characters, with no empty cells.
 - Every other table becomes an aligned code block.
 - A table ends at the first row whose column count differs from its header.
 
 Length and fallback:
 
-- A block reply is not cut at the plain-text length cap. It is limited to Slack's 50 blocks instead, ending with "[reply truncated]" if longer.
+- A block reply is not cut at the plain-text length cap. It is limited to Slack's 50 blocks instead, and ends with "[reply truncated]" if longer.
 - A stats footer is posted below a divider as a context block (smaller grey text) and left out of the notification text.
 - If Slack rejects the blocks, the reply is resent as plain mrkdwn, footer included.
 
@@ -138,7 +139,8 @@ The Discord Gateway: a websocket the bot opens outbound, like Slack Socket Mode,
 
 Intents and filtering:
 
-- The bot requests `Guilds`, `Guild Messages`, and `Direct Messages`, but not the privileged Message Content intent. Discord still delivers the content of messages that mention the bot and of direct messages, the only ones it answers.
+- The bot requests `Guilds`, `Guild Messages`, and `Direct Messages`, but not the privileged Message Content intent.
+- Discord still delivers the content of messages that mention the bot, and of direct messages. Those are the only ones it answers.
 - A channel message must start with a mention of the bot; a direct message needs none.
 - Messages from bots and webhooks, and system messages, are ignored.
 
@@ -146,17 +148,19 @@ Conversations and identity:
 
 - Each message is its own conversation, except inside a Discord thread, where the thread is one conversation.
 - A thread is recognized from the gateway's channel cache, or by a REST lookup when a revived thread is not cached yet.
-- A conversation is keyed by the thread ID inside a thread and by the message ID elsewhere. Discord gives a thread started from a message that message's ID, so a top-level question and the thread opened on it share one key and one history.
+- A conversation is keyed by the thread ID inside a thread, and by the message ID elsewhere.
+- A thread started from a message gets that message's ID. So a top-level question and the thread opened on it share one key and one history.
 - Sender identity is the Discord user ID from the gateway event.
 
 Thread mode (`reply_mode: thread`):
 
-- A top-level channel message is answered in a public thread the bot starts on it. Messages already in a thread and direct messages, which cannot have threads, are answered as in channel mode.
-- The thread is started when the first reply is sent, off the gateway event loop, so a slow REST call never delays other messages.
+- A top-level channel message is answered in a public thread the bot starts on it.
+- Messages already in a thread, and direct messages (which cannot have threads), are answered as in channel mode.
+- The thread is started when the first reply is sent, off the gateway event loop. A slow REST call never delays other messages.
 - The thread is named after the question's first line, cut to Discord's 100 characters, and archives after a day of inactivity.
 - If a thread already exists on the message (Discord error 160004), the reply goes into it, since its ID is the message ID.
-- Any other failure, such as a missing Create Public Threads permission or a channel type without threads, falls back to a channel reply and logs a warning.
-- The first attempt decides where the whole answer goes. A transient failure is not retried for later parts of that answer, so one answer never splits between the channel and a thread.
+- Any other failure falls back to a channel reply and logs a warning. Examples: a missing Create Public Threads permission, or a channel type without threads.
+- The first attempt decides where the whole answer goes. A transient failure is not retried for later parts, so one answer never splits between the channel and a thread.
 - A busy reply stays in the channel, so an overloaded bot opens no thread that never gets an answer.
 - Follow-ups in the thread still need a mention, because without the Message Content intent Discord sends the bot no text for other messages.
 
@@ -164,12 +168,15 @@ Replies:
 
 - Replies ping no one (no allowed mentions, not even the replied-to user) and suppress embeds, so links do not unfurl.
 - Outside a new thread, the first message is a Discord reply to the user's message. In a thread the bot started, it is a plain message below the question.
-- Discord renders Markdown, so the answer is sent as written, except tables, which Discord does not render and which become aligned code blocks.
+- Discord renders Markdown, so the answer is sent as written. The exception is tables: Discord does not render them, so they become aligned code blocks.
 - A reply is split at line breaks into messages of at most 2,000 characters. A code block spanning two messages is closed and reopened with its language.
 - A reply is cut after five messages with "[reply truncated]".
-- A stats footer is sent as subtext (`-#` lines, smaller grey text) below the answer, in a message of its own when the last one has no room.
+- A stats footer is sent as subtext (`-#` lines, smaller grey text) below the answer. It gets a message of its own when the last one has no room.
 
-Connection: the gateway reconnects and resumes on its own; a token Discord rejects fails startup.
+Connection:
+
+- The gateway reconnects and resumes on its own.
+- A token Discord rejects fails startup.
 
 | Parameter | Required | Meaning |
 |---|---|---|
@@ -179,12 +186,16 @@ Connection: the gateway reconnects and resumes on its own; a token Discord rejec
 
 ### `unix`
 
-A Unix domain socket for a client on the same host (`nc -U`, `socat`) to reach a running daemon. One conversation per connection, a message per line, replies written back to the connection.
+A Unix domain socket, for a client on the same host (`nc -U`, `socat`) to reach a running daemon.
+
+- One conversation per connection.
+- One message per line, with replies written back to the connection.
 
 Access and identity:
 
 - The socket file's permissions control which local processes may connect, so restrict its owner and group. There is no in-band token.
-- Those permissions gate access but do not identify the caller (several users in one group may be allowed). Until Phase 4 adds peer-credential inspection (Linux `SO_PEERCRED`) to populate `User`, the sender is the connection.
+- Those permissions gate access, but do not identify the caller: several users in one group may be allowed.
+- Until Phase 4 adds peer-credential inspection (Linux `SO_PEERCRED`) to populate `User`, the sender is the connection.
 
 Connections:
 
@@ -195,11 +206,12 @@ Connections:
 
 Socket file lifecycle:
 
-- On startup, a stale socket from an earlier run is cleared only after a connect probe shows nothing is listening. A live socket refuses startup rather than being unlinked.
-- An exclusive lock file next to the socket (`<path>.lock`), held for the listener's lifetime, serializes the probe/remove/bind sequence. A second daemon on the same path fails fast.
+- On startup, a stale socket from an earlier run is cleared only after a connect probe shows nothing is listening.
+- A live socket refuses startup, rather than being unlinked.
+- An exclusive lock file next to the socket (`<path>.lock`) serializes the probe/remove/bind sequence. It is held for the listener's lifetime, so a second daemon on the same path fails fast.
 - Closing the listener removes the socket on exit.
 
-The reply protocol is one line of text, for interactive clients. Programmatic framing for multi-line replies (length-prefix or JSON Lines) is future work.
+The reply protocol is one line of text, for interactive clients. Framing multi-line replies for programs (length-prefix or JSON Lines) is future work.
 
 | Parameter | Required | Meaning |
 |---|---|---|
@@ -214,7 +226,8 @@ A request/response HTTP endpoint, and the transport the platform-adapter backend
 - The reply is returned on the request.
 - One conversation per caller-supplied conversation key, within the single principal the shared bearer token represents.
 - A shared token does not isolate that application's own users, so the endpoint is one trusted client.
-- A non-loopback `listen` without a bearer token is refused at startup (the shared `checkBind` rule). When a token is set, every request must present it.
+- A non-loopback `listen` without a bearer token is refused at startup (the shared `checkBind` rule).
+- When a token is set, every request must present it.
 - TLS is a fronting proxy's job.
 
 | Parameter | Required | Meaning |
@@ -226,16 +239,17 @@ A request/response HTTP endpoint, and the transport the platform-adapter backend
 
 ### `tcp`
 
-A connection-oriented network socket for a line-oriented client (`telnet`, `nc`). One conversation per connection, a message per line, replies written back.
+A connection-oriented network socket, for a line-oriented client (`telnet`, `nc`). One conversation per connection, one message per line, replies written back.
 
 - Each conversation is keyed by a unique per-connection ID, not the remote address.
 - Writes per connection are serialized, and a disconnect cancels the in-flight turn.
-- It binds loopback only and refuses any non-loopback `listen`, because a network socket has no filesystem permissions to authorize callers, and it speaks no authentication.
-- Remote access is an operator's `ssh -L` tunnel to localhost. Native remote auth (TLS with client certificates) is out of scope.
+- It binds loopback only, and refuses any non-loopback `listen`. A network socket has no filesystem permissions to authorize callers, and it speaks no authentication.
+- Remote access is an operator's `ssh -L` tunnel to localhost.
+- Native remote auth (TLS with client certificates) is out of scope.
 
 It is kept separate from `unix` on purpose: only a filesystem socket can carry permission-based access control.
 
-UDP is not a variant of this backend. It is connectionless, so it needs its own session identity, expiry, datagram-size, and reply-routing design, and is deferred (see Future work).
+UDP is not a variant of this backend. It is connectionless, so it needs its own design for session identity, expiry, datagram size, and reply routing. It is deferred (see Future work).
 
 | Parameter | Required | Meaning |
 |---|---|---|
@@ -244,9 +258,15 @@ UDP is not a variant of this backend. It is connectionless, so it needs its own 
 
 ## Runtime
 
-`serve` builds the model, the MCP tool clients, and one `conversation.Manager`, then runs the selected backends concurrently under an error group, each calling the manager's `submit`.
+`serve`:
 
-The runner wraps each backend's `submit` to prefix the conversation key with the backend name: `eng-slack:<channel-ts>`, `console:stdin`, `ops-tcp:conn-7`. Conversations from different backends therefore cannot collide in history or ordering, and logs and audit records name the originating backend.
+1. builds the model, the MCP tool clients, and one `conversation.Manager`;
+2. runs the selected backends concurrently under an error group, each calling the manager's `submit`.
+
+The runner wraps each backend's `submit` to prefix the conversation key with the backend name: `eng-slack:<channel-ts>`, `console:stdin`, `ops-tcp:conn-7`.
+
+- Conversations from different backends cannot collide in history or ordering.
+- Logs and audit records name the originating backend.
 
 ## Message lifecycle
 
@@ -270,10 +290,14 @@ The runner wraps each backend's `submit` to prefix the conversation key with the
 
 - The manager invokes it exactly once after the turn finishes, with the turn's text or a generic failure line, under a reply-delivery timeout.
 - A failed `Reply` is logged, not retried, and does not fail the turn.
-- Each backend keeps its delivery path alive until `Reply` runs: the HTTP handler blocks on the reply within the request; a TCP connection stays open.
-- Replies for different conversations may run at the same time, so a backend sharing one output destination synchronizes its writes (`stdio` guards stdout, socket backends serialize per connection).
+- Each backend keeps its delivery path alive until `Reply` runs. The HTTP handler blocks on the reply within the request; a TCP connection stays open.
+- Replies for different conversations may run at the same time. So a backend sharing one output destination synchronizes its writes: `stdio` guards stdout, and socket backends serialize per connection.
 
-**Ordering.** Within one conversation, messages are processed and replied strictly in order. Independent conversations run concurrently up to `max_concurrent_turns`. A concurrency slot is held only while the agent works, not while a reply is delivered.
+**Ordering.**
+
+- Within one conversation, messages are processed and replied strictly in order.
+- Independent conversations run concurrently, up to `max_concurrent_turns`.
+- A concurrency slot is held only while the agent works, not while a reply is delivered.
 
 **Shutdown is graceful.**
 
@@ -290,7 +314,10 @@ Reply delivery is detached from turn cancellation, so an already-accepted messag
 | Conversation key | `Conversation` | History and ordering only; prefixed with the backend name |
 | Verified sender identity | `User` | Audit now, Phase 4 authorization later |
 
-A conversation key is never treated as identity. `User` is the authenticated principal the backend vouches for, and authorization keys on it, never on message text or the conversation key.
+A conversation key is never treated as identity.
+
+- `User` is the authenticated principal the backend vouches for.
+- Authorization keys on `User`, never on message text or the conversation key.
 
 | Backend | `User` |
 |---|---|
@@ -316,7 +343,7 @@ When a backend fails fatally, replies still in flight are delivered best-effort:
 
 - The failing backend's own transport may already be gone.
 - Shared clients that outlive a backend's `Run`, such as the Slack Web API client, can still post during the drain.
-- Each backend keeps waiting for an accepted message's reply through the drain window, rather than abandoning it the moment its context is cancelled.
+- Each backend keeps waiting for an accepted message's reply through the drain window. It does not abandon the reply the moment its context is cancelled.
 
 ## Package layout
 
@@ -331,21 +358,34 @@ Every source file has a one-to-one `_test.go`.
 
 ## Future work
 
-- Teams, Webex, and SMS: webhook-based platform-adapter backends that reuse a shared HTTP listener and request-handling utilities, not configuration variants of the generic `http` backend.
+- Teams, Webex, and SMS: webhook-based adapter backends. They reuse a shared HTTP listener and request-handling utilities, and are not configuration variants of the generic `http` backend.
 - Per-user authorization (Phase 4), applied uniformly across backends, keyed on each backend's verified sender identity.
 
 Deferred:
 
 - A request-ID/retrieval mode for `http`; the accepted design is request/response only.
-- A `udp` backend. Being connectionless, it needs its own session-identity, expiry, datagram-size, and reply-routing design, and will not be added without a concrete use case.
+- A `udp` backend. It needs its own design (see [`tcp`](#tcp)), and will not be added without a concrete use case.
 - Native TLS client-certificate auth for remote sockets.
 
 ## Decisions
 
-1. **One interface, explicit wiring.** Every backend is a message source behind the one `Backend` interface, wired through a `type`-switched factory (no `init()` or blank import). A message's `Reply` closure is the entire platform abstraction.
-2. **Named configuration, config-only selection.** Backends are a named `chat:` map keyed by a `type` discriminator, with multiple instances per type. Every entry runs, so the file alone says what is on, and startup aborts on any invalid entry.
-3. **One shared manager, isolated namespaces.** All backends feed one `serve`-owned conversation manager; keys are prefixed with the backend name so histories and ordering never collide.
-4. **Asynchronous, ordered, graceful.** `submit` never blocks; `Reply` fires exactly once and is concurrency-safe; per-conversation order is preserved; overload is central (`ErrBusy`, mapped per backend); shutdown drains within a bounded grace period.
-5. **Sender identity is separate from conversation identity.** A key is never treated as identity, and the `http` shared-token principal does not isolate an application's own users.
-6. **Per-backend security.** Each backend authorizes its own way (see [Backend types](#backend-types)). `unix` stays separate from `tcp` because only a filesystem socket can carry permission-based access control.
-7. **Adapter extensibility.** New webhook platforms (Teams, Webex, SMS) are adapter backends reusing the shared HTTP listener. A platform with an outbound connection, as Slack Socket Mode and the Discord Gateway are, uses it instead and needs no public endpoint.
+1. **One interface, explicit wiring.**
+    - Every backend is a message source behind the one `Backend` interface.
+    - It is wired through a `type`-switched factory, with no `init()` or blank import.
+    - A message's `Reply` closure is the entire platform abstraction.
+2. **Named configuration, config-only selection.**
+    - Backends are a named `chat:` map keyed by a `type` discriminator, with multiple instances per type.
+    - Every entry runs, so the file alone says what is on.
+    - Startup aborts on any invalid entry.
+3. **One shared manager, isolated namespaces.** All backends feed one `serve`-owned conversation manager. Keys are prefixed with the backend name, so histories and ordering never collide.
+4. **Asynchronous, ordered, graceful.**
+    - `submit` never blocks.
+    - `Reply` fires exactly once, and is concurrency-safe.
+    - Per-conversation order is preserved.
+    - Overload is handled centrally (`ErrBusy`, mapped per backend).
+    - Shutdown drains within a bounded grace period.
+5. **Sender identity is separate from conversation identity.** A key is never treated as identity. The `http` shared-token principal does not isolate an application's own users.
+6. **Per-backend security.** Each backend authorizes its own way (see [Backend types](#backend-types)). `unix` stays separate from `tcp`, because only a filesystem socket can carry permission-based access control.
+7. **Adapter extensibility.**
+    - New webhook platforms (Teams, Webex, SMS) are adapter backends reusing the shared HTTP listener.
+    - A platform with an outbound connection, like Slack Socket Mode or the Discord Gateway, uses that instead, and needs no public endpoint.

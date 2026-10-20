@@ -2,7 +2,10 @@
 
 Status: implemented ([`DESIGN.md`](DESIGN.md) Phase 3). Selectable with `--tool kubernetes`. Package: `pkg/mcpserver/kubernetes`.
 
-The `kubernetes` group is ChatOps' Kubernetes integration: one tool group, organized internally by resource, exposing read-only tools. All mutation is out of scope until the Phase 4 authorization and approval framework exists.
+The `kubernetes` group is ChatOps' Kubernetes integration:
+
+- one tool group, organized internally by resource;
+- read-only tools only. All mutation is out of scope until the Phase 4 authorization and approval framework exists.
 
 This document holds:
 
@@ -51,7 +54,8 @@ Each health word list is checked in the order shown; the first match wins.
 - `namespace_list` reports each namespace's phase and only its `True` conditions.
 - Every namespace condition describes a deletion problem (content or finalizers remaining, discovery failures), so a `True` one is exactly why a namespace is stuck `Terminating`.
 - The conditions column appears only when some namespace has one.
-- Each condition keeps its reason and message in structured output. Its message, which often names the blocking resource kinds, follows the table as one detail line, so the table stays one line per namespace.
+- Each condition keeps its reason and message in structured output.
+- In text, the message follows the table as one detail line, so the table stays one line per namespace. It often names the blocking resource kinds.
 - RBAC: `list` on `namespaces`, beside the group-wide `get`.
 
 ### deployment
@@ -90,7 +94,8 @@ Health is the kubectl-style pod status.
 
 - Returns every main container unless one is named. Init and ephemeral containers can be named.
 - Tails 50 lines by default, at most 500.
-- Streams each container's output and keeps its newest 16 KB, cut at a line boundary. There is no server-side byte limit, which would cut the newest output instead of the oldest.
+- Streams each container's output, and keeps its newest 16 KB, cut at a line boundary.
+- There is no server-side byte limit: it would cut the newest output instead of the oldest.
 - The API's 400 answers (no previous instance, container not started) become a per-container note carrying the API's message.
 - `previous` shows the crashed instance behind a `CrashLoopBackOff`.
 - Logs are raw container output relayed into chat and cannot be redacted, so the `pods/log` grant is the boundary.
@@ -127,7 +132,10 @@ Counts are against the nodes that should run a pod (`desiredNumberScheduled`). H
 | `Degraded` | fewer available than desired |
 | `Healthy` | otherwise |
 
-A daemonset's status does not name its current revision. It is the `controller-revision-hash` label of the newest ControllerRevision the daemonset controls, compared with each owned pod's label.
+A daemonset's status does not name its current revision. So:
+
+1. take the newest ControllerRevision the daemonset controls;
+2. compare its `controller-revision-hash` label with each owned pod's label.
 
 RBAC: `get`/`list` on `daemonsets` and `list` on `controllerrevisions`.
 
@@ -148,7 +156,10 @@ RBAC: `get`/`list` on `replicasets`.
 
 ### service
 
-A service's pods are the ones its EndpointSlices name, which is where traffic actually goes, not whatever its selector matches. This also covers services without a selector.
+A service's pods are the ones its EndpointSlices name, not whatever its selector matches.
+
+- EndpointSlices are where traffic actually goes.
+- This also covers services without a selector.
 
 | Health | When |
 |---|---|
@@ -161,7 +172,7 @@ A service's pods are the ones its EndpointSlices name, which is where traffic ac
 Merging endpoints:
 
 - A backend listed in several slices (a dual-stack service repeats a pod once per address family) is merged into one endpoint with all its addresses.
-- When the entries disagree, the merge is conservative, so the result never depends on slice order: ready and serving only if every entry says so, terminating if any does.
+- When the entries disagree, the merge is conservative, so the result never depends on slice order. An endpoint is ready and serving only if every entry says so, and terminating if any does.
 - Terminating endpoints are left out of the counts but still listed.
 - An unset `ready` condition means ready, as the API defines.
 - `service_list` counts endpoints with one EndpointSlice list for the whole scope.
@@ -223,7 +234,9 @@ Events are one API about every kind of object, so there is one `event_list` rath
 | the cluster's warnings | `type: Warning` |
 
 - Filters are server-side event field selectors.
-- The API matches `kind` exactly, but models often copy the lowercase kinds kubectl prints. Common lowercase and short names (`pod`, `pvc`, `sts`) are mapped to the API kind and filtered server-side; any other kind is matched case-insensitively after listing.
+- The API matches `kind` exactly, but models often copy the lowercase kinds kubectl prints.
+    - Common lowercase and short names (`pod`, `pvc`, `sts`) are mapped to the API kind, and filtered server-side.
+    - Any other kind is matched case-insensitively after listing.
 - Rows are newest first by kubectl's last-seen time, and the cap keeps the newest, not the first in API order.
 - Cluster-scoped objects record their events in `default`, so filtering those by namespace finds nothing.
 - The cluster keeps events for about an hour.
@@ -232,7 +245,10 @@ RBAC: `list` on `events`.
 
 ## One group, resource-oriented internals
 
-Kubernetes is exposed as one `kubernetes` tool group whose code is organized by resource module. Kubernetes is one external system, with one client, one credential context, and one set of error conventions, so the MCP server boundary matches the integration boundary.
+Kubernetes is exposed as one `kubernetes` tool group, whose code is organized by resource module.
+
+- Kubernetes is one external system, with one client, one credential context, and one set of error conventions.
+- So the MCP server boundary matches the integration boundary.
 
 Tool grouping is not an authorization boundary. Three controls stay independent:
 
@@ -242,11 +258,11 @@ Tool grouping is not an authorization boundary. Three controls stay independent:
 | ChatOps authorization (Phase 4) | roles, rules, approval, at execution time | who may call what |
 | Kubernetes RBAC | the API server | what the credentials can read or change |
 
-Selecting a group only affects exposure, and `ReadOnlyHint` is advisory, so read/destructive and per-requester decisions belong to the other two controls.
+Selecting a group only affects exposure, and `ReadOnlyHint` is advisory. So read/destructive and per-requester decisions belong to the other two controls.
 
 ## Tool conventions
 
-Tool names are resource-first snake_case, `<resource>_<verb>`, matching the existing `service_status` tool. A resource offers the verbs that apply to it, each with a fixed meaning:
+Tool names are resource-first snake_case, `<resource>_<verb>`, matching the existing `service_status` tool. A resource offers the verbs that apply to it. Each verb has a fixed meaning:
 
 | Verb | Meaning | Arguments |
 |---|---|---|
@@ -261,12 +277,12 @@ Every tool:
 
 - is read-only (`ReadOnlyHint: true`, `IdempotentHint: true`, `OpenWorldHint: true`);
 - returns a typed Go response, so `mcp.AddTool` derives the output schema and populates `StructuredContent`;
-- sets `Content` to a concise human-readable summary rather than relying on the SDK's JSON fallback, because small models answer better from a compact text block;
+- sets `Content` to a concise human-readable summary, rather than the SDK's JSON fallback, because small models answer better from a compact text block;
 - renders kubectl-like text: a `list` is an aligned table, and a per-target tool renders one block per target separated by a blank line.
 
 ### Result cap
 
-Every `list` tool, and each target of a `pods` tool, returns at most `max_results` rows (default 50, set in `--config`), so a big roster cannot overflow the model's context.
+Every `list` tool, and each target of a `pods` tool, returns at most `max_results` rows (default 50, set in `--config`). So a big roster cannot overflow the model's context.
 
 - Structured output carries `total`, the count before the cap.
 - The text ends with `(showing the first N of M pods)`, so the model narrows the call instead of reading a partial roster as complete.
@@ -278,11 +294,14 @@ The cap is applied after the full API list, not with the API's `limit`, because 
 - would undercount after client-side filtering (owner references, case-insensitive kinds);
 - has no exact total when a selector is used.
 
-The cap bounds only what reaches the model. Each call still lists, filters, and summarizes every match, so API response size and server memory grow with the cluster. That is fine at homelab scale; a large cluster would need server-side pagination.
+The cap bounds only what reaches the model.
+
+- Each call still lists, filters, and summarizes every match, so API response size and server memory grow with the cluster.
+- That is fine at homelab scale. A large cluster would need server-side pagination.
 
 ## Targets
 
-Every tool that reports on specific objects takes a list of targets rather than a single name, and listing is always a separate tool.
+Every tool that reports on specific objects takes a list of targets, not a single name. Listing is always a separate tool.
 
 - A question about several objects costs one list call plus one call naming all of them, so model rounds do not grow with the number of objects.
 - This matters for small models, which usually make one tool call per response and would otherwise exhaust `agent.max_iterations` on a mid-sized cluster.
@@ -294,21 +313,24 @@ Every tool that reports on specific objects takes a list of targets rather than 
 |---|---|
 | Argument name | the resource in the plural (`nodes`, `deployments`); required and non-empty |
 | Cluster-scoped target | a name |
-| Namespaced target | an object with required `namespace` and `name` (`{"namespace": "argocd", "name": "argocd-server"}`), so the schema enforces both and nothing is parsed out of a combined string |
-| Cleanup | fields trimmed, a blank one is an error, duplicates dropped keeping request order |
+| Namespaced target | an object with required `namespace` and `name`: `{"namespace": "argocd", "name": "argocd-server"}`. The schema enforces both, and nothing is parsed out of a combined string |
+| Cleanup | fields trimmed; a blank one is an error; duplicates dropped, keeping request order |
 | Cap | 50 distinct targets, so the combined result stays within the tool-result budget |
 | Cap for `describe` and `log` | 5, because each target's output is a full object or raw output |
 
 ### Fetching and errors
 
 - Targets are fetched in parallel, at most four at a time, and the output keeps request order.
-- A target that does not exist is a normal entry with `found: false`: never a fuzzy match, never a tool error, so one bad name does not hide the others.
-- A failure that is not a miss (unreachable cluster, RBAC-forbidden) fails the whole call, cancels the targets still in flight or queued, and reports the first failure with the target it hit.
+- A target that does not exist is a normal entry with `found: false`. It is never a fuzzy match, and never a tool error, so one bad name does not hide the others.
+- A failure that is not a miss (unreachable cluster, RBAC-forbidden):
+    - fails the whole call;
+    - cancels the targets still in flight or queued;
+    - reports the first failure, with the target it hit.
 - Structured output wraps the entries in one list field named after the argument, e.g. `{"deployments": [...]}`, and each entry carries `found`.
 
 ### Missing namespaces
 
-A namespace that does not exist is reported as such, not as an empty result. When a namespaced lookup comes back empty or not found, the tool checks the namespace and says `namespace "xyz" does not exist`:
+A namespace that does not exist is reported as such, not as an empty result. When a namespaced lookup comes back empty or not found, the tool checks the namespace. If it is missing, the tool says `namespace "xyz" does not exist`:
 
 | Tool kind | Reports it as |
 |---|---|
@@ -327,17 +349,23 @@ The check runs only on an empty or missing result, so a successful call costs no
 
 ### Health
 
-A resource with a meaningful overall state reports it as one derived health word, the same in its `list`, `pods`, and `describe` output. It is evaluated in a fixed order so the most actionable state wins. Each resource defines its words and rules; the raw conditions remain in `describe`, since health is a summary, not a replacement.
+A resource with a meaningful overall state reports it as one derived health word.
+
+- The word is the same in its `list`, `pods`, and `describe` output.
+- It is evaluated in a fixed order, so the most actionable state wins.
+- Each resource defines its words and rules.
+- The raw conditions remain in `describe`, since health is a summary, not a replacement.
 
 ### `pods` tools
 
-- A `pods` tool lists the pods the workload controls: found by its selector, then confirmed by owner reference, since a selector match alone is not ownership.
+- A `pods` tool lists the pods the workload controls. They are found by its selector, then confirmed by owner reference, since a selector match alone is not ownership.
 - Rows use a shared pod summary whose columns follow `kubectl get pods`, native sidecars included.
-- Where the resource has rollout revisions, each pod is marked `current`, `old`, or `unknown`, so a stuck rollout shows which generation is failing. The resource's note defines how its current revision is found.
+- Where the resource has rollout revisions, each pod is marked `current`, `old`, or `unknown`. So a stuck rollout shows which generation is failing.
+- The resource's note defines how its current revision is found.
 
 ### `describe` tools
 
-A `describe` tool returns the object as YAML, because models read YAML most reliably and it never drifts from the API. A one-line header names the object and its health.
+A `describe` tool returns the object as YAML, with a one-line header naming the object and its health. Why YAML: models read it most reliably, and it never drifts from the API.
 
 Server bookkeeping is dropped:
 
@@ -363,11 +391,12 @@ Literal environment values in a pod template are redacted, because describe outp
 | `valueFrom` reference | unchanged; it names a Secret or ConfigMap key, not its value |
 | `command`, `args` | unchanged; secrets there cannot be recognized reliably, so move them to `env` or a Secret |
 
-Redaction covers containers and init containers. The last characters are kept rather than the first because credentials often start with a fixed prefix (`sk-`, `ghp_`) that identifies nothing.
+- Redaction covers containers and init containers.
+- The last characters are kept, not the first, because credentials often start with a fixed prefix (`sk-`, `ghp_`) that identifies nothing.
 
 ## Cluster connection and credentials
 
-Every group setting lives in its `--config` directory (shipped as `package/systemd/mcp-kubernetes.d/`), the same pattern as `status`, so new settings add a field rather than a flag.
+Every group setting lives in its `--config` directory, shipped as `package/systemd/mcp-kubernetes.d/`. It is the same pattern as `status`, so new settings add a field rather than a flag.
 
 | Field | Purpose |
 |---|---|
@@ -376,7 +405,7 @@ Every group setting lives in its `--config` directory (shipped as `package/syste
 | `max_results` | row cap for `list` and `pods` tools (see [Result cap](#result-cap)) |
 
 - The directory is optional, because every field has a working default. Unknown fields are errors.
-- A file of your own beside the shipped `00-default.yaml` overrides single fields, with a later file winning (see the README's [Configuration directories](../README.md#configuration-directories)).
+- A file of your own beside the shipped `00-default.yaml` overrides single fields; a later file wins. See the README's [Configuration directories](../README.md#configuration-directories).
 - A relative `kubeconfig` resolves against the config directory, not the working directory, so it means the same thing wherever the server starts.
 
 ### Connection resolution
@@ -384,7 +413,7 @@ Every group setting lives in its `--config` directory (shipped as `package/syste
 Standard client-go, first match wins:
 
 1. An explicit `kubeconfig`, honored exactly. A missing or invalid file fails startup; it never silently falls back.
-2. An explicit `context`, which requests kubeconfig-based resolution and takes precedence over in-cluster detection, so it is never silently ignored in a pod.
+2. An explicit `context`. It requests kubeconfig-based resolution, and takes precedence over in-cluster detection, so it is never silently ignored in a pod.
 3. In-cluster configuration, when running as a pod.
 4. A local kubeconfig (`$KUBECONFIG`, else `~/.kube/config`), the development fallback.
 
@@ -400,8 +429,10 @@ The HTTP bearer token (`--token-env`) only authenticates the MCP client to `chat
 - Every tool is read-only, so RBAC reduces to `get`/`list` grants.
 - Each resource lists the grants its tools need, and the README ships a sample `ClusterRole` combining them.
 - The group itself needs `get` on `namespaces` for the missing-namespace check.
-- Reads granted cluster-wide expose that resource in every namespace. Redaction in tool output does not change what the credentials can read: the grant is the real boundary, so scope it deliberately.
-- A grant more powerful than the data it serves (such as `nodes/proxy`) stays out of the baseline. Granting it is the only switch for the feature that needs it, so no server flag can disagree with the RBAC.
+- Reads granted cluster-wide expose that resource in every namespace.
+- Redaction in tool output does not change what the credentials can read. The grant is the real boundary, so scope it deliberately.
+- A grant more powerful than the data it serves (such as `nodes/proxy`) stays out of the baseline.
+- Granting it is the only switch for the feature that needs it, so no server flag can disagree with the RBAC.
 
 ## Package layout
 
@@ -413,13 +444,25 @@ The HTTP bearer token (`--token-env`) only authenticates the MCP client to `chat
 | `.../kubernetes/internal/kubetest` | fixtures shared by more than one resource's tests |
 | `cmd/chatops-mcp/serve/serve.go` | adds `"kubernetes"` to the `groups` map |
 
-`internal/kube` holds: clients; target validation and bounded parallel fetch; the generic per-target handler; the namespaced lookup and missing-namespace check; the workload list row and owned-pods lookup with revision marking; the pod summary; log fetching; describe cleaning and redaction; table, age, and quantity helpers.
+`internal/kube` holds:
+
+- clients;
+- target validation and bounded parallel fetch;
+- the generic per-target handler;
+- the namespaced lookup and missing-namespace check;
+- the workload list row, and the owned-pods lookup with revision marking;
+- the pod summary;
+- log fetching;
+- describe cleaning and redaction;
+- table, age, and quantity helpers.
 
 `internal/` keeps both shared packages private to the group. Every file has a one-to-one `_test.go`.
 
 ## Adding a resource
 
-1. Add a row to the Resources table and a short note covering only what the conventions here do not: health rules, revision matching, RBAC, and any deliberate omission. Write a separate `docs/mcp-k8s-<resource>.md` only when the design needs more.
+1. Add a row to the Resources table, and a short note.
+    - Cover only what the conventions here do not: health rules, revision matching, RBAC, and any deliberate omission.
+    - Write a separate `docs/mcp-k8s-<resource>.md` only when the design needs more.
 2. Add a `<resource>/` package exporting `Register`, with its tests, built on the shared code in `internal/kube`.
 3. Call `<resource>.Register` from the root `Register`.
 4. Add the resource's grants to the README `ClusterRole` and its tools to the README tool table.
@@ -436,9 +479,10 @@ A change to a convention in this document is a design change of its own, not par
 
 - RBAC-forbidden errors name the verb and resource (e.g. `get nodes`), so the operator can fix the role.
 - Error messages never echo bearer tokens, authorization headers, or raw kubeconfig contents. chatops posts tool errors to chat verbatim, so this is the only guard.
-- There is no startup connectivity probe: a cluster can become unreachable at any time, so it would say nothing about whether a later call succeeds.
-
-Runtime errors are the client's own, passed through unchanged. They already say what failed (`Unauthorized`, `nodes is forbidden: …`, `dial tcp …: connection refused`, `x509: …`), and chatops prefixes them with the tool name, so a categorizing layer would only reword them.
+- There is no startup connectivity probe. A cluster can become unreachable at any time, so it would say nothing about whether a later call succeeds.
+- Runtime errors are the client's own, passed through unchanged. A categorizing layer would only reword them:
+    - they already say what failed: `Unauthorized`, `nodes is forbidden: …`, `dial tcp …: connection refused`, `x509: …`;
+    - chatops prefixes them with the tool name.
 
 ## Testing
 
@@ -456,11 +500,18 @@ Each resource's tools:
 - call each per-target tool with a mix of existing and missing targets;
 - test failure paths (RBAC-forbidden, timeout, transport failure) with explicitly injected fake reactions, since the fake clientset does not reproduce API-server RBAC or network behavior.
 
-A live acceptance run checks the tools against a real cluster. It is not a unit test and never runs in CI. It hardcodes no cluster, uses whatever kubeconfig and context the operator points it at, and never assumes the target is production.
+A live acceptance run checks the tools against a real cluster.
+
+- It is not a unit test, and never runs in CI.
+- It hardcodes no cluster. It uses whatever kubeconfig and context the operator points it at.
+- It never assumes the target is production.
 
 ## Future work
 
-Mutating operations (cordon, drain, restart, scale, delete) wait for Phase 4 to provide per-requester authorization, Slack approval, and durable audit. They will be ordinary tools in the same group, marked non-read-only and gated by policy, not by group membership.
+Mutating operations (cordon, drain, restart, scale, delete) wait for Phase 4 to provide per-requester authorization, Slack approval, and durable audit.
+
+- They will be ordinary tools in the same group, marked non-read-only.
+- They will be gated by policy, not by group membership.
 
 ## Decisions
 
@@ -468,7 +519,7 @@ Mutating operations (cordon, drain, restart, scale, delete) wait for Phase 4 to 
 2. Tool names are `<resource>_<verb>` in snake_case, with a fixed meaning per verb.
 3. Every tool is read-only; no mutation until Phase 4.
 4. Tool grouping is not an authorization boundary; exposure, ChatOps authorization, and Kubernetes RBAC are three independent controls.
-5. Per-object tools take a required list of targets (at most 50, or 5 for every `describe` and `log` tool; deduplicated; fetched four at a time; output in request order). Listing is a separate tool; there is no implicit all-objects mode.
+5. Per-object tools take a required list of targets: at most 50 (5 for `describe` and `log`), deduplicated, fetched four at a time, output in request order. Listing is a separate tool; there is no implicit all-objects mode.
 6. Namespaced targets are `{namespace, name}` objects.
 7. A missing target is a `found: false` entry, not a call failure; a missing namespace is named as such.
 8. Conditions preserve `True`/`False`/`Unknown` and are never collapsed; an absent condition is absent, not a manufactured `Unknown`.
@@ -476,7 +527,7 @@ Mutating operations (cordon, drain, restart, scale, delete) wait for Phase 4 to 
 10. A resource with an overall state reports one derived health word, consistent across its tools.
 11. `pods` tools list only pods the workload controls (selector, then owner reference) with kubectl-style status, marking rollout revision where the resource has one.
 12. `describe` tools return cleaned YAML with literal environment values redacted, keeping the last 3 characters only for values of at least 12; `command`/`args` are not redacted.
-13. Connection: an explicit `kubeconfig` never silently falls back; in-cluster config when running as a pod; local kubeconfig as the development fallback; an explicit `context` forces kubeconfig resolution. Every group setting lives in the optional `--config` directory.
+13. Connection follows [Connection resolution](#connection-resolution): an explicit `kubeconfig` never silently falls back, and an explicit `context` forces kubeconfig resolution. Every group setting lives in the optional `--config` directory.
 14. The `rest.Config` sets a finite request timeout and a `chatops-mcp/<version>` user agent.
 15. Network failures are runtime tool errors; only local config problems fail startup.
 16. RBAC is the only switch for features that need a powerful grant; such grants stay out of the baseline.
