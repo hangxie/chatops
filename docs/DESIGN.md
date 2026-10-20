@@ -2,7 +2,7 @@
 
 Status: accepted design. Repository: https://github.com/hangxie/chatops.
 
-This is the conclusions-only design of record. It describes the accepted target architecture, not only what is built today; the Status section (§11) names what is not implemented yet.
+This is the conclusions-only design of record. It describes the accepted target architecture, not only what is built today. The Status section (§11) names what is not implemented yet.
 
 | Topic | Document |
 |---|---|
@@ -96,13 +96,20 @@ Ownership boundaries:
 3. Take a per-turn snapshot of the tool catalog filtered by the requester's policy; disallowed tools are never shown to the model.
 4. Send the system prompt, history, user message, and authorized tool schemas to the LLM. The schemas sent drop `null` from type lists such as `["null","array"]` (see below).
 5. On the first round the model must call a tool, `decline` included (see §7.1); from the second round on, plain text from the LLM is the final answer.
-6. Tool calls are processed sequentially: resolve the model-facing name against the turn snapshot, validate arguments against the tool's JSON Schema, and enforce policy again.
+6. Tool calls are processed one at a time:
+    1. resolve the model-facing name against the turn snapshot;
+    2. validate arguments against the tool's JSON Schema;
+    3. enforce policy again.
 7. A call needing approval suspends the turn and posts an approval prompt showing the exact server, tool, and arguments.
 8. Invoke the MCP tool with a per-call timeout; treat output as untrusted data, never as instructions.
 9. Append a truncated result and continue until the model answers or a limit is reached.
 10. Reply in the originating thread, update history, and emit audit and telemetry records.
 
-Why `null` is dropped from schemas: the Go MCP SDK emits `["null","array"]` for every slice, and some models answer that with a JSON-encoded string. Arguments are still validated against the server's original schema. The cost is that the model no longer sees which fields accept an explicit `null`; it can still omit optional ones.
+Why `null` is dropped from schemas:
+
+- The Go MCP SDK emits `["null","array"]` for every slice. Some models answer that with a JSON-encoded string.
+- Arguments are still validated against the server's original schema.
+- The cost: the model no longer sees which fields accept an explicit `null`. It can still omit optional ones.
 
 Limits and failures:
 
@@ -115,14 +122,24 @@ Tool failures are reported by chatops, not left to the model. Small models drop 
 
 - When a tool call fails, chatops appends one line per failure to the reply, such as `kubernetes.node_list: Unauthorized`, whatever the model wrote.
 - Failures counted: server-reported errors, transport failures, and timeouts. Argument-validation errors are the model's own mistakes, fed back for it to correct, and are not listed.
-- A failure stays unresolved until a later call with the same tool and the same arguments, compared as canonical JSON, succeeds in the turn. A success with other arguments clears nothing: a working `pod_list` for one namespace must not hide a 403 on another.
+- A failure stays unresolved until a later call with the same tool and the same arguments succeeds in the turn. Arguments are compared as canonical JSON.
+- A success with other arguments clears nothing: a working `pod_list` for one namespace must not hide a 403 on another.
 - Only unresolved failures are listed, and only they change how a decline is handled (§7.1).
 - Mutating tools (Phase 4) never clear a failure, because a later success does not undo an earlier failed change.
 - Each line is the error's first line, cut to a short limit.
-- The contract for every server, built-in or third-party: return `isError` when the tool cannot do what was asked, with plain error text. A measurement that comes out bad (a host down, a vendor incident) is data, not an error. chatops adds nothing server-specific, so errors need no categorizing layer.
-- The guarantee covers tool errors only. A partial result, such as an `UNKNOWN` row for one unreadable status page among many, still depends on the model relaying it; failing the whole call would make the model retry and lose the readable rows.
-- Error text can name internal endpoints. It already reaches the model, which could quote it, and the audience is the ops team, so it is shown.
-- Truncation is not sanitization: publishing is guaranteed, unlike the model's relaying, so servers must keep credentials, authorization headers, and config contents out of error text, as [`mcp-k8s.md`](mcp-k8s.md) requires.
+- The guarantee covers tool errors only. A partial result, such as an `UNKNOWN` row for one unreadable status page among many, still depends on the model relaying it. Failing the whole call would make the model retry and lose the readable rows.
+
+The contract for every server, built-in or third-party:
+
+- Return `isError` when the tool cannot do what was asked, with plain error text.
+- A measurement that comes out bad (a host down, a vendor incident) is data, not an error.
+- chatops adds nothing server-specific, so errors need no categorizing layer.
+
+Error text and secrets:
+
+- Error text can name internal endpoints. It is shown: it already reaches the model, which could quote it, and the audience is the ops team.
+- Truncation is not sanitization. chatops always publishes error text, unlike the model, which may not relay it.
+- So servers must keep credentials, authorization headers, and config contents out of error text, as [`mcp-k8s.md`](mcp-k8s.md) requires.
 
 ## 6. MCP integration
 
@@ -134,11 +151,14 @@ The client uses the official Go SDK with its native transports and lifecycle neg
 - Validates arguments against the snapshot tool's schema at `Manager.Call` and sends exactly the validated object; it does not authorize (Phase 4 enforces policy at the same boundary).
 - Sends `bearer_token_env` as `Authorization: Bearer` for authenticated HTTP clients and refuses every redirect.
 - Discovers tools via `tools/list` with pagination and calls them via `tools/call`, preserving `isError`, text content, and `structuredContent`.
-- Names model-facing tools `<server>__<tool>`, sanitized to `^[a-zA-Z0-9_-]{1,64}$`, truncating with a short hash on collision or overflow; the reverse mapping is exact.
-- Refreshes the catalog on reconnect and on `notifications/tools/list_changed`; a turn keeps its snapshot, and a tool that vanished mid-turn returns a tool error.
+- Names model-facing tools `<server>__<tool>`, sanitized to `^[a-zA-Z0-9_-]{1,64}$`. A collision or overflow is truncated with a short hash. The reverse mapping is exact.
+- Refreshes the catalog on reconnect and on `notifications/tools/list_changed`. A turn keeps its snapshot, and a tool that vanished mid-turn returns a tool error.
 - Keeps server credentials out of model context and logs; stdio servers inherit only `PATH` and `HOME` plus their configured `env`.
 
-Tool descriptions, schemas, annotations, and outputs from any server are untrusted. Annotations such as `readOnlyHint` and `destructiveHint` may only make policy stricter, never grant access or waive approval; without an administrator rule, every tool is treated as potentially mutating.
+Tool descriptions, schemas, annotations, and outputs from any server are untrusted.
+
+- Annotations such as `readOnlyHint` and `destructiveHint` may only make policy stricter. They never grant access or waive approval.
+- Without an administrator rule, every tool is treated as potentially mutating.
 
 ### 6.2 Built-in server (`cmd/chatops-mcp`, `pkg/mcpserver`)
 
@@ -206,7 +226,7 @@ Failure handling:
 | A forced first round returns no tool calls | protocol error: the text is never posted, the turn fails with the usual apology, and there is no retry with `auto` |
 | The turn's snapshot has no MCP tools | no model call; the reply says no tools are available, not the off-topic decline |
 | A configured server is down when the model declines | the decline reply names the down servers, so an outage does not read as off-topic |
-| The model declines, by calling `decline` or writing the exact configured sentence, while a tool failure is unresolved (§5) | never posted as off-topic; the reply is the failure lines |
+| The model declines while a tool failure is unresolved (§5); declining is calling `decline` or writing the exact configured sentence | never posted as off-topic; the reply is the failure lines |
 | The model declines after every failure was resolved | the normal decline |
 | The model refuses in other words while a failure is unresolved | the text plus the failure lines; no fuzzy matching, since a false match would hide a real answer |
 
@@ -215,9 +235,11 @@ A down server's tools stay in the snapshot, so a call to one fails as a tool err
 Trade-offs:
 
 - The guarantee is a tool call, not a grounded answer. The final answer can still claim more than the results show, such as calling a whole cluster healthy from a node list.
-
 - The model can still pick the wrong tool, such as `decline` for `ping`. That is a visible, logged misroute rather than an invented answer.
-- Some endpoints reject `required`; vLLM does unless it runs with `--tool-call-parser`. A config opt-out sends `auto` on every round, keeps `decline` advertised, and makes plain first-round text the answer again.
+- Some endpoints reject `required`; vLLM does unless it runs with `--tool-call-parser`. The config opt-out:
+    - sends `auto` on every round;
+    - keeps `decline` advertised;
+    - makes plain first-round text the answer again.
 - A question that needs no tool, such as "what can you do?", can only be declined.
 
 ### 7.2 Model failover
@@ -238,13 +260,15 @@ A model call fails over to the next model in the list, wrapping around, and the 
 - `retry_http_codes` defaults to 429 and 5xx. A model may add codes specific to its endpoint, such as 401 and 403 for a key that can expire.
 - Other HTTP statuses, malformed replies, and `finish_reason: length` fail the call, since they usually mean a request or prompt problem that the backup would share.
 - `llm.max_model_retry` caps the models tried per call. It defaults to, and cannot exceed, the number of models, so no model is tried twice in one call.
-- A model's `timeout` bounds each attempt, so a hung model leaves the rest of `agent.turn_timeout` to the next one. When the turn deadline passes, the call stops without failing over.
-- The rotation is per turn, not per call, because models differ in how they call tools, and one turn planned by one model and answered by another is hard to debug.
+- A model's `timeout` bounds each attempt, so a hung model leaves the rest of `agent.turn_timeout` to the next one.
+- When the turn deadline passes, the call stops without failing over.
+- The rotation is per turn, not per call. Models differ in how they call tools, and a turn planned by one model and answered by another is hard to debug.
 
 Each model has a `name`, defaulting to its `model` and unique across the list, so two endpoints serving one model stay apart. The name identifies the model everywhere:
 
 - Every failover logs a warning naming both models, counts in `chatops_model_failovers_total`, and names the answering model in the stats footer.
-- Model call metrics observe each attempt against its own model and duration, so a failover's wait is not charged to the backup. The footer and turn stats keep the combined duration, which is what the user waited.
+- Model call metrics observe each attempt against its own model and duration, so a failover's wait is not charged to the backup.
+- The footer and turn stats keep the combined duration, which is what the user waited.
 - A connection that drops while the reply is read fails over like one that never connects. A reply that arrives whole but fails to parse does not.
 
 ## 8. Authorization, approval, and security
@@ -254,7 +278,7 @@ Default deny. The effective tool set is the intersection of configured servers, 
 - **Identity and roles:** the requester is the Slack user ID from the verified event, never message text. Roles come from a static config map of Slack user IDs to role names. Unknown or undeterminable identity fails closed.
 - **Policy rules:** a rule names a server, a tool (exact or `*`), the allowed roles, and whether approval is required. Matching is on stable server/tool identity. A destructive annotation forces approval regardless of the rule.
 - **Approval:** a call needing approval suspends the turn and posts Approve/Deny buttons.
-    - An approval is bound to server ID, MCP tool name, SHA-256 of canonical JSON arguments, requester, conversation key, and expiry; changing any argument invalidates it.
+    - An approval is bound to server ID, MCP tool name, SHA-256 of canonical JSON arguments, requester, conversation key, and expiry. Changing any argument invalidates it.
     - On a click, the daemon verifies the clicker's identity and approver role, checks expiry and binding, rechecks policy, then resumes.
     - Self-approval is off by default. Suspended turns are lost on restart.
 - **General controls:**
@@ -264,7 +288,8 @@ Default deny. The effective tool set is the intersection of configured servers, 
     - Secrets are redacted from logs.
 - **`chatops-mcp` over HTTP:**
     - Bearer tokens authenticate callers but do not authorize them.
-    - Tool-group selection (`--tool`), downstream RBAC, and the credentials a deployment hands the process are three separate controls, each scoped on its own. ChatOps policy sits in front of all of them.
+    - Three separate controls are each scoped on their own: tool-group selection (`--tool`), downstream RBAC, and the credentials a deployment hands the process.
+    - ChatOps policy sits in front of all of them.
     - Unauthenticated loopback HTTP trusts every local process on the host, so privileged groups on shared hosts must use `--token-env` or stdio.
 
 ## 9. Configuration
@@ -308,15 +333,22 @@ chatops/
 
 ## 11. Status
 
-- **Phase 0 — bootstrap:** done. Both binaries build and package (deb/rpm/container); main branch protection applied (required `build / build` check, signed commits, linear history, one approving review).
-- **Phase 1 — local vertical slice:** done. `chatops-mcp serve` + `ping`, `internal/config`, `internal/mcp`, `internal/llm`, `internal/agent`, and the `stdio` terminal chat backend. Verified live against `http://media.xiehang.com:8080/v1` with `qwen3-1.7b-q8`.
-- **Phase 2 — Slack:** done. Socket Mode, threading, retry deduplication, per-thread serialization. Chat backends are named in the config, and every one listed runs; `slack`, `discord`, `stdio`, and `unix` ship, `http`/`tcp` planned (`udp` deferred). See [`chat.md`](chat.md).
-- **Phase 2.5 — service and host status:** done. The `status` and `host` groups.
-- **Phase 3 — Kubernetes:** read-only slice done: 34 tools across nodes, namespaces, workloads (deployment, statefulset, daemonset, replicaset, job, pod), services, storage (pv, pvc), configmaps, and events. Mutation waits for Phase 4. See [`mcp-k8s.md`](mcp-k8s.md).
-- **Phase 4 — policy and approval:** not started. Roles, rules, execution-time checks, suspended turns, Slack approval buttons; a startup warning is logged until policy exists, so until then deploy only read-only tools or fully trusted channels.
-- **Chatops-reported tool failures (§5):** done.
-- **Decline tool and forced first call (§7.1):** done. `agent.require_tool_call` is the opt-out, and `agent.decline_reply` the fixed reply.
-- **Phase 5 — hardening:** metrics done (per-reply stats and Prometheus, see [`observability.md`](observability.md)); reconnect handling, structured audit events, and integration tests remain.
+| Phase | State | Scope |
+|---|---|---|
+| 0 — bootstrap | done | Both binaries build and package (deb/rpm/container). Main branch protection: required `build / build` check, signed commits, linear history, one approving review |
+| 1 — local vertical slice | done | `chatops-mcp serve` + `ping`, `internal/config`, `internal/mcp`, `internal/llm`, `internal/agent`, and the `stdio` backend. Verified live against `http://media.xiehang.com:8080/v1` with `qwen3-1.7b-q8` |
+| 2 — Slack | done | Socket Mode, threading, retry deduplication, per-thread serialization. Named chat backends: `slack`, `discord`, `stdio`, and `unix` ship; `http`/`tcp` planned; `udp` deferred. See [`chat.md`](chat.md) |
+| 2.5 — service and host status | done | The `status` and `host` groups |
+| 3 — Kubernetes | read-only slice done | 34 tools across nodes, namespaces, workloads (deployment, statefulset, daemonset, replicaset, job, pod), services, storage (pv, pvc), configmaps, and events. Mutation waits for Phase 4. See [`mcp-k8s.md`](mcp-k8s.md) |
+| 4 — policy and approval | not started | Roles, rules, execution-time checks, suspended turns, Slack approval buttons |
+| 5 — hardening | partly done | Done: metrics (per-reply stats and Prometheus, see [`observability.md`](observability.md)). Remaining: reconnect handling, structured audit events, integration tests |
+
+Until Phase 4, a startup warning is logged. Deploy only read-only tools, or only to fully trusted channels.
+
+Done outside the phases:
+
+- Chatops-reported tool failures (§5).
+- Decline tool and forced first call (§7.1). `agent.require_tool_call` is the opt-out, and `agent.decline_reply` the fixed reply.
 
 ## 12. Testing strategy
 
@@ -333,12 +365,12 @@ chatops/
 3. The first real integration is read-only Kubernetes via the built-in `chatops-mcp`.
 4. Trust model: static Slack user ID to roles map, with per-tool rules.
 5. Approval happens in Slack via buttons, by users holding the rule's approver role; self-approval is off by default.
-6. Model responses are streamed by default so a timed-out turn stops generation behind proxies such as LiteLLM; chat still gets final replies in thread.
+6. Model responses are streamed by default, so a timed-out turn stops generation behind proxies such as LiteLLM. Chat still gets final replies in thread.
 7. First deployment target is systemd using the rpm/deb packaging covering both binaries.
 8. `chatops-mcp serve` runs one tool group per process (`--tool`).
-9. A tool group's `--config` is a directory whose `*.yaml` files merge in file name order by one shared rule (mappings by key, lists appended, later scalars win, `null` ignored). Local settings live in their own file and never require editing a packaged one.
+9. A tool group's `--config` is a directory. Its `*.yaml` files merge in file name order by one shared rule: mappings by key, lists appended, later scalars win, `null` ignored. Local settings live in their own file, never in a packaged one.
 10. The daemon's `config.yaml` stays a single file, since a second file silently overriding LLM or credential settings is too surprising.
-11. The first round of every turn forces a tool call, with a built-in `decline` tool for off-topic messages, so the model's first step is always a real tool call rather than an answer from memory or a call described in prose (§7.1).
+11. The first round of every turn forces a tool call, with a built-in `decline` tool for off-topic messages. The model's first step is then always a real tool call, not an answer from memory or a call described in prose (§7.1).
 12. Tool failures reach the user as lines chatops appends to the reply, never only through the model's wording (§5).
 13. A turn stays on one model and fails over only on errors a different endpoint may not share (§7.2).
 

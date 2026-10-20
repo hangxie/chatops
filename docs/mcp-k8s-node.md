@@ -7,7 +7,8 @@ Status: implemented. Part of the [`kubernetes`](mcp-k8s.md) tool group, whose co
 | `node_status` | Health only: conditions, schedulability, taints, version, roles |
 | `node_resources` | Capacity and utilization |
 
-They are separate so a health question never pays for metrics calls, and a utilization failure never hides health. A node's overall state is its `Ready` condition, `Unknown` when absent.
+- They are separate, so a health question never pays for metrics calls, and a utilization failure never hides health.
+- A node's overall state is its `Ready` condition, or `Unknown` when absent.
 
 ## Utilization sources
 
@@ -23,7 +24,9 @@ Each `node_resources` figure comes from the narrowest authoritative source, and 
 How percentages are computed:
 
 - CPU, memory, and pods: a percentage of allocatable.
-- Disk: a percentage of the kubelet filesystem's own total (`disk_total` in structured output), not of ephemeral-storage allocatable. Used bytes and scheduling allocatable are different accounting boundaries, and mixing them can report over 100%.
+- Disk: a percentage of the kubelet filesystem's own total (`disk_total` in structured output), not of ephemeral-storage allocatable.
+    - Used bytes and scheduling allocatable are different accounting boundaries.
+    - Mixing them can report over 100%.
 - Disk covers the kubelet `node.fs` only. Other host disks, such as Ceph OSDs, belong to Prometheus with node-exporter.
 
 ## RBAC
@@ -35,4 +38,5 @@ How percentages are computed:
 | `get` on `nodes` in `metrics.k8s.io` | CPU and memory usage |
 | `get` on `nodes/proxy` (optional) | disk usage |
 
-`nodes/proxy` is kept out of the baseline because it reaches every kubelet endpoint, not just the Summary API. Granting it is the only switch: without it, each node notes that disk utilization is not permitted and names the grant.
+- `nodes/proxy` is kept out of the baseline, because it reaches every kubelet endpoint, not just the Summary API.
+- Granting it is the only switch. Without it, each node notes that disk utilization is not permitted, and names the grant.

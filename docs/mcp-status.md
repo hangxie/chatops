@@ -9,12 +9,17 @@ It gives the bot a useful read-only tool that needs only outbound HTTP(S) and no
 
 ## Tool: `service_status`
 
-- Argument: `services` (required), a non-empty list of configured service names, following the target-list convention of [`mcp-k8s.md`](mcp-k8s.md#targets). "Are Harbor and the media LLM up?" is one call, and `all` checks every service.
-- Item names are a JSON Schema enum of the configured names, so a small model can map "is gmail down?" to the right service. A service not in the enum is reported as not covered rather than guessed at.
-- Result text: one line per service, `[HEALTH] <display> - <summary>`, with each active incident indented beneath it (name, status, URL). Structured output carries the same snapshots.
+- Argument: `services` (required), a non-empty list of configured service names. It follows the target-list convention of [`mcp-k8s.md`](mcp-k8s.md#targets): "Are Harbor and the media LLM up?" is one call.
+- `all` checks every service.
+- Item names are a JSON Schema enum of the configured names, so a small model can map "is gmail down?" to the right service.
+- A service not in the enum is reported as not covered, rather than guessed at.
+- Result text: one line per service, `[HEALTH] <display> - <summary>`. Each active incident is indented beneath it (name, status, URL).
+- Structured output carries the same snapshots.
 - Annotations: `ReadOnlyHint: true`, `IdempotentHint: true`, `OpenWorldHint: true` (it reaches external pages).
 
-Health labels: `OK`, `MAINTENANCE`, `DEGRADED`, `PARTIAL OUTAGE`, `MAJOR OUTAGE`, `UNKNOWN`. An unreadable source is treated differently by kind:
+Health labels: `OK`, `MAINTENANCE`, `DEGRADED`, `PARTIAL OUTAGE`, `MAJOR OUTAGE`, `UNKNOWN`.
+
+An unreadable source is treated differently by kind:
 
 | Source cannot be read | Health | Why |
 |---|---|---|
@@ -29,7 +34,11 @@ A vendor page that cannot be read is a tool failure only when nothing was read:
 | several, or `all` | every page | tool error naming the count and the first error; likely chatops's own network |
 | several, or `all` | some pages | `UNKNOWN` rows; a tool error would make the model retry and lose the readable rows |
 
-No service, URL, or product name is hardcoded. The code knows only page formats; every service comes from the config directory, and the tool description tells the model that only the listed services are covered.
+No service, URL, or product name is hardcoded.
+
+- The code knows only page formats.
+- Every service comes from the config directory.
+- The tool description tells the model that only the listed services are covered.
 
 ## Configuration
 
@@ -44,7 +53,7 @@ Each entry has:
 |---|---|
 | `name` | The tool argument value (lowercase letters, digits, `-`) |
 | `display` | The name shown in results |
-| `covers` | Product names users ask about. They drive the enum description, so when the bot answers from the wrong service or not at all, add the product name here. |
+| `covers` | Product names users ask about. They drive the enum description. When the bot answers from the wrong service, or not at all, add the product name here. |
 | `type`, `url` | The page format and its endpoint (below). A `google` entry lists `feeds` instead, each a `url` with an optional `products` filter. |
 
 | `type` | Endpoint |
@@ -52,7 +61,7 @@ Each entry has:
 | `statuspage` | Atlassian Statuspage `.../api/v2/summary.json`, used by many vendors |
 | `statusio` | Status.io `https://api.status.io/1.0/status/<page id>` |
 | `slack` | `https://slack-status.com/api/v2.0.0/current` |
-| `datadog` | Datadog Status Pages `<status page>/config.json`; the page itself is rendered by JavaScript, so this file is the only machine-readable source |
+| `datadog` | Datadog Status Pages `<status page>/config.json`. The page itself is rendered by JavaScript, so this file is the only machine-readable source |
 | `google` | Google Cloud or Workspace `incidents.json` feeds, combined and optionally narrowed to product IDs |
 | `http` | A self-hosted health endpoint such as llama.cpp `/health`, Harbor `/api/v2.0/health`, or chatops `/healthz`; see below |
 
@@ -66,9 +75,9 @@ Healthy words, case-insensitive: `true`, `ok`, `healthy`, `up`, `pass`.
 |---|---|
 | 2xx, body reports no problem | `OK` |
 | 2xx, top-level `status` present and not a healthy word (`false`, `500`, ...) | `PARTIAL OUTAGE` |
-| 2xx, a `components` member (as Harbor reports) whose `status` is not a healthy word | `PARTIAL OUTAGE`; each listed as an incident, and counted in the summary when the top-level status is healthy |
+| 2xx, a `components` member (as Harbor reports) whose `status` is not a healthy word | `PARTIAL OUTAGE`. Each such component is listed as an incident, and counted in the summary when the top-level status is healthy |
 | 2xx, `status` missing or `null` | decided by the HTTP code (`OK`) |
-| non-2xx, or no response | `MAJOR OUTAGE`; the summary quotes the start of the body so the service's reason reaches the user |
+| non-2xx, or no response | `MAJOR OUTAGE`. The summary quotes the start of the body, so the service's reason reaches the user |
 
 Fields are read one by one, so a malformed component, or a `components` value that is not a list, never hides the top-level `status`.
 
@@ -85,7 +94,7 @@ How the deb and rpm packages treat the files on upgrade:
 | File | On upgrade |
 |---|---|
 | `00-default.yaml`, unedited | updated |
-| `00-default.yaml`, edited | kept; the new list is saved beside it as `.dpkg-dist` (if dpkg is told to keep it) or `.rpmnew`, both skipped, for a manual merge |
+| `00-default.yaml`, edited | kept. The new list is saved beside it, for a manual merge, as `.dpkg-dist` (if dpkg is told to keep it) or `.rpmnew`. Both are skipped |
 | files you added | never touched |
 
 Leave `00-default.yaml` unedited to keep receiving the shipped list.
