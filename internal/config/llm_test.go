@@ -23,16 +23,15 @@ func Test_Model_Streaming(t *testing.T) {
 }
 
 func Test_LLM_withDefaults(t *testing.T) {
-	two := func() []Model { return []Model{{Model: "a"}, {Model: "b", Name: "backup"}} }
-	named := []Model{{Model: "a", Name: "a"}, {Model: "b", Name: "backup"}}
+	two := []Model{{Model: "a", Name: "a"}, {Model: "b", Name: "backup"}}
 	tests := map[string]struct {
 		in   LLM
 		want LLM
 	}{
 		"empty":         {in: LLM{}, want: LLM{Schedule: ScheduleOrdered}},
-		"every-model":   {in: LLM{Models: two()}, want: LLM{Models: named, Schedule: ScheduleOrdered, MaxModelRetry: 2}},
-		"keeps-set":     {in: LLM{Models: two(), Schedule: ScheduleSticky, MaxModelRetry: 1}, want: LLM{Models: named, Schedule: ScheduleSticky, MaxModelRetry: 1}},
-		"keeps-invalid": {in: LLM{Models: two(), MaxModelRetry: -1}, want: LLM{Models: named, Schedule: ScheduleOrdered, MaxModelRetry: -1}},
+		"every-model":   {in: LLM{Models: two}, want: LLM{Models: two, Schedule: ScheduleOrdered, MaxModelRetry: 2}},
+		"keeps-set":     {in: LLM{Models: two, Schedule: ScheduleSticky, MaxModelRetry: 1}, want: LLM{Models: two, Schedule: ScheduleSticky, MaxModelRetry: 1}},
+		"keeps-invalid": {in: LLM{Models: two, MaxModelRetry: -1}, want: LLM{Models: two, Schedule: ScheduleOrdered, MaxModelRetry: -1}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -41,10 +40,8 @@ func Test_LLM_withDefaults(t *testing.T) {
 	}
 }
 
-func Test_LLM_withDefaults_copies_models(t *testing.T) {
-	in := LLM{Models: []Model{{Model: "a"}}}
-	_ = in.withDefaults()
-	require.Empty(t, in.Models[0].Name)
+func Test_LLM_withDefaults_keeps_unset_name(t *testing.T) {
+	require.Empty(t, LLM{Models: []Model{{Model: "a"}}}.withDefaults().Models[0].Name)
 }
 
 func Test_Model_RetriesStatus(t *testing.T) {

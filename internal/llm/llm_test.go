@@ -74,12 +74,12 @@ func Test_Client_Complete(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("CHATOPS_TEST_LLM_KEY", "k")
-	client, err := New(config.Model{BaseURL: server.URL + "/v1", Model: "m", APIKeyEnv: "CHATOPS_TEST_LLM_KEY", DisableThinking: true, Stream: streamOff()}, server.Client())
+	client, err := New(config.Model{BaseURL: server.URL + "/v1", Model: "m", Name: "local", APIKeyEnv: "CHATOPS_TEST_LLM_KEY", DisableThinking: true, Stream: streamOff()}, server.Client())
 	require.NoError(t, err)
 
 	resp, err := client.Complete(context.Background(), Request{Messages: []Message{{Role: RoleUser, Content: "hello"}}})
 	require.NoError(t, err)
-	require.Equal(t, Response{Message: Message{Role: RoleAssistant, Content: "hi"}, Usage: &Usage{PromptTokens: 7, CompletionTokens: 2}, Model: "m"}, resp)
+	require.Equal(t, Response{Message: Message{Role: RoleAssistant, Content: "hi"}, Usage: &Usage{PromptTokens: 7, CompletionTokens: 2}, Model: "local"}, resp)
 	require.Equal(t, "/v1/chat/completions", gotPath)
 	require.Equal(t, "Bearer k", gotAuth)
 	require.Equal(t, "application/json", gotContentType)
@@ -362,11 +362,11 @@ func Test_Client_Complete_stream(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(config.Model{BaseURL: server.URL, Model: "m"}, server.Client())
+	client, err := New(config.Model{BaseURL: server.URL, Model: "m", Name: "local"}, server.Client())
 	require.NoError(t, err)
 	resp, err := client.Complete(context.Background(), Request{Messages: []Message{{Role: RoleUser, Content: "hello"}}})
 	require.NoError(t, err)
-	require.Equal(t, Response{Message: Message{Role: RoleAssistant, Content: "hi"}, Usage: &Usage{PromptTokens: 7, CompletionTokens: 2}, Model: "m"}, resp)
+	require.Equal(t, Response{Message: Message{Role: RoleAssistant, Content: "hi"}, Usage: &Usage{PromptTokens: 7, CompletionTokens: 2}, Model: "local"}, resp)
 	require.Equal(t, "text/event-stream, application/json", gotAccept)
 	require.Equal(t, true, gotBody["stream"])
 	require.Equal(t, map[string]any{"include_usage": true}, gotBody["stream_options"])

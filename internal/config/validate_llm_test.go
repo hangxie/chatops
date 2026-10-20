@@ -27,13 +27,18 @@ func Test_validateLLM(t *testing.T) {
 		"relative-base-url": {mutate: func(l *LLM) { l.Models[0].BaseURL = "localhost/v1" }, errs: []string{`llm.models[0].base_url: must be an absolute http or https URL, got "localhost/v1"`}},
 		"ftp-base-url":      {mutate: func(l *LLM) { l.Models[0].BaseURL = "ftp://host/v1" }, errs: []string{`llm.models[0].base_url: must be an absolute http or https URL, got "ftp://host/v1"`}},
 		"missing-model":     {mutate: func(l *LLM) { l.Models[0].Model = "" }, errs: []string{"llm.models[0].model: required"}},
-		"bad-api-key-env":   {mutate: func(l *LLM) { l.Models[0].APIKeyEnv = "1KEY" }, errs: []string{`llm.models[0].api_key_env: invalid environment variable name "1KEY"`}},
-		"good-api-key-env":  {mutate: func(l *LLM) { l.Models[0].APIKeyEnv = "LLM_API_KEY" }},
+		"missing-name":      {mutate: func(l *LLM) { l.Models[0].Name = "" }, errs: []string{"llm.models[0].name: required"}},
+		"missing-names": {mutate: func(l *LLM) {
+			l.Models = []Model{{BaseURL: "https://a/v1", Model: "a"}, {BaseURL: "https://b/v1", Model: "b"}}
+			l.MaxModelRetry = 2
+		}, errs: []string{"llm.models[0].name: required", "llm.models[1].name: required"}},
+		"bad-api-key-env":  {mutate: func(l *LLM) { l.Models[0].APIKeyEnv = "1KEY" }, errs: []string{`llm.models[0].api_key_env: invalid environment variable name "1KEY"`}},
+		"good-api-key-env": {mutate: func(l *LLM) { l.Models[0].APIKeyEnv = "LLM_API_KEY" }},
 		"api-key-plaintext": {mutate: func(l *LLM) {
-			l.Models[0] = Model{BaseURL: "http://llm.example.internal/v1", Model: "m", APIKeyEnv: "LLM_API_KEY"}
+			l.Models[0] = Model{BaseURL: "http://llm.example.internal/v1", Model: "m", Name: "m", APIKeyEnv: "LLM_API_KEY"}
 		}, errs: []string{`llm.models[0].api_key_env: requires an https base_url unless the host is loopback, got "http://llm.example.internal/v1"`}},
 		"api-key-https": {mutate: func(l *LLM) {
-			l.Models[0] = Model{BaseURL: "https://llm.example.internal/v1", Model: "m", APIKeyEnv: "LLM_API_KEY"}
+			l.Models[0] = Model{BaseURL: "https://llm.example.internal/v1", Model: "m", Name: "m", APIKeyEnv: "LLM_API_KEY"}
 		}},
 		"retry-codes":      {mutate: func(l *LLM) { l.Models[0].RetryHTTPCodes = []string{"401", "403", "4xx", "5xx", "599"} }},
 		"retry-codes-none": {mutate: func(l *LLM) { l.Models[0].RetryHTTPCodes = []string{} }},

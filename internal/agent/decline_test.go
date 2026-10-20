@@ -158,14 +158,14 @@ func Test_Agent_Run_forced_first_call(t *testing.T) {
 		reply   string
 		errMsg  string
 	}{
-		"text despite required fails the turn": {require: true, errMsg: "model: model returned no tool call although one was required"},
+		"text despite required fails the turn": {require: true, errMsg: "model primary: model returned no tool call although one was required"},
 		"text allowed when not required":       {require: false, reply: "pong from memory"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			limits := testLimits()
 			limits.RequireToolCall = tc.require
-			model := &fakeModel{responses: []func(context.Context) (llm.Response, error){reply("pong from memory")}}
+			model := &fakeModel{responses: []func(context.Context) (llm.Response, error){from("primary", reply("pong from memory"))}}
 
 			turn, err := New(model, newFakeTools(t, pong), limits, nil).Run(context.Background(), nil, "ping")
 			if tc.errMsg != "" {
@@ -173,7 +173,7 @@ func Test_Agent_Run_forced_first_call(t *testing.T) {
 				require.EqualError(t, err, tc.errMsg)
 				require.Empty(t, turn.Reply)
 				require.Equal(t, OutcomeError, turn.Stats.Outcome)
-				require.Equal(t, []Step{{Phase: PhaseAnswer, Outcome: OutcomeError}}, withoutDurations(turn.Stats.Steps))
+				require.Equal(t, []Step{{Phase: PhaseAnswer, Outcome: OutcomeError, Model: "primary"}}, withoutDurations(turn.Stats.Steps))
 				return
 			}
 			require.NoError(t, err)

@@ -51,7 +51,7 @@ func Test_runTool_logs_arguments_at_debug(t *testing.T) {
 			var logs bytes.Buffer
 			logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: tc.level}))
 			tools := newFakeTools(t, pong)
-			New(&fakeModel{}, tools, testLimits(), logger).runTool(context.Background(), tools.Catalog(), tc.call)
+			New(&fakeModel{}, tools, testLimits(), nil).runTool(context.Background(), logger, tools.Catalog(), tc.call)
 			if tc.want == "" {
 				require.NotContains(t, logs.String(), "tool call requested")
 				return
@@ -76,7 +76,7 @@ func Test_runTool_warns_on_rejection(t *testing.T) {
 			var logs bytes.Buffer
 			logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
 			tools := newFakeTools(t, pong)
-			New(&fakeModel{}, tools, testLimits(), logger).runTool(context.Background(), tools.Catalog(), tc.call)
+			New(&fakeModel{}, tools, testLimits(), nil).runTool(context.Background(), logger, tools.Catalog(), tc.call)
 			if tc.want == "" {
 				require.NotContains(t, logs.String(), "tool call rejected")
 				return

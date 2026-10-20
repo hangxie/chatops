@@ -264,8 +264,9 @@ A model call fails over to the next model in the list, wrapping around, and the 
 - When the turn deadline passes, the call stops without failing over.
 - The rotation is per turn, not per call. Models differ in how they call tools, and a turn planned by one model and answered by another is hard to debug.
 
-Each model has a `name`, defaulting to its `model` and unique across the list, so two endpoints serving one model stay apart. The name identifies the model everywhere:
+Each model has a required `name`, unique across the list, so two endpoints serving one model stay apart. The name identifies the model everywhere:
 
+- Every log line about a model response, such as a rejected tool call or a stopped turn, carries its `model`. A failed model call's error names it, and `turn completed` lists the `models` that returned each call. A model that failed over shows only in the failover warning.
 - Every failover logs a warning naming both models, counts in `chatops_model_failovers_total`, and names the answering model in the stats footer.
 - Model call metrics observe each attempt against its own model and duration, so a failover's wait is not charged to the backup.
 - The footer and turn stats keep the combined duration, which is what the user waited.

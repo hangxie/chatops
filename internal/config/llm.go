@@ -23,7 +23,7 @@ type LLM struct {
 
 // Model configures one OpenAI-compatible model endpoint.
 type Model struct {
-	// Name identifies the model in logs, metrics, and reply stats; it defaults to Model and must be unique.
+	// Name identifies the model in logs, metrics, and reply stats; it is required and unique.
 	Name      string `yaml:"name"`
 	BaseURL   string `yaml:"base_url"`
 	Model     string `yaml:"model"`
@@ -81,12 +81,6 @@ func (l LLM) withDefaults() LLM {
 	}
 	if l.MaxModelRetry == 0 {
 		l.MaxModelRetry = len(l.Models)
-	}
-	l.Models = slices.Clone(l.Models)
-	for i := range l.Models {
-		if l.Models[i].Name == "" {
-			l.Models[i].Name = l.Models[i].Model
-		}
 	}
 	return l
 }

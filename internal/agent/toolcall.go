@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 	"unicode/utf8"
 
@@ -15,28 +16,29 @@ import (
 const maxLoggedArgumentBytes = 1024
 
 // runTool returns text for the model, its step, and a failure line for the user, empty for errors the model must fix.
-func (a *Agent) runTool(ctx context.Context, catalog *mcp.Catalog, call llm.ToolCall) (string, Step, string) {
+// log names the model that requested the call.
+func (a *Agent) runTool(ctx context.Context, log *slog.Logger, catalog *mcp.Catalog, call llm.ToolCall) (string, Step, string) {
 	// Arguments are model output that may echo user text, so they are logged only at debug level.
-	a.logger.Debug("tool call requested", "tool", call.Name, "arguments", truncate(call.Arguments, maxLoggedArgumentBytes))
+	log.Debug("tool call requested", "tool", call.Name, "arguments", truncate(call.Arguments, maxLoggedArgumentBytes))
 	step := Step{Phase: PhaseTool, Name: call.Name, Outcome: OutcomeError}
 	start := time.Now()
-	content, failure := a.callTool(ctx, catalog, call, &step)
+	content, failure := a.callTool(ctx, log, catalog, call, &step)
 	step.Duration, step.SentBytes = time.Since(start), len(content)
 	return content, step, failure
 }
 
-func (a *Agent) callTool(ctx context.Context, catalog *mcp.Catalog, call llm.ToolCall, step *Step) (content, failure string) {
+func (a *Agent) callTool(ctx context.Context, log *slog.Logger, catalog *mcp.Catalog, call llm.ToolCall, step *Step) (content, failure string) {
 	tool, ok := catalog.Lookup(call.Name)
 	if !ok {
-		a.logger.Warn("tool call rejected", "tool", call.Name, "reason", "unknown tool")
+		log.Warn("tool call rejected", "tool", call.Name, "reason", "unknown tool")
 		return fmt.Sprintf("error: unknown tool %q", call.Name), ""
 	}
 	step.Server, step.Tool = tool.Server, tool.MCPName
 	args := json.RawMessage(call.Arguments)
 	if err := tool.Validate(args); err != nil {
 		// The error can quote argument values, so it is logged only with them at debug level.
-		a.logger.Warn("tool call rejected", "tool", call.Name, "reason", "invalid arguments")
-		a.logger.Debug("tool call arguments invalid", "tool", call.Name, "error", err)
+		log.Warn("tool call rejected", "tool", call.Name, "reason", "invalid arguments")
+		log.Debug("tool call arguments invalid", "tool", call.Name, "error", err)
 		return "error: invalid arguments: " + err.Error(), ""
 	}
 
@@ -44,7 +46,7 @@ func (a *Agent) callTool(ctx context.Context, catalog *mcp.Catalog, call llm.Too
 	defer cancel()
 	start := time.Now()
 	result, err := a.tools.Call(callCtx, tool, args)
-	log := a.logger.With("server", tool.Server, "tool", tool.MCPName, "duration", time.Since(start))
+	log = log.With("server", tool.Server, "tool", tool.MCPName, "duration", time.Since(start))
 	// Servers may ignore ctx, so a result after the deadline is discarded even on success.
 	if callCtx.Err() != nil {
 		step.Outcome = ErrorOutcome(callCtx.Err())

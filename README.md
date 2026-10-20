@@ -80,7 +80,7 @@ Start from the annotated sample at [`package/systemd/config.yaml`](package/syste
 | `chat.<name>.bot_token_env` | (none) | discord: environment variable holding the Discord bot token; required |
 | `chat.<name>.reply_mode` | slack `thread`, discord `channel` | slack and discord: where a top-level message is answered, `thread` or `channel`. A message in an existing thread is always answered there |
 | `chat.<name>.path`, `mode` | (none) | unix only: filesystem path of the socket to create (required) and optional octal permission bits (e.g. `0600`, the default owner-only) |
-| `llm.models[].name` | the `model` value | Identifies the model in logs, metrics, and reply stats; must be unique, so set it when two entries serve the same model |
+| `llm.models[].name` | (required) | Identifies the model in logs, metrics, and reply stats; must be unique, so two entries serving the same model stay apart |
 | `llm.models[].base_url` | (required) | OpenAI-compatible API base; requests go to `<base_url>/chat/completions`. At least one model is required; see [Backup models](#backup-models) |
 | `llm.models[].model` | (required) | Model name sent with each request |
 | `llm.models[].api_key_env` | (none) | Environment variable holding the API key, sent as a bearer token; requires an `https` `base_url` unless the host is loopback |
@@ -184,6 +184,7 @@ llm:
 - Each failover is logged at warn level and counted in `chatops_model_failovers_total`.
 - The stats footer names the model that answered: `answer 4.0s (via openrouter, ...)`.
 - Logs, metrics, and the footer identify a model by its `name`.
+- Every model-related log line carries it: `model` on lines about one model response, such as a rejected tool call, and `models` on `turn completed`. `models` lists the model that returned each call, so a model that failed over appears only in the `model failed over` warning.
 - `agent.require_tool_call` applies to every model, so pick models that agree on it.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) §7.2 for the design.

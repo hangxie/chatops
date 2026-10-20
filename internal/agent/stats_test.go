@@ -84,6 +84,28 @@ func Test_turnOutcome(t *testing.T) {
 	}
 }
 
+func Test_Stats_Models(t *testing.T) {
+	tests := map[string]struct {
+		steps []Step
+		want  []string
+	}{
+		"empty":      {},
+		"tools-only": {steps: []Step{{Phase: PhaseTool}}},
+		"one-model":  {steps: []Step{{Phase: PhasePlan, Model: "a"}, {Phase: PhaseTool}, {Phase: PhaseAnswer, Model: "a"}}, want: []string{"a"}},
+		"failed-over": {
+			steps: []Step{{Phase: PhasePlan, Model: "a"}, {Phase: PhaseTool}, {Phase: PhaseAnswer, Model: "b"}},
+			want:  []string{"a", "b"},
+		},
+		"back-again": {steps: []Step{{Phase: PhasePlan, Model: "a"}, {Phase: PhasePlan, Model: "b"}, {Phase: PhaseAnswer, Model: "a"}}, want: []string{"a", "b"}},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, Stats{Steps: tc.steps}.Models())
+		})
+	}
+}
+
 func Test_Stats_totals(t *testing.T) {
 	tests := map[string]struct {
 		steps      []Step
