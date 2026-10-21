@@ -2,7 +2,7 @@
 
 Status: accepted design; `slack`, `discord`, `stdio`, and `unix` implemented, others planned ([`DESIGN.md`](DESIGN.md) chat adapter).
 
-A chat backend is one way users reach the agent: an interactive terminal, Slack, Discord, a Unix socket, a TCP socket, or an HTTP endpoint.
+A chat backend is one way users reach the agent: an interactive terminal, Slack, Discord, a Unix socket, or an HTTP endpoint.
 
 - Each backend delivers inbound messages and posts replies.
 - The agent, conversation, and tool layers are backend-agnostic.
@@ -72,9 +72,6 @@ A message makes a round trip through the backend that received it:
         type: http
         listen: 0.0.0.0:8080
         bearer_token_env: CHAT_HTTP_TOKEN
-      ops-tcp:
-        type: tcp
-        listen: 127.0.0.1:4000
 
 | Check | Runs for |
 |---|---|
@@ -91,9 +88,9 @@ Implementation status, updated as the work merges:
 | `slack` | implemented | one per Slack thread | Slack workspace, verified user ID |
 | `discord` | implemented | one per message, or one per Discord thread | Discord server, verified user ID |
 | `unix` | implemented | one per connection | socket file permissions |
-| `http` | planned | caller-supplied key | bearer token off loopback |
-| `tcp` | planned | one per connection | loopback only, no auth |
-| `udp` | deferred | | |
+| `http` | planned | caller-supplied key | bearer token, always |
+
+Every backend authenticates who connects. `tcp` and `udp` are dropped for that reason: with no authentication, anyone who could connect could do anything.
 
 ### `stdio`
 
@@ -195,7 +192,8 @@ Access and identity:
 
 - The socket file's permissions control which local processes may connect, so restrict its owner and group. There is no in-band token.
 - Those permissions gate access, but do not identify the caller: several users in one group may be allowed.
-- Until Phase 4 adds peer-credential inspection (Linux `SO_PEERCRED`) to populate `User`, the sender is the connection.
+- Connecting grants nothing on its own. Socket users follow roles and rules like everyone else ([`policy.md`](policy.md#local-users)).
+- Until Phase 4, the sender is the connection. Phase 4 sets `User` to the peer's numeric user ID from the peer credentials (`SO_PEERCRED` on Linux, `getpeereid` on macOS), so several SREs on one socket are told apart ([`policy.md`](policy.md#principals)).
 
 Connections:
 
@@ -226,35 +224,15 @@ A request/response HTTP endpoint, and the transport the platform-adapter backend
 - The reply is returned on the request.
 - One conversation per caller-supplied conversation key, within the single principal the shared bearer token represents.
 - A shared token does not isolate that application's own users, so the endpoint is one trusted client.
-- A non-loopback `listen` without a bearer token is refused at startup (the shared `checkBind` rule).
-- When a token is set, every request must present it.
+- A bearer token is required, loopback included, and every request must present it.
 - TLS is a fronting proxy's job.
 
 | Parameter | Required | Meaning |
 |---|---|---|
 | `type` | yes | `http` |
 | `listen` | yes | Bind address `host:port` |
-| `bearer_token_env` | conditional | Environment variable holding the bearer token; mandatory unless `listen` is loopback |
+| `bearer_token_env` | yes | Environment variable holding the bearer token |
 | `path` | no | Request path; defaults to `/chat` |
-
-### `tcp`
-
-A connection-oriented network socket, for a line-oriented client (`telnet`, `nc`). One conversation per connection, one message per line, replies written back.
-
-- Each conversation is keyed by a unique per-connection ID, not the remote address.
-- Writes per connection are serialized, and a disconnect cancels the in-flight turn.
-- It binds loopback only, and refuses any non-loopback `listen`. A network socket has no filesystem permissions to authorize callers, and it speaks no authentication.
-- Remote access is an operator's `ssh -L` tunnel to localhost.
-- Native remote auth (TLS with client certificates) is out of scope.
-
-It is kept separate from `unix` on purpose: only a filesystem socket can carry permission-based access control.
-
-UDP is not a variant of this backend. It is connectionless, so it needs its own design for session identity, expiry, datagram size, and reply routing. It is deferred (see Future work).
-
-| Parameter | Required | Meaning |
-|---|---|---|
-| `type` | yes | `tcp` |
-| `listen` | yes | Bind address `host:port`; must be loopback |
 
 ## Runtime
 
@@ -263,7 +241,7 @@ UDP is not a variant of this backend. It is connectionless, so it needs its own 
 1. builds the model, the MCP tool clients, and one `conversation.Manager`;
 2. runs the selected backends concurrently under an error group, each calling the manager's `submit`.
 
-The runner wraps each backend's `submit` to prefix the conversation key with the backend name: `eng-slack:<channel-ts>`, `console:stdin`, `ops-tcp:conn-7`.
+The runner wraps each backend's `submit` to prefix the conversation key with the backend name: `eng-slack:<channel-ts>`, `console:stdin`, `ops-sock:conn-7`.
 
 - Conversations from different backends cannot collide in history or ordering.
 - Logs and audit records name the originating backend.
@@ -284,13 +262,13 @@ The runner wraps each backend's `submit` to prefix the conversation key with the
 |---|---|
 | Slack, Discord | a brief busy message |
 | HTTP | `429` or `503` |
-| TCP | a short busy line |
+| Unix socket | a short busy line |
 
 **`Reply` is asynchronous.**
 
 - The manager invokes it exactly once after the turn finishes, with the turn's text or a generic failure line, under a reply-delivery timeout.
 - A failed `Reply` is logged, not retried, and does not fail the turn.
-- Each backend keeps its delivery path alive until `Reply` runs. The HTTP handler blocks on the reply within the request; a TCP connection stays open.
+- Each backend keeps its delivery path alive until `Reply` runs. The HTTP handler blocks on the reply within the request; a socket connection stays open.
 - Replies for different conversations may run at the same time. So a backend sharing one output destination synchronizes its writes: `stdio` guards stdout, and socket backends serialize per connection.
 
 **Ordering.**
@@ -324,8 +302,8 @@ A conversation key is never treated as identity.
 | `slack` | verified Slack user ID |
 | `discord` | Discord user ID from the gateway event |
 | `http` | the shared bearer token, one principal; per-user isolation is the upstream application's job until distinct identities exist |
-| `unix` | none yet; file permissions are not a caller identity. Phase 4 would use `SO_PEERCRED` peer credentials |
-| `tcp` | none; treated as untrusted-but-local |
+| `stdio` | `local` today; Phase 4 uses the numeric user ID running the process |
+| `unix` | none yet; Phase 4 uses the peer's numeric user ID |
 
 ## Backend lifecycle
 
@@ -350,7 +328,7 @@ When a backend fails fatally, replies still in flight are delivered best-effort:
 | Package | Holds |
 |---|---|
 | `internal/chat` | the `Backend` interface, the `New` factory, and the multi-backend runner |
-| `internal/chat/<type>` | one backend each: `stdio`, `slack`, `discord`, `unix`, later `http` and `tcp` |
+| `internal/chat/<type>` | one backend each: `stdio`, `slack`, `discord`, `unix`, later `http` |
 | `internal/chat/markdown` | Markdown table parsing shared by the platform backends |
 | `cmd/chatops` | a single `serve` command |
 
@@ -360,12 +338,22 @@ Every source file has a one-to-one `_test.go`.
 
 - Teams, Webex, and SMS: webhook-based adapter backends. They reuse a shared HTTP listener and request-handling utilities, and are not configuration variants of the generic `http` backend.
 - Per-user authorization (Phase 4), applied uniformly across backends, keyed on each backend's verified sender identity.
+- A WebSocket backend, a candidate for interactive remote clients. It can send a bearer token in the handshake, but a shared token is weaker than a platform's own sign-in and does not tell users apart unless each user gets their own token.
+
+How other platforms could take approval answers ([`policy.md`](policy.md#answers)). Text answers with request IDs work everywhere; buttons need platform support:
+
+| Platform | Buttons | Click delivery |
+|---|---|---|
+| Telegram | inline keyboard | long polling, no public endpoint |
+| Webex | Adaptive Cards | webhook or WebSocket |
+| Teams | Adaptive Cards | Bot Framework webhook, needs an inbound endpoint |
+| Google Chat | card buttons | HTTP or Pub/Sub |
+| Mattermost | message buttons, interactive dialogs | a URL chatops serves, reachable from the Mattermost server |
+| Matrix, Zulip | none; emoji reactions are the usual substitute | sync / event queue |
 
 Deferred:
 
 - A request-ID/retrieval mode for `http`; the accepted design is request/response only.
-- A `udp` backend. It needs its own design (see [`tcp`](#tcp)), and will not be added without a concrete use case.
-- Native TLS client-certificate auth for remote sockets.
 
 ## Decisions
 
@@ -385,7 +373,7 @@ Deferred:
     - Overload is handled centrally (`ErrBusy`, mapped per backend).
     - Shutdown drains within a bounded grace period.
 5. **Sender identity is separate from conversation identity.** A key is never treated as identity. The `http` shared-token principal does not isolate an application's own users.
-6. **Per-backend security.** Each backend authorizes its own way (see [Backend types](#backend-types)). `unix` stays separate from `tcp`, because only a filesystem socket can carry permission-based access control.
+6. **Every backend authenticates.** Each does it its own way (see [Backend types](#backend-types)). A backend that cannot authenticate is not built, so `tcp` and `udp` are dropped. For `unix`, the socket file's permissions decide who may connect, and the peer's user ID says who connected.
 7. **Adapter extensibility.**
     - New webhook platforms (Teams, Webex, SMS) are adapter backends reusing the shared HTTP listener.
     - A platform with an outbound connection, like Slack Socket Mode or the Discord Gateway, uses that instead, and needs no public endpoint.
