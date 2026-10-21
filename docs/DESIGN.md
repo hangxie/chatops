@@ -7,6 +7,7 @@ This is the conclusions-only design of record. It describes the accepted target 
 | Topic | Document |
 |---|---|
 | Chat backends | [`chat.md`](chat.md) |
+| Authorization and approval | [`policy.md`](policy.md) |
 | Per-reply stats and Prometheus metrics | [`observability.md`](observability.md) |
 | Tool groups | [`mcp-ping.md`](mcp-ping.md), [`mcp-status.md`](mcp-status.md), [`mcp-k8s.md`](mcp-k8s.md), [`mcp-host.md`](mcp-host.md) |
 | Usage | [`../README.md`](../README.md) |
@@ -66,7 +67,7 @@ The daemon talks to `chatops-mcp` exactly as it talks to any third-party MCP ser
                             v
                     agent turn loop <----> LLM adapter
                             |
-                       policy engine  <----> approvals (Slack buttons)
+                       policy engine  <----> approvals
                             |
                        MCP manager
                        /         \
@@ -100,7 +101,7 @@ Ownership boundaries:
     1. resolve the model-facing name against the turn snapshot;
     2. validate arguments against the tool's JSON Schema;
     3. enforce policy again.
-7. A call needing approval suspends the turn and posts an approval prompt showing the exact server, tool, and arguments.
+7. A batch holding a call that needs approval suspends the turn and posts a prompt showing the exact server, tool, and arguments of every call in it ([`policy.md`](policy.md)).
 8. Invoke the MCP tool with a per-call timeout; treat output as untrusted data, never as instructions.
 9. Append a truncated result and continue until the model answers or a limit is reached.
 10. Reply in the originating thread, update history, and emit audit and telemetry records.
@@ -158,7 +159,7 @@ The client uses the official Go SDK with its native transports and lifecycle neg
 Tool descriptions, schemas, annotations, and outputs from any server are untrusted.
 
 - Annotations such as `readOnlyHint` and `destructiveHint` may only make policy stricter. They never grant access or waive approval.
-- Without an administrator rule, every tool is treated as potentially mutating.
+- A tool no administrator grant allows is denied.
 
 ### 6.2 Built-in server (`cmd/chatops-mcp`, `pkg/mcpserver`)
 
@@ -274,14 +275,11 @@ Each model has a required `name`, unique across the list, so two endpoints servi
 
 ## 8. Authorization, approval, and security
 
-Default deny. The effective tool set is the intersection of configured servers, policy rules, and the requester's roles.
+Default deny. The effective tool set is the intersection of configured servers and the tools the requester's roles are granted. [`policy.md`](policy.md) is the design.
 
-- **Identity and roles:** the requester is the Slack user ID from the verified event, never message text. Roles come from a static config map of Slack user IDs to role names. Unknown or undeterminable identity fails closed.
-- **Policy rules:** a rule names a server, a tool (exact or `*`), the allowed roles, and whether approval is required. Matching is on stable server/tool identity. A destructive annotation forces approval regardless of the rule.
-- **Approval:** a call needing approval suspends the turn and posts Approve/Deny buttons.
-    - An approval is bound to server ID, MCP tool name, SHA-256 of canonical JSON arguments, requester, conversation key, and expiry. Changing any argument invalidates it.
-    - On a click, the daemon verifies the clicker's identity and approver role, checks expiry and binding, rechecks policy, then resumes.
-    - Self-approval is off by default. Suspended turns are lost on restart.
+- **Identity and roles:** the requester is `<backend>:<User>`, from the identity the chat backend verified, never message text. Roles come from a static config map. Unknown identity fails closed.
+- **Grants and gates:** grants allow roles to call tools, additively like Kubernetes RBAC. Gates attach to tools and make their calls wait for answers, like GitHub environment protection rules. A destructive annotation forces at least confirmation.
+- **Approval:** a gated batch suspends the turn. The requester confirms it, and for `approve` gates a holder of an approver role approves it too. The stored calls are checked again in full, then run verbatim. Suspended turns are lost on restart.
 - **General controls:**
     - The model can never add a server, launch a command, choose an endpoint, or alter credentials; those come only from config.
     - Downstream controls (Kubernetes RBAC, Vault policies) remain enforced independently.
@@ -313,7 +311,7 @@ chatops/
 │   ├── conversation/          # per-thread serialization, history, suspended turns
 │   ├── llm/                   # OpenAI-compatible adapter
 │   ├── mcp/                   # SDK client wrapper, catalog, name mapping
-│   ├── policy/                # roles, rules, approval binding
+│   ├── policy/                # roles, grants, gates, approval binding
 │   ├── config/                # YAML parsing and validation
 │   ├── command/               # shared kong parser, Run, signal-aware context
 │   ├── version/               # shared `version` subcommand
@@ -338,10 +336,10 @@ chatops/
 |---|---|---|
 | 0 — bootstrap | done | Both binaries build and package (deb/rpm/container). Main branch protection: required `build / build` check, signed commits, linear history, one approving review |
 | 1 — local vertical slice | done | `chatops-mcp serve` + `ping`, `internal/config`, `internal/mcp`, `internal/llm`, `internal/agent`, and the `stdio` backend. Verified live against `http://media.xiehang.com:8080/v1` with `qwen3-1.7b-q8` |
-| 2 — Slack | done | Socket Mode, threading, retry deduplication, per-thread serialization. Named chat backends: `slack`, `discord`, `stdio`, and `unix` ship; `http`/`tcp` planned; `udp` deferred. See [`chat.md`](chat.md) |
+| 2 — Slack | done | Socket Mode, threading, retry deduplication, per-thread serialization. Named chat backends: `slack`, `discord`, `stdio`, and `unix` ship; `http` planned; `tcp` and `udp` dropped because they cannot authenticate. See [`chat.md`](chat.md) |
 | 2.5 — service and host status | done | The `status` and `host` groups |
 | 3 — Kubernetes | read-only slice done | 34 tools across nodes, namespaces, workloads (deployment, statefulset, daemonset, replicaset, job, pod), services, storage (pv, pvc), configmaps, and events. Mutation waits for Phase 4. See [`mcp-k8s.md`](mcp-k8s.md) |
-| 4 — policy and approval | not started | Roles, rules, execution-time checks, suspended turns, Slack approval buttons |
+| 4 — policy and approval | designed | Roles, grants, gates, execution-time checks, suspended turns, then Slack and Discord buttons. See [`policy.md`](policy.md) |
 | 5 — hardening | partly done | Done: metrics (per-reply stats and Prometheus, see [`observability.md`](observability.md)). Remaining: reconnect handling, structured audit events, integration tests |
 
 Until Phase 4, a startup warning is logged. Deploy only read-only tools, or only to fully trusted channels.
@@ -364,8 +362,8 @@ Done outside the phases:
 1. Slack and Discord are the production chat backends, both over outbound connections needing no public endpoint; the `stdio` terminal is for development and the `unix` socket for local access.
 2. Conversation history and suspended turns are in memory only.
 3. The first real integration is read-only Kubernetes via the built-in `chatops-mcp`.
-4. Trust model: static Slack user ID to roles map, with per-tool rules.
-5. Approval happens in Slack via buttons, by users holding the rule's approver role; self-approval is off by default.
+4. Trust model: a static map of `<backend>:<User>` principals to roles, allow-only grants, and no policy meaning no tools.
+5. A gate needs the requester's confirmation, and for `approve` also an approver's; self-approval is off by default. Text answers work on every backend, and buttons come later.
 6. Model responses are streamed by default, so a timed-out turn stops generation behind proxies such as LiteLLM. Chat still gets final replies in thread.
 7. First deployment target is systemd using the rpm/deb packaging covering both binaries.
 8. `chatops-mcp serve` runs one tool group per process (`--tool`).
