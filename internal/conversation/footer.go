@@ -17,9 +17,14 @@ var outcomeNotes = map[agent.Outcome]string{
 
 // footer renders a turn's steps on one line and its totals on the next; replyBytes is the reply before the footer.
 func footer(stats agent.Stats, replyBytes int) string {
-	steps := make([]string, len(stats.Steps))
-	for i, step := range stats.Steps {
-		steps[i] = stepText(step)
+	runs := toolRuns(stats.Steps)
+	steps := make([]string, len(runs))
+	for i, run := range runs {
+		if len(run) == 1 {
+			steps[i] = stepText(run[0])
+		} else {
+			steps[i] = runText(run)
+		}
 	}
 	totals := []string{"total " + formatDuration(stats.Duration), plural(stats.ToolCalls(), "tool")}
 	if prompt, completion, ok := stats.Tokens(); ok {
@@ -60,6 +65,52 @@ func stepText(step agent.Step) string {
 		text += " (" + strings.Join(details, ", ") + ")"
 	}
 	return text
+}
+
+// toolRuns splits steps into runs, where consecutive calls of the same tool share one run.
+func toolRuns(steps []agent.Step) [][]agent.Step {
+	var runs [][]agent.Step
+	for i, step := range steps {
+		last := len(runs) - 1
+		if i > 0 && step.Phase == agent.PhaseTool && steps[i-1].Phase == agent.PhaseTool && toolName(step) == toolName(steps[i-1]) {
+			runs[last] = append(runs[last], step)
+			continue
+		}
+		runs = append(runs, []agent.Step{step})
+	}
+	return runs
+}
+
+// runText sums a run of calls to one tool, keeping the slowest call and every failure visible.
+func runText(run []agent.Step) string {
+	var total time.Duration
+	fastest, slowest := run[0].Duration, run[0].Duration
+	var result, shown int
+	failures := map[agent.Outcome]int{}
+	var failed []agent.Outcome
+	for _, step := range run {
+		total += step.Duration
+		fastest, slowest = min(fastest, step.Duration), max(slowest, step.Duration)
+		result += step.ResultBytes
+		shown += min(step.ResultBytes, step.SentBytes)
+		if step.Outcome != agent.OutcomeOK {
+			if failures[step.Outcome] == 0 {
+				failed = append(failed, step.Outcome)
+			}
+			failures[step.Outcome]++
+		}
+	}
+	details := []string{formatDuration(fastest)}
+	if slowest != fastest {
+		details[0] += "–" + formatDuration(slowest)
+	}
+	if result > 0 {
+		details = append(details, toolBytes(result, shown))
+	}
+	for _, outcome := range failed {
+		details = append(details, fmt.Sprintf("%d %s", failures[outcome], outcome))
+	}
+	return fmt.Sprintf("%s ×%d %s (%s)", toolName(run[0]), len(run), formatDuration(total), strings.Join(details, ", "))
 }
 
 // toolName is server.tool, unique across servers; "__" in model-facing names would render as bold in chat.
