@@ -2,6 +2,7 @@ package pod
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -39,19 +40,21 @@ func Test_listPods(t *testing.T) {
 		kubetest.WorkloadPod("other", "web-1", "web"),
 	)
 	tests := map[string]struct {
-		namespace string
-		want      []string
-		errMsg    string
+		namespaces []string
+		want       []string
+		errMsg     string
 	}{
-		"one namespace":     {namespace: "argocd", want: []string{"argocd/server-1", "argocd/bare"}},
-		"every namespace":   {want: []string{"argocd/server-1", "argocd/bare", "other/web-1"}},
-		"empty namespace":   {namespace: " empty ", want: []string{}},
-		"missing namespace": {namespace: "nope", errMsg: `namespace "nope" does not exist`},
+		"one namespace":      {namespaces: []string{"argocd"}, want: []string{"argocd/server-1", "argocd/bare"}},
+		"several namespaces": {namespaces: []string{"other", "argocd", "other"}, want: []string{"other/web-1", "argocd/server-1", "argocd/bare"}},
+		"every namespace":    {want: []string{"argocd/server-1", "argocd/bare", "other/web-1"}},
+		"empty namespace":    {namespaces: []string{" empty "}, want: []string{}},
+		"missing namespaces": {namespaces: []string{"nope", "argocd", "gone"}, errMsg: `namespace "nope" does not exist; namespace "gone" does not exist`},
+		"blank namespace":    {namespaces: []string{"argocd", " "}, errMsg: "namespaces[1] is empty"},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			out, err := listPods(context.Background(), client, tc.namespace, "")
+			out, err := listPods(context.Background(), client, tc.namespaces, "", kube.DefaultMaxResults)
 			if tc.errMsg != "" {
 				require.EqualError(t, err, tc.errMsg)
 				return
@@ -65,7 +68,7 @@ func Test_listPods(t *testing.T) {
 		})
 	}
 
-	out, err := listPods(context.Background(), client, "argocd", "")
+	out, err := listPods(context.Background(), client, []string{"argocd"}, "", kube.DefaultMaxResults)
 	require.NoError(t, err)
 	require.Contains(t, out.Pods, PodListItem{
 		Namespace: "argocd", Name: "server-1", Ready: 1, Containers: 1, Status: "Running",
@@ -81,7 +84,7 @@ func Test_listPods_node_filter(t *testing.T) {
 		return true, &corev1.PodList{}, nil
 	})
 
-	out, err := listPods(context.Background(), client, "", " worker-4 ")
+	out, err := listPods(context.Background(), client, nil, " worker-4 ", kube.DefaultMaxResults)
 	require.NoError(t, err)
 	require.Equal(t, "spec.nodeName=worker-4", selector)
 	require.Equal(t, "worker-4", out.Node)
@@ -99,7 +102,7 @@ func Test_listPods_errors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			client := fake.NewClientset()
 			client.PrependReactor(tc.verb, tc.resource, kubetest.Forbidden(tc.verb, tc.resource))
-			_, err := listPods(context.Background(), client, "argocd", "")
+			_, err := listPods(context.Background(), client, []string{"argocd"}, "", kube.DefaultMaxResults)
 			require.ErrorContains(t, err, tc.verb+" denied")
 		})
 	}
@@ -137,7 +140,7 @@ func Test_pod_tools(t *testing.T) {
 		field string
 		text  []string
 	}{
-		"list":      {tool: "pod_list", args: map[string]any{"namespace": "argocd"}, field: "pods", text: []string{"server-1"}},
+		"list":      {tool: "pod_list", args: map[string]any{"namespaces": []any{"argocd"}}, field: "pods", text: []string{"server-1"}},
 		"describe":  {tool: "pod_describe", args: map[string]any{"pods": []any{ref, ghost}}, field: "pods", text: []string{"# argocd/server-1 Running\napiVersion: v1", `pod "argocd/ghost" not found`}},
 		"log":       {tool: "pod_log", args: map[string]any{"pods": []any{ref}}, field: "pods", text: []string{"== argocd/server-1 [main] ==\nfake logs"}},
 		"resources": {tool: "pod_resources", args: map[string]any{"pods": []any{ref}}, field: "pods", text: []string{"CPU REQUEST", "note: cpu and memory usage unavailable"}},
@@ -173,7 +176,7 @@ func Test_pod_tools_bad_arguments(t *testing.T) {
 		"log over cap":       {tool: "pod_log", args: map[string]any{"pods": refs(kube.MaxLogTargets + 1)}, errMsg: "at most 5 are allowed"},
 		"log tail too large": {tool: "pod_log", args: map[string]any{"pods": refs(1), "tail_lines": 501}, errMsg: "tail_lines must be between 1 and 500"},
 		"resources empty":    {tool: "pod_resources", args: map[string]any{"pods": []any{}}, errMsg: "pods must contain at least one target"},
-		"list ns missing":    {tool: "pod_list", args: map[string]any{"namespace": "nope"}, errMsg: `namespace "nope" does not exist`},
+		"list ns missing":    {tool: "pod_list", args: map[string]any{"namespaces": []any{"nope"}}, errMsg: `namespace "nope" does not exist`},
 	}
 	session := connect(t, testClients())
 
@@ -194,4 +197,46 @@ func Test_pod_list_tool_capped(t *testing.T) {
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "pod_list"})
 	require.NoError(t, err)
 	kubetest.RequireCapped(t, result, "pods", 1, 2)
+}
+
+func Test_pod_list_tool_capped_fairly(t *testing.T) {
+	session := connect(t, kube.Clients{MaxResults: 3, Core: fake.NewClientset(kubetest.Namespace("big"), kubetest.Namespace("small"),
+		kubetest.WorkloadPod("big", "b-1", "b"), kubetest.WorkloadPod("big", "b-2", "b"), kubetest.WorkloadPod("big", "b-3", "b"),
+		kubetest.WorkloadPod("big", "b-4", "b"), kubetest.WorkloadPod("small", "s-1", "s"))})
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "pod_list", Arguments: map[string]any{"namespaces": []any{"big", "small"}}})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	got := []string{}
+	for _, p := range kubetest.StructuredList(t, result, "pods") {
+		got = append(got, p["namespace"].(string))
+	}
+	require.Equal(t, []string{"big", "big", "small"}, got)
+	structured := result.StructuredContent.(map[string]any)
+	require.EqualValues(t, 5, structured["total"])
+	require.Equal(t, []any{map[string]any{"namespace": "big", "shown": float64(2), "total": float64(4)}}, structured["cut"])
+	require.Contains(t, result.Content[0].(*mcp.TextContent).Text, "(showing 3 of 5 pods, split evenly across namespaces; shortened: big 2 of 4)")
+}
+
+func Test_listPods_many_namespaces(t *testing.T) {
+	var objects []runtime.Object
+	namespaces := make([]string, kube.MaxTargets+10)
+	for i := range namespaces {
+		namespaces[i] = fmt.Sprintf("ns-%d", i)
+		objects = append(objects, kubetest.Namespace(namespaces[i]), kubetest.WorkloadPod(namespaces[i], "p", "p"))
+	}
+
+	out, err := listPods(context.Background(), fake.NewClientset(objects...), namespaces, "", kube.DefaultMaxResults)
+	require.NoError(t, err)
+	require.Len(t, out.Pods, kube.DefaultMaxResults)
+	require.Equal(t, len(namespaces), out.Total)
+	require.Len(t, out.Cut, len(namespaces)-kube.DefaultMaxResults)
+}
+
+func Test_pod_list_tool_rejects_singular_namespace(t *testing.T) {
+	session := connect(t, testClients())
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "pod_list", Arguments: map[string]any{"namespace": "argocd"}})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
 }

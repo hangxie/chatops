@@ -86,9 +86,19 @@ Health is the kubectl-style pod status.
 
 | Tool | Notes |
 |---|---|
-| `pod_list` | Filters by namespace and by node (a server-side field selector); names each pod's controller. |
+| `pod_list` | See below. |
 | `pod_log` | See below. |
 | `pod_resources` | Requests and limits per container, native sidecars included. Usage from the metrics API is measured against the limit, else the request. Degrades to a `usage_note` like `node_resources`. |
+
+`pod_list`:
+
+- Takes any number of namespaces in one call, so a sweep needs no per-namespace calls.
+- There is no cap on namespaces: `max_results` already bounds the rows. A list too long to fetch in time fails as a timeout, and the model can retry with fewer.
+- Filters by node with a server-side field selector.
+- Names each pod's controller.
+- A missing namespace fails the call. The error names every missing one.
+- Over `max_results`, rows are split evenly across the namespaces. A small namespace hands its spare rows to the rest.
+- The note names each namespace that was shortened.
 
 `pod_log`:
 

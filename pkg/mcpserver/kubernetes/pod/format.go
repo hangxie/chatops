@@ -21,14 +21,33 @@ func formatPodList(out PodListOutput) string {
 			strconv.Itoa(int(p.Restarts)), kube.OrNone(p.Node), kube.Age(p.Created), kube.OrNone(p.Owner),
 		})
 	}
-	return kube.Table([]string{"NAMESPACE", "NAME", "READY", "STATUS", "RESTARTS", "NODE", "AGE", "OWNER"}, rows) +
-		kube.CapNote(len(out.Pods), out.Total, "pods")
+	return kube.Table([]string{"NAMESPACE", "NAME", "READY", "STATUS", "RESTARTS", "NODE", "AGE", "OWNER"}, rows) + capNote(out)
+}
+
+// capNote names each namespace a multi-namespace list shortened, so the model can list it alone.
+func capNote(out PodListOutput) string {
+	if len(out.Cut) == 0 {
+		return kube.CapNote(len(out.Pods), out.Total, "pods")
+	}
+	cuts := make([]string, len(out.Cut))
+	for i, c := range out.Cut {
+		cuts[i] = fmt.Sprintf("%s %d of %d", c.Namespace, c.Shown, c.Total)
+	}
+	return fmt.Sprintf("\n(showing %d of %d pods, split evenly across namespaces; shortened: %s)", len(out.Pods), out.Total, strings.Join(cuts, ", "))
 }
 
 func emptyPodList(out PodListOutput) string {
 	var where []string
-	if out.Namespace != "" {
-		where = append(where, fmt.Sprintf("in namespace %q", out.Namespace))
+	switch len(out.Namespaces) {
+	case 0:
+	case 1:
+		where = append(where, fmt.Sprintf("in namespace %q", out.Namespaces[0]))
+	default:
+		quoted := make([]string, len(out.Namespaces))
+		for i, namespace := range out.Namespaces {
+			quoted[i] = strconv.Quote(namespace)
+		}
+		where = append(where, "in namespaces "+strings.Join(quoted, ", "))
 	}
 	if out.Node != "" {
 		where = append(where, fmt.Sprintf("on node %q", out.Node))
