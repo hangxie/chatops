@@ -35,7 +35,36 @@ func Test_footer(t *testing.T) {
 				{Phase: agent.PhaseTool, Outcome: agent.OutcomeError, Duration: time.Second, Name: "builtin__ping", Server: "builtin", Tool: "ping", ResultBytes: 12, SentBytes: 19},
 			}},
 			replyBytes: 3 << 20,
-			want:       "builtin.ping 1.0s (4B) → builtin.ping 1.0s (12B, error)\ntotal 3.0s · 2 tools · reply 3.0MB",
+			want:       "builtin.ping ×2 2.0s (1.0s, 16B, 1 error)\ntotal 3.0s · 2 tools · reply 3.0MB",
+		},
+		"repeated-tool": {
+			stats: agent.Stats{Outcome: agent.OutcomeAnswered, Duration: 9 * time.Second, Steps: []agent.Step{
+				plan,
+				{Phase: agent.PhaseTool, Outcome: agent.OutcomeOK, Duration: 6 * time.Millisecond, Name: "builtin__pod_list", Server: "builtin", Tool: "pod_list", ResultBytes: 1024, SentBytes: 1024},
+				{Phase: agent.PhaseTool, Outcome: agent.OutcomeOK, Duration: 399 * time.Millisecond, Name: "builtin__pod_list", Server: "builtin", Tool: "pod_list", ResultBytes: 7 * 1024, SentBytes: 4 * 1024},
+				{Phase: agent.PhaseTool, Outcome: agent.OutcomeTimeout, Duration: 30 * time.Millisecond, Name: "builtin__pod_list", Server: "builtin", Tool: "pod_list", SentBytes: 37},
+				answer,
+			}},
+			replyBytes: 10,
+			want:       "plan 2.3s (1.2k→45 tok) → builtin.pod_list ×3 435ms (6ms–399ms, 8.0KB→5.0KB, 1 timeout) → answer 6.3s (8.1k→310 tok)\ntotal 9.0s · 3 tools · 9.3k→355 tok · reply 10B",
+		},
+		"interleaved-tools": {
+			stats: agent.Stats{Outcome: agent.OutcomeAnswered, Duration: time.Second, Steps: []agent.Step{
+				{Phase: agent.PhaseTool, Outcome: agent.OutcomeOK, Duration: time.Millisecond, Name: "builtin__ping", Server: "builtin", Tool: "ping", ResultBytes: 4, SentBytes: 4},
+				{Phase: agent.PhaseTool, Outcome: agent.OutcomeOK, Duration: time.Millisecond, Name: "k8s__ping", Server: "k8s", Tool: "ping", ResultBytes: 4, SentBytes: 4},
+				plan,
+				{Phase: agent.PhaseTool, Outcome: agent.OutcomeOK, Duration: time.Millisecond, Name: "k8s__ping", Server: "k8s", Tool: "ping", ResultBytes: 4, SentBytes: 4},
+			}},
+			replyBytes: 10,
+			want:       "builtin.ping 1ms (4B) → k8s.ping 1ms (4B) → plan 2.3s (1.2k→45 tok) → k8s.ping 1ms (4B)\ntotal 1.0s · 3 tools · 1.2k→45 tok · reply 10B",
+		},
+		"repeated-rejected-tool": {
+			stats: agent.Stats{Outcome: agent.OutcomeAnswered, Duration: time.Second, Steps: []agent.Step{
+				{Phase: agent.PhaseTool, Outcome: agent.OutcomeError, Duration: time.Millisecond, Name: "builtin__rm", SentBytes: 33},
+				{Phase: agent.PhaseTool, Outcome: agent.OutcomeError, Duration: time.Millisecond, Name: "builtin__rm", SentBytes: 33},
+			}},
+			replyBytes: 10,
+			want:       "builtin__rm ×2 2ms (1ms, 2 error)\ntotal 1.0s · 2 tools · reply 10B",
 		},
 		"rejected-tool": {
 			stats: agent.Stats{Outcome: agent.OutcomeAnswered, Duration: time.Second, Steps: []agent.Step{

@@ -65,6 +65,9 @@ With `agent.show_stats: true`, the conversation manager appends the steps and to
 - Tools appear as `<server>.<tool>`, using the configured server name, which is unique.
 - The model-facing `<server>__<tool>` is not used, because it would render as bold in chat Markdown.
 - A call to an unknown tool shows the name the model asked for.
+- Consecutive calls to the same tool collapse into one entry: `kubernetes.pod_list ×43 8.6s (6ms–399ms, 49KB, 1 timeout)`.
+- The entry shows the count, total time, fastest–slowest call, and total bytes.
+- Failures are counted per outcome, so none is hidden.
 - A model step that failed over names the model that answered, or failed last: `answer 4.0s (via openrouter, 900→20 tok)`.
 - Its duration includes the failed attempts, since the user waited for them.
 - The reply size is measured before sending, so it is approximate. Platform rendering (Slack mrkdwn) changes it slightly.
