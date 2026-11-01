@@ -9,7 +9,7 @@ This is the conclusions-only design of record. It describes the accepted target 
 | Chat backends | [`chat.md`](chat.md) |
 | Authorization and approval | [`policy.md`](policy.md) |
 | Per-reply stats and Prometheus metrics | [`observability.md`](observability.md) |
-| Tool groups | [`mcp-ping.md`](mcp-ping.md), [`mcp-status.md`](mcp-status.md), [`mcp-k8s.md`](mcp-k8s.md), [`mcp-host.md`](mcp-host.md) |
+| Tool groups | [`mcp-ping.md`](mcp-ping.md), [`mcp-status.md`](mcp-status.md), [`mcp-k8s.md`](mcp-k8s.md), [`mcp-host.md`](mcp-host.md), [`mcp-stock.md`](mcp-stock.md) (designed) |
 | Usage | [`../README.md`](../README.md) |
 
 ## 1. Summary
