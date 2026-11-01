@@ -44,7 +44,7 @@ media-overall   | is the media server and everything on it OK?  | tool=host_stat
 # kubernetes: list tools, chaining from a list to per-target tools, misses.
 namespaces      | list all namespaces                           | first=namespace_list; has=kube-system
 nodes           | list the nodes                                | first=node_list
-node-usage      | show resource usage on all worker-* nodes     | tool=node_list; tool=node_resources; has=worker-0; has=worker-5
+node-usage      | show resource usage on all worker-* nodes     | tool=node_list; tool=node_resources; has=worker-0; has=worker-4
 node-two        | status of worker-0 and worker-1               | tool=node_status; notool=host_status; has=worker-0; has=worker-1
 pods-ns         | list pods in kube-system                      | first=pod_list; has=coredns
 missing-node    | show the status of node no-such-node          | first=node_status; has=no-such-node
