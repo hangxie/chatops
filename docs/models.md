@@ -4,10 +4,11 @@ How well each model we tried drives chatops, measured with [`scripts/model-check
 
 ## How they were tested
 
-- Date: 2026-10-18, over several rounds.
+- Date: 2026-10-18, over several rounds. qwen-3.5-9b ran on 2026-11-01.
 - Cases: the 29 in [`scripts/model-check.cases`](../scripts/model-check.cases), run against a homelab with the `ping`, `host`, `status`, and `kubernetes` tool groups. nemotron-3.5-super ran an earlier set of 27, without `svc-claude-code` and `svc-codex`.
 - Rounds: the rows marked *current* ran after the tool descriptions were sharpened and `service_status` took a list. The others ran before, so they may do better now.
 - Settings: those in [Recommended settings](#recommended-settings), with `agent.show_stats: true` and `agent.turn_timeout` raised past `120s`. The script waited at most 300 s for each reply.
+- `worker-5` left the cluster before the qwen-3.5-9b run, when `worker-4` took over both RTX 3050s. qwen-3.5-9b failed `node-usage` only for not naming it. That check now expects `worker-4`.
 - The raw result files are not kept here: their replies carry public addresses and host details.
 
 ## Recommended settings
@@ -90,6 +91,15 @@ Tested on vLLM with one RTX 3050 (6 GB):
 - qwen-3.5-4b still checks only the host for "the media server and everything on it" and calls an unlisted host unreachable instead of not covered.
 - The models that score best (26 of 29) are 26–27B.
 
+Two RTX 3050s are enough for a 9B model, split with tensor parallel 2:
+
+| Model | Context | Pass | Fail | Manual | Speed | Result |
+|---|---|---|---|---|---|---|
+| qwen-3.5-9b (AWQ 4-bit) | 32k | 25 | 2 | 2 | ~32 tokens/s | Good: 26 with the `worker-5` check fixed |
+
+- It ran without `--enforce-eager`, like qwen-3.5-4b.
+- It fixed qwen-3.5-4b's "not reachable" answer for an unlisted host, but not the media-server miss.
+
 qwen-3.5-4b scored about the same on both servers, but it is easier to run on llama.cpp:
 
 | Server | Settings | Speed |
@@ -106,6 +116,7 @@ Two cases have no automatic checks and are left for a human: `capabilities` and 
 | qwen-3.8-27b | llama.cpp on a Mac | earlier | 26 | 1 | 2 | Accurate but slow |
 | gemma-4-26b | Cloudflare Workers AI | earlier | 26 | 1 | 2 | Good |
 | glm-4.7-flash | Cloudflare Workers AI | earlier | 25 | 2 | 2 | Good |
+| qwen-3.5-9b (AWQ 4-bit) | vLLM on two RTX 3050s (6 GB each) | current | 25 | 2 | 2 | Good: 26 with the `worker-5` check fixed |
 | qwen-3.5-4b (AWQ 4-bit) | vLLM on an RTX 3050 (6 GB) | current | 25 | 2 | 2 | Good for its size |
 | qwen-3.5-4b (Q4 GGUF) | llama.cpp on a Mac | current | 24 | 3 | 2 | Good for its size |
 | nemotron-3.5-super | Cloudflare Workers AI | earlier | 22 of 27 | 3 | 2 | Declines a plain `ping` |
@@ -129,6 +140,13 @@ Two cases have no automatic checks and are left for a human: `capabilities` and 
 
 - For "the media server and everything on it", it checked the media LLM but not Harbor. `service_status` took one service per call then.
 - It sent "is nas.xiehang.com reachable?" to the decline tool.
+
+**qwen-3.5-9b**
+
+- For "the media server and everything on it", it checked only the host, like qwen-3.5-4b.
+- It answered "ping and tell me a joke" with the pong and a joke.
+- Unlike qwen-3.5-4b, it called `nas.xiehang.com` not covered.
+- `pods-ns` finished in 79 s, at about 32 tokens/s.
 
 **qwen-3.5-4b, both servers**
 
@@ -192,4 +210,5 @@ Any of these rules a model out, whatever its score:
 | glm-4.7-flash | 115 tokens/s | about 20 s |
 | qwen-3.5-4b on llama.cpp | 45 tokens/s | about 55 s |
 | qwen-3.5-4b on vLLM | 31 tokens/s | about 79 s |
+| qwen-3.5-9b on vLLM | 32 tokens/s | about 79 s |
 | qwen-3.8-27b | 17 tokens/s | about 139 s |
