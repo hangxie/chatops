@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	k8s "k8s.io/client-go/kubernetes"
@@ -106,25 +107,16 @@ func podDescribeHandler(c kube.Clients) mcp.ToolHandlerFor[podInput, PodDescribe
 // listPods lists every namespace when namespaces is empty, and fails naming each requested namespace that does not exist.
 func listPods(ctx context.Context, client k8s.Interface, namespaces []string, node string, limit int) (PodListOutput, error) {
 	node = strings.TrimSpace(node)
-	var lists []namespacePods
-	if len(namespaces) == 0 {
-		all, err := listNamespacePods(ctx, client, "", node)
-		if err != nil {
-			return PodListOutput{}, err
-		}
-		lists = []namespacePods{all}
-	} else {
+	if len(namespaces) > 0 {
 		var err error
-		// No cap: max_results bounds the rows, and a list too long to fetch in time fails as a timeout the model can narrow.
+		// No cap: max_results bounds the rows; fetchPods makes at most two API calls unless RBAC forces a call per namespace.
 		if namespaces, err = kube.CappedTargets("namespaces", namespaces, len(namespaces)); err != nil {
 			return PodListOutput{}, err
 		}
-		fetch := func(ctx context.Context, namespace string) (namespacePods, error) {
-			return listNamespacePods(ctx, client, namespace, node)
-		}
-		if lists, err = kube.FetchAll(ctx, namespaces, fetch); err != nil {
-			return PodListOutput{}, err
-		}
+	}
+	lists, err := fetchPods(ctx, client, namespaces, node)
+	if err != nil {
+		return PodListOutput{}, err
 	}
 	out := PodListOutput{Namespaces: namespaces, Node: node, Pods: []PodListItem{}}
 	var missing []string
@@ -155,18 +147,76 @@ type namespacePods struct {
 	missing string
 }
 
+// fetchPods returns one entry per namespace, or one for the whole cluster when namespaces is empty.
+func fetchPods(ctx context.Context, client k8s.Interface, namespaces []string, node string) ([]namespacePods, error) {
+	if len(namespaces) <= 1 {
+		namespace := ""
+		if len(namespaces) == 1 {
+			namespace = namespaces[0]
+		}
+		list, err := listNamespacePods(ctx, client, namespace, node)
+		return []namespacePods{list}, err
+	}
+	// One cluster-wide list beats a list per namespace, which the client's rate limit would serialize.
+	all, err := podItems(ctx, client, "", node)
+	if apierrors.IsForbidden(err) {
+		// Roles granted per namespace still allow a list in each.
+		return kube.FetchAll(ctx, namespaces, func(ctx context.Context, namespace string) (namespacePods, error) {
+			return listNamespacePods(ctx, client, namespace, node)
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+	byNamespace := make(map[string][]PodListItem)
+	for _, p := range all {
+		byNamespace[p.Namespace] = append(byNamespace[p.Namespace], p)
+	}
+	lists := make([]namespacePods, len(namespaces))
+	var empty []int
+	for i, namespace := range namespaces {
+		if lists[i].pods = byNamespace[namespace]; len(lists[i].pods) == 0 {
+			empty = append(empty, i)
+		}
+	}
+	if len(empty) == 0 {
+		return lists, nil
+	}
+	names := make([]string, len(empty))
+	for j, i := range empty {
+		names[j] = namespaces[i]
+	}
+	notes, err := kube.MissingNamespaces(ctx, client, names)
+	if err != nil {
+		return nil, err
+	}
+	for j, i := range empty {
+		lists[i].missing = notes[j]
+	}
+	return lists, nil
+}
+
 func listNamespacePods(ctx context.Context, client k8s.Interface, namespace, node string) (namespacePods, error) {
+	pods, err := podItems(ctx, client, namespace, node)
+	if err != nil {
+		return namespacePods{}, err
+	}
+	if len(pods) == 0 && namespace != "" {
+		missing, err := kube.MissingNamespace(ctx, client, namespace)
+		return namespacePods{missing: missing}, err
+	}
+	return namespacePods{pods: pods}, nil
+}
+
+// podItems lists one namespace's pods, or every namespace's when namespace is empty.
+func podItems(ctx context.Context, client k8s.Interface, namespace, node string) ([]PodListItem, error) {
 	opts := metav1.ListOptions{}
 	if node != "" {
 		opts.FieldSelector = fields.OneTermEqualSelector("spec.nodeName", node).String()
 	}
 	list, err := client.CoreV1().Pods(namespace).List(ctx, opts)
 	if err != nil {
-		return namespacePods{}, err
-	}
-	if len(list.Items) == 0 && namespace != "" {
-		missing, err := kube.MissingNamespace(ctx, client, namespace)
-		return namespacePods{missing: missing}, err
+		return nil, err
 	}
 	pods := make([]PodListItem, 0, len(list.Items))
 	for i := range list.Items {
@@ -177,7 +227,7 @@ func listNamespacePods(ctx context.Context, client k8s.Interface, namespace, nod
 			Restarts: s.Restarts, Node: s.Node, Owner: owner(p), Created: s.Created,
 		})
 	}
-	return namespacePods{pods: pods}, nil
+	return pods, nil
 }
 
 func owner(p *corev1.Pod) string {

@@ -2,6 +2,7 @@ package pod
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -104,6 +105,88 @@ func Test_listPods_errors(t *testing.T) {
 			client.PrependReactor(tc.verb, tc.resource, kubetest.Forbidden(tc.verb, tc.resource))
 			_, err := listPods(context.Background(), client, []string{"argocd"}, "", kube.DefaultMaxResults)
 			require.ErrorContains(t, err, tc.verb+" denied")
+		})
+	}
+	t.Run("several namespaces list pods", func(t *testing.T) {
+		client := fake.NewClientset()
+		client.PrependReactor("list", "pods", kubetest.Forbidden("list", "pods"))
+		_, err := listPods(context.Background(), client, []string{"argocd", "other"}, "", kube.DefaultMaxResults)
+		require.ErrorContains(t, err, "list denied")
+	})
+	for _, resource := range []string{"pods", "namespaces"} {
+		t.Run("several namespaces list "+resource+" fails", func(t *testing.T) {
+			client := fake.NewClientset()
+			client.PrependReactor("list", resource, func(k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, errors.New("boom")
+			})
+			_, err := listPods(context.Background(), client, []string{"argocd", "other"}, "", kube.DefaultMaxResults)
+			require.EqualError(t, err, "boom")
+		})
+	}
+}
+
+// Test_listPods_namespaced_grants covers callers whose grants forbid the cluster-wide pod list, the namespace list, or both.
+func Test_listPods_namespaced_grants(t *testing.T) {
+	tests := map[string]struct {
+		forbidPods, forbidNamespaces bool
+	}{
+		"pods and namespaces": {forbidPods: true, forbidNamespaces: true},
+		"namespaces only":     {forbidNamespaces: true},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			client := fake.NewClientset(kubetest.Namespace("argocd"), kubetest.Namespace("empty"),
+				kubetest.WorkloadPod("argocd", "server-1", "server"), kubetest.WorkloadPod("other", "web-1", "web"))
+			if tc.forbidPods {
+				client.PrependReactor("list", "pods", func(a k8stesting.Action) (bool, runtime.Object, error) {
+					if a.GetNamespace() == "" {
+						return kubetest.Forbidden("list", "pods")(a)
+					}
+					return false, nil, nil
+				})
+			}
+			if tc.forbidNamespaces {
+				client.PrependReactor("list", "namespaces", kubetest.Forbidden("list", "namespaces"))
+			}
+
+			out, err := listPods(context.Background(), client, []string{"argocd", "other", "empty"}, "", kube.DefaultMaxResults)
+			require.NoError(t, err)
+			require.Equal(t, 2, out.Total)
+			_, err = listPods(context.Background(), client, []string{"argocd", "nope"}, "", kube.DefaultMaxResults)
+			require.EqualError(t, err, `namespace "nope" does not exist`)
+		})
+	}
+}
+
+func Test_listPods_api_calls(t *testing.T) {
+	var objects []runtime.Object
+	namespaces := make([]string, 40)
+	for i := range namespaces {
+		namespaces[i] = fmt.Sprintf("ns-%d", i)
+		objects = append(objects, kubetest.Namespace(namespaces[i]), kubetest.WorkloadPod(namespaces[i], "p", "p"))
+	}
+	objects = append(objects, kubetest.Namespace("empty"))
+	tests := map[string]struct {
+		namespaces []string
+		want       int
+		errMsg     string
+	}{
+		"every namespace has pods": {namespaces: namespaces, want: 1},
+		"one existing but empty":   {namespaces: append([]string{"empty"}, namespaces...), want: 2},
+		"one missing":              {namespaces: append([]string{"nope"}, namespaces...), want: 2, errMsg: `namespace "nope" does not exist`},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			client := fake.NewClientset(objects...)
+			_, err := listPods(context.Background(), client, tc.namespaces, "", kube.DefaultMaxResults)
+			if tc.errMsg != "" {
+				require.EqualError(t, err, tc.errMsg)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Len(t, client.Actions(), tc.want)
 		})
 	}
 }

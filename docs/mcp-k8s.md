@@ -93,7 +93,10 @@ Health is the kubectl-style pod status.
 `pod_list`:
 
 - Takes any number of namespaces in one call, so a sweep needs no per-namespace calls.
-- There is no cap on namespaces: `max_results` already bounds the rows. A list too long to fetch in time fails as a timeout, and the model can retry with fewer.
+- There is no cap on namespaces: `max_results` already bounds the rows.
+- Two or more namespaces cost one cluster-wide list filtered locally, plus one namespace list only if a requested namespace has no pods. A list per namespace would queue behind the client rate limit.
+- If either cluster-wide list is forbidden, it falls back to a call per namespace. So per-namespace Roles keep working, just slower.
+- The cluster-wide list fetches every pod, even when the namespaces asked for are small; `max_results` bounds only the reply. That is cheap on a small cluster. Benchmark before using it on a cluster with very many pods.
 - Filters by node with a server-side field selector.
 - Names each pod's controller.
 - A missing namespace fails the call. The error names every missing one.
@@ -538,7 +541,7 @@ Mutating operations (cordon, drain, restart, scale, delete) wait for Phase 4 to 
 11. `pods` tools list only pods the workload controls (selector, then owner reference) with kubectl-style status, marking rollout revision where the resource has one.
 12. `describe` tools return cleaned YAML with literal environment values redacted, keeping the last 3 characters only for values of at least 12; `command`/`args` are not redacted.
 13. Connection follows [Connection resolution](#connection-resolution): an explicit `kubeconfig` never silently falls back, and an explicit `context` forces kubeconfig resolution. Every group setting lives in the optional `--config` directory.
-14. The `rest.Config` sets a finite request timeout and a `chatops-mcp/<version>` user agent.
+14. The `rest.Config` sets a finite request timeout, a `chatops-mcp/<version>` user agent, and a 50 QPS / 100 burst rate limit. client-go's 5/10 default stretched one 50-target call to seconds.
 15. Network failures are runtime tool errors; only local config problems fail startup.
 16. RBAC is the only switch for features that need a powerful grant; such grants stay out of the baseline.
 17. `list` tools and each `pods` target return at most `max_results` rows (default 50), capped after listing, with the total reported; no pagination.

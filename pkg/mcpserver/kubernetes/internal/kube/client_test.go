@@ -74,6 +74,7 @@ func Test_NewClients(t *testing.T) {
 	require.NotNil(t, c.Core)
 	require.NotNil(t, c.Metrics)
 	require.Equal(t, 7, c.ResultLimit())
+	require.Equal(t, float32(clientQPS), c.Core.CoreV1().RESTClient().GetRateLimiter().QPS())
 }
 
 func Test_NewClients_negative_max_results(t *testing.T) {

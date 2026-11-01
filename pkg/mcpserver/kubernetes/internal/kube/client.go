@@ -16,6 +16,12 @@ import (
 // inClusterConfig is a seam so tests can exercise the in-cluster branch without running in a pod.
 var inClusterConfig = rest.InClusterConfig
 
+// clientQPS and clientBurst replace client-go's 5/10 default, which throttled one call over many targets to seconds.
+const (
+	clientQPS   = 50
+	clientBurst = 100
+)
+
 // Config selects how the Kubernetes client connects; an empty Config uses in-cluster then the default kubeconfig.
 type Config struct {
 	Kubeconfig string
@@ -42,6 +48,7 @@ func NewClients(cfg Config, timeout time.Duration, userAgent string) (Clients, e
 	}
 	restCfg.Timeout = timeout
 	restCfg.UserAgent = userAgent
+	restCfg.QPS, restCfg.Burst = clientQPS, clientBurst
 	core, err := k8s.NewForConfig(restCfg)
 	if err != nil {
 		return Clients{}, fmt.Errorf("kubernetes client: %w", err)
