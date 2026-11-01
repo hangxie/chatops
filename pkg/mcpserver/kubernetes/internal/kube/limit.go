@@ -25,3 +25,21 @@ func CapNote(shown, total int, plural string) string {
 	}
 	return fmt.Sprintf("\n(showing the first %d of %d %s)", shown, total, plural)
 }
+
+// FairShares splits limit evenly across lists of the given sizes, handing what a short list leaves to the longer ones.
+func FairShares(sizes []int, limit int) []int {
+	shares := make([]int, len(sizes))
+	for open := len(sizes); limit > 0 && open > 0; {
+		each := max(limit/open, 1)
+		open = 0
+		for i, n := range sizes {
+			take := min(each, n-shares[i], limit)
+			shares[i] += take
+			limit -= take
+			if shares[i] < n {
+				open++
+			}
+		}
+	}
+	return shares
+}

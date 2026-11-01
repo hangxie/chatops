@@ -3,6 +3,7 @@ package pod
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -28,18 +29,27 @@ type PodListItem struct {
 	Created    time.Time `json:"created"`
 }
 
-// PodListOutput is the structured result of pod_list; Namespace and Node echo the filters given.
+// PodListOutput is the structured result of pod_list; Namespaces and Node echo the filters given.
 type PodListOutput struct {
-	Namespace string        `json:"namespace,omitempty"`
-	Node      string        `json:"node,omitempty"`
-	Pods      []PodListItem `json:"pods"`
+	Namespaces []string      `json:"namespaces,omitempty"`
+	Node       string        `json:"node,omitempty"`
+	Pods       []PodListItem `json:"pods"`
 	// Total counts every match before the cap.
 	Total int `json:"total"`
+	// Cut lists the requested namespaces the cap shortened, so the model can list one alone.
+	Cut []NamespaceCut `json:"cut,omitempty"`
+}
+
+// NamespaceCut is one namespace's share of a capped multi-namespace list.
+type NamespaceCut struct {
+	Namespace string `json:"namespace"`
+	Shown     int    `json:"shown"`
+	Total     int    `json:"total"`
 }
 
 type podListInput struct {
-	Namespace string `json:"namespace,omitempty" jsonschema:"the namespace to list; omit to list every namespace"`
-	Node      string `json:"node,omitempty" jsonschema:"only pods scheduled on this node"`
+	Namespaces []string `json:"namespaces,omitempty" jsonschema:"the namespaces to list, all in one call; omit to list every namespace"`
+	Node       string   `json:"node,omitempty" jsonschema:"only pods scheduled on this node"`
 }
 
 type podInput struct {
@@ -50,7 +60,7 @@ type podInput struct {
 func Register(server *mcp.Server, c kube.Clients) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "pod_list",
-		Description: "List Kubernetes pods with ready containers, status, restarts, node, age, and owning controller. Pass namespace to list one namespace (omit for every namespace) and node to list only the pods on that node.",
+		Description: "List Kubernetes pods with ready containers, status, restarts, node, age, and owning controller. Pass namespaces to list only those namespaces, all in one call (omit for every namespace), and node to list only the pods on that node.",
 		Annotations: kube.ReadOnly(),
 	}, podListHandler(c))
 	mcp.AddTool(server, &mcp.Tool{
@@ -72,11 +82,10 @@ func Register(server *mcp.Server, c kube.Clients) {
 
 func podListHandler(c kube.Clients) mcp.ToolHandlerFor[podListInput, PodListOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in podListInput) (*mcp.CallToolResult, PodListOutput, error) {
-		out, err := listPods(ctx, c.Core, in.Namespace, in.Node)
+		out, err := listPods(ctx, c.Core, in.Namespaces, in.Node, c.ResultLimit())
 		if err != nil {
 			return nil, PodListOutput{}, err
 		}
-		out.Pods, out.Total = kube.Cap(out.Pods, c.ResultLimit())
 		return kube.TextResult(formatPodList(out)), out, nil
 	}
 }
@@ -94,29 +103,81 @@ func podDescribeHandler(c kube.Clients) mcp.ToolHandlerFor[podInput, PodDescribe
 	)
 }
 
-func listPods(ctx context.Context, client k8s.Interface, namespace, node string) (PodListOutput, error) {
-	namespace, node = strings.TrimSpace(namespace), strings.TrimSpace(node)
+// listPods lists every namespace when namespaces is empty, and fails naming each requested namespace that does not exist.
+func listPods(ctx context.Context, client k8s.Interface, namespaces []string, node string, limit int) (PodListOutput, error) {
+	node = strings.TrimSpace(node)
+	var lists []namespacePods
+	if len(namespaces) == 0 {
+		all, err := listNamespacePods(ctx, client, "", node)
+		if err != nil {
+			return PodListOutput{}, err
+		}
+		lists = []namespacePods{all}
+	} else {
+		var err error
+		// No cap: max_results bounds the rows, and a list too long to fetch in time fails as a timeout the model can narrow.
+		if namespaces, err = kube.CappedTargets("namespaces", namespaces, len(namespaces)); err != nil {
+			return PodListOutput{}, err
+		}
+		fetch := func(ctx context.Context, namespace string) (namespacePods, error) {
+			return listNamespacePods(ctx, client, namespace, node)
+		}
+		if lists, err = kube.FetchAll(ctx, namespaces, fetch); err != nil {
+			return PodListOutput{}, err
+		}
+	}
+	out := PodListOutput{Namespaces: namespaces, Node: node, Pods: []PodListItem{}}
+	var missing []string
+	sizes := make([]int, len(lists))
+	for i, list := range lists {
+		if list.missing != "" {
+			missing = append(missing, list.missing)
+		}
+		sizes[i] = len(list.pods)
+		out.Total += sizes[i]
+	}
+	if len(missing) > 0 {
+		return PodListOutput{}, errors.New(strings.Join(missing, "; "))
+	}
+	// An even split keeps one large namespace from crowding out the others the caller asked for.
+	for i, share := range kube.FairShares(sizes, limit) {
+		out.Pods = append(out.Pods, lists[i].pods[:share]...)
+		if share < sizes[i] && len(lists) > 1 {
+			out.Cut = append(out.Cut, NamespaceCut{Namespace: namespaces[i], Shown: share, Total: sizes[i]})
+		}
+	}
+	return out, nil
+}
+
+// namespacePods is one namespace's pods, or a note when the namespace does not exist.
+type namespacePods struct {
+	pods    []PodListItem
+	missing string
+}
+
+func listNamespacePods(ctx context.Context, client k8s.Interface, namespace, node string) (namespacePods, error) {
 	opts := metav1.ListOptions{}
 	if node != "" {
 		opts.FieldSelector = fields.OneTermEqualSelector("spec.nodeName", node).String()
 	}
 	list, err := client.CoreV1().Pods(namespace).List(ctx, opts)
 	if err != nil {
-		return PodListOutput{}, err
+		return namespacePods{}, err
 	}
-	if err := kube.CheckNamespace(ctx, client, namespace, len(list.Items)); err != nil {
-		return PodListOutput{}, err
+	if len(list.Items) == 0 && namespace != "" {
+		missing, err := kube.MissingNamespace(ctx, client, namespace)
+		return namespacePods{missing: missing}, err
 	}
-	out := PodListOutput{Namespace: namespace, Node: node, Pods: make([]PodListItem, 0, len(list.Items))}
+	pods := make([]PodListItem, 0, len(list.Items))
 	for i := range list.Items {
 		p := &list.Items[i]
 		s := kube.SummarizePod(p)
-		out.Pods = append(out.Pods, PodListItem{
+		pods = append(pods, PodListItem{
 			Namespace: p.Namespace, Name: p.Name, Ready: s.Ready, Containers: s.Containers, Status: s.Status,
 			Restarts: s.Restarts, Node: s.Node, Owner: owner(p), Created: s.Created,
 		})
 	}
-	return out, nil
+	return namespacePods{pods: pods}, nil
 }
 
 func owner(p *corev1.Pod) string {

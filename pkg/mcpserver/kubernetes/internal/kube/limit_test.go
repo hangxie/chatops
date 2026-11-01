@@ -51,3 +51,26 @@ func Test_CapNote(t *testing.T) {
 	require.Empty(t, CapNote(0, 0, "pods"))
 	require.Equal(t, "\n(showing the first 2 of 5 pods)", CapNote(2, 5, "pods"))
 }
+
+func Test_FairShares(t *testing.T) {
+	tests := map[string]struct {
+		sizes []int
+		limit int
+		want  []int
+	}{
+		"under":             {sizes: []int{3, 4}, limit: 10, want: []int{3, 4}},
+		"even":              {sizes: []int{70, 30, 40}, limit: 30, want: []int{10, 10, 10}},
+		"short list gives":  {sizes: []int{70, 5, 40}, limit: 50, want: []int{23, 5, 22}},
+		"uneven remainder":  {sizes: []int{10, 10, 10}, limit: 4, want: []int{2, 1, 1}},
+		"limit below lists": {sizes: []int{5, 5, 5}, limit: 2, want: []int{1, 1, 0}},
+		"empty list":        {sizes: []int{0, 9}, limit: 5, want: []int{0, 5}},
+		"zero limit":        {sizes: []int{3}, limit: 0, want: []int{0}},
+		"none":              {sizes: nil, limit: 5, want: []int{}},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, FairShares(tc.sizes, tc.limit))
+		})
+	}
+}

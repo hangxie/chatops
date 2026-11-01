@@ -24,15 +24,37 @@ func Test_formatPodList(t *testing.T) {
 	require.Regexp(t, `argocd\s+bare\s+0/1\s+Pending\s+3\s+n/a\s+2h\s+n/a`, text)
 }
 
+func Test_capNote(t *testing.T) {
+	pods := []PodListItem{{Namespace: "a"}, {Namespace: "b"}}
+	tests := map[string]struct {
+		out  PodListOutput
+		want string
+	}{
+		"complete":    {out: PodListOutput{Pods: pods, Total: 2}, want: ""},
+		"single list": {out: PodListOutput{Pods: pods, Total: 9}, want: "\n(showing the first 2 of 9 pods)"},
+		"shortened": {
+			out:  PodListOutput{Pods: pods, Total: 9, Cut: []NamespaceCut{{Namespace: "a", Shown: 1, Total: 4}, {Namespace: "b", Shown: 1, Total: 5}}},
+			want: "\n(showing 2 of 9 pods, split evenly across namespaces; shortened: a 1 of 4, b 1 of 5)",
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, capNote(tc.out))
+		})
+	}
+}
+
 func Test_emptyPodList(t *testing.T) {
 	tests := map[string]struct {
 		out  PodListOutput
 		want string
 	}{
 		"anywhere":     {want: "no pods found"},
-		"namespace":    {out: PodListOutput{Namespace: "argocd"}, want: `no pods in namespace "argocd"`},
+		"namespace":    {out: PodListOutput{Namespaces: []string{"argocd"}}, want: `no pods in namespace "argocd"`},
+		"namespaces":   {out: PodListOutput{Namespaces: []string{"argocd", "db"}}, want: `no pods in namespaces "argocd", "db"`},
 		"node":         {out: PodListOutput{Node: "worker-4"}, want: `no pods on node "worker-4"`},
-		"both filters": {out: PodListOutput{Namespace: "argocd", Node: "worker-4"}, want: `no pods in namespace "argocd" on node "worker-4"`},
+		"both filters": {out: PodListOutput{Namespaces: []string{"argocd"}, Node: "worker-4"}, want: `no pods in namespace "argocd" on node "worker-4"`},
 	}
 
 	for name, tc := range tests {
