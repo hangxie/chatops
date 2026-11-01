@@ -88,7 +88,7 @@ Health is the kubectl-style pod status.
 |---|---|
 | `pod_list` | See below. |
 | `pod_log` | See below. |
-| `pod_resources` | Requests and limits per container, native sidecars included. Usage from the metrics API is measured against the limit, else the request. Degrades to a `usage_note` like `node_resources`. |
+| `pod_resources` | See below. |
 
 `pod_list`:
 
@@ -102,6 +102,16 @@ Health is the kubectl-style pod status.
 - A missing namespace fails the call. The error names every missing one.
 - Over `max_results`, rows are split evenly across the namespaces. A small namespace hands its spare rows to the rest.
 - The note names each namespace that was shortened.
+
+`pod_resources`:
+
+- Reports requests and limits per container, native sidecars included.
+- Usage from the metrics API is measured against the limit, else the request. Degrades to a `usage_note` like `node_resources`.
+- Takes either `pods` or a `namespaces`/`node` scope, never both.
+- A scope selects pods the way `pod_list` does, with the same `max_results` split. The text is one table for every pod.
+- Metrics come from one list: the namespace when every selected pod is in one, else the cluster. If the cluster-wide list is forbidden, it falls back to a list per namespace of the selected pods. An empty selection skips metrics entirely.
+- The metrics API has no node selector, so a node scope across namespaces fetches every pod's metrics in the cluster. Like the cluster-wide pod list, that is cheap on a small cluster.
+- A scope is the exception to "Listing is a separate tool". Writing out a `{namespace, name}` pair for every pod cost a small model about 1,200 output tokens, about 38 s at 30 tokens/s. A scope costs one pod list and one metrics list.
 
 `pod_log`:
 

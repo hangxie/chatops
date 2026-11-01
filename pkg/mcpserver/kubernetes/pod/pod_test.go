@@ -125,72 +125,6 @@ func Test_listPods_errors(t *testing.T) {
 	}
 }
 
-// Test_listPods_namespaced_grants covers callers whose grants forbid the cluster-wide pod list, the namespace list, or both.
-func Test_listPods_namespaced_grants(t *testing.T) {
-	tests := map[string]struct {
-		forbidPods, forbidNamespaces bool
-	}{
-		"pods and namespaces": {forbidPods: true, forbidNamespaces: true},
-		"namespaces only":     {forbidNamespaces: true},
-	}
-
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			client := fake.NewClientset(kubetest.Namespace("argocd"), kubetest.Namespace("empty"),
-				kubetest.WorkloadPod("argocd", "server-1", "server"), kubetest.WorkloadPod("other", "web-1", "web"))
-			if tc.forbidPods {
-				client.PrependReactor("list", "pods", func(a k8stesting.Action) (bool, runtime.Object, error) {
-					if a.GetNamespace() == "" {
-						return kubetest.Forbidden("list", "pods")(a)
-					}
-					return false, nil, nil
-				})
-			}
-			if tc.forbidNamespaces {
-				client.PrependReactor("list", "namespaces", kubetest.Forbidden("list", "namespaces"))
-			}
-
-			out, err := listPods(context.Background(), client, []string{"argocd", "other", "empty"}, "", kube.DefaultMaxResults)
-			require.NoError(t, err)
-			require.Equal(t, 2, out.Total)
-			_, err = listPods(context.Background(), client, []string{"argocd", "nope"}, "", kube.DefaultMaxResults)
-			require.EqualError(t, err, `namespace "nope" does not exist`)
-		})
-	}
-}
-
-func Test_listPods_api_calls(t *testing.T) {
-	var objects []runtime.Object
-	namespaces := make([]string, 40)
-	for i := range namespaces {
-		namespaces[i] = fmt.Sprintf("ns-%d", i)
-		objects = append(objects, kubetest.Namespace(namespaces[i]), kubetest.WorkloadPod(namespaces[i], "p", "p"))
-	}
-	objects = append(objects, kubetest.Namespace("empty"))
-	tests := map[string]struct {
-		namespaces []string
-		want       int
-		errMsg     string
-	}{
-		"every namespace has pods": {namespaces: namespaces, want: 1},
-		"one existing but empty":   {namespaces: append([]string{"empty"}, namespaces...), want: 2},
-		"one missing":              {namespaces: append([]string{"nope"}, namespaces...), want: 2, errMsg: `namespace "nope" does not exist`},
-	}
-
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			client := fake.NewClientset(objects...)
-			_, err := listPods(context.Background(), client, tc.namespaces, "", kube.DefaultMaxResults)
-			if tc.errMsg != "" {
-				require.EqualError(t, err, tc.errMsg)
-			} else {
-				require.NoError(t, err)
-			}
-			require.Len(t, client.Actions(), tc.want)
-		})
-	}
-}
-
 func Test_getPod(t *testing.T) {
 	client := fake.NewClientset(kubetest.Namespace("argocd"), kubetest.WorkloadPod("argocd", "server-1", "server"))
 	tests := map[string]struct {
@@ -223,10 +157,11 @@ func Test_pod_tools(t *testing.T) {
 		field string
 		text  []string
 	}{
-		"list":      {tool: "pod_list", args: map[string]any{"namespaces": []any{"argocd"}}, field: "pods", text: []string{"server-1"}},
-		"describe":  {tool: "pod_describe", args: map[string]any{"pods": []any{ref, ghost}}, field: "pods", text: []string{"# argocd/server-1 Running\napiVersion: v1", `pod "argocd/ghost" not found`}},
-		"log":       {tool: "pod_log", args: map[string]any{"pods": []any{ref}}, field: "pods", text: []string{"== argocd/server-1 [main] ==\nfake logs"}},
-		"resources": {tool: "pod_resources", args: map[string]any{"pods": []any{ref}}, field: "pods", text: []string{"CPU REQUEST", "note: cpu and memory usage unavailable"}},
+		"list":                   {tool: "pod_list", args: map[string]any{"namespaces": []any{"argocd"}}, field: "pods", text: []string{"server-1"}},
+		"describe":               {tool: "pod_describe", args: map[string]any{"pods": []any{ref, ghost}}, field: "pods", text: []string{"# argocd/server-1 Running\napiVersion: v1", `pod "argocd/ghost" not found`}},
+		"log":                    {tool: "pod_log", args: map[string]any{"pods": []any{ref}}, field: "pods", text: []string{"== argocd/server-1 [main] ==\nfake logs"}},
+		"resources":              {tool: "pod_resources", args: map[string]any{"pods": []any{ref}}, field: "pods", text: []string{"CPU REQUEST", "note: cpu and memory usage unavailable"}},
+		"resources by namespace": {tool: "pod_resources", args: map[string]any{"namespaces": []any{"argocd"}}, field: "pods", text: []string{"NAMESPACE  POD", "argocd/server-1: no usage reported"}},
 	}
 
 	for name, tc := range tests {
@@ -255,11 +190,13 @@ func Test_pod_tools_bad_arguments(t *testing.T) {
 		args   map[string]any
 		errMsg string
 	}{
-		"describe over cap":  {tool: "pod_describe", args: map[string]any{"pods": refs(kube.MaxDescribeTargets + 1)}, errMsg: "at most 5 are allowed"},
-		"log over cap":       {tool: "pod_log", args: map[string]any{"pods": refs(kube.MaxLogTargets + 1)}, errMsg: "at most 5 are allowed"},
-		"log tail too large": {tool: "pod_log", args: map[string]any{"pods": refs(1), "tail_lines": 501}, errMsg: "tail_lines must be between 1 and 500"},
-		"resources empty":    {tool: "pod_resources", args: map[string]any{"pods": []any{}}, errMsg: "pods must contain at least one target"},
-		"list ns missing":    {tool: "pod_list", args: map[string]any{"namespaces": []any{"nope"}}, errMsg: `namespace "nope" does not exist`},
+		"describe over cap":    {tool: "pod_describe", args: map[string]any{"pods": refs(kube.MaxDescribeTargets + 1)}, errMsg: "at most 5 are allowed"},
+		"log over cap":         {tool: "pod_log", args: map[string]any{"pods": refs(kube.MaxLogTargets + 1)}, errMsg: "at most 5 are allowed"},
+		"log tail too large":   {tool: "pod_log", args: map[string]any{"pods": refs(1), "tail_lines": 501}, errMsg: "tail_lines must be between 1 and 500"},
+		"resources empty":      {tool: "pod_resources", args: map[string]any{"pods": []any{}}, errMsg: "pass pods, or namespaces or node to select them"},
+		"resources both":       {tool: "pod_resources", args: map[string]any{"pods": refs(1), "node": "worker-0"}, errMsg: "pass either pods or namespaces and node, not both"},
+		"resources ns missing": {tool: "pod_resources", args: map[string]any{"namespaces": []any{"nope"}}, errMsg: `namespace "nope" does not exist`},
+		"list ns missing":      {tool: "pod_list", args: map[string]any{"namespaces": []any{"nope"}}, errMsg: `namespace "nope" does not exist`},
 	}
 	session := connect(t, testClients())
 

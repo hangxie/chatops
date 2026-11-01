@@ -3,15 +3,11 @@ package pod
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	k8s "k8s.io/client-go/kubernetes"
 
 	"github.com/hangxie/chatops/pkg/mcpserver/kubernetes/internal/kube"
@@ -61,7 +57,7 @@ type podInput struct {
 func Register(server *mcp.Server, c kube.Clients) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "pod_list",
-		Description: "List Kubernetes pods with ready containers, status, restarts, node, age, and owning controller. Pass namespaces to list only those namespaces, all in one call (omit for every namespace), and node to list only the pods on that node.",
+		Description: "List Kubernetes pods with ready containers, status, restarts, node, age, and owning controller. Omit namespaces for every namespace; never guess namespace names. Pass namespaces to list only those, all in one call, and node to list only the pods on that node.",
 		Annotations: kube.ReadOnly(),
 	}, podListHandler(c))
 	mcp.AddTool(server, &mcp.Tool{
@@ -76,7 +72,7 @@ func Register(server *mcp.Server, c kube.Clients) {
 	}, podLogHandler(c))
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "pod_resources",
-		Description: "Report CPU and memory requests, limits, and current usage per container for one or more Kubernetes pods in one call. Pass pods as {namespace, name}; a pod that does not exist has found false.",
+		Description: "Report CPU and memory requests, limits, and current usage per container for Kubernetes pods in one call. Pass namespaces or node to cover every pod they select without listing pods first, or pods as {namespace, name} for specific pods; a named pod that does not exist has found false.",
 		Annotations: kube.ReadOnly(),
 	}, podResourcesHandler(c))
 }
@@ -106,128 +102,19 @@ func podDescribeHandler(c kube.Clients) mcp.ToolHandlerFor[podInput, PodDescribe
 
 // listPods lists every namespace when namespaces is empty, and fails naming each requested namespace that does not exist.
 func listPods(ctx context.Context, client k8s.Interface, namespaces []string, node string, limit int) (PodListOutput, error) {
-	node = strings.TrimSpace(node)
-	if len(namespaces) > 0 {
-		var err error
-		// No cap: max_results bounds the rows; fetchPods makes at most two API calls unless RBAC forces a call per namespace.
-		if namespaces, err = kube.CappedTargets("namespaces", namespaces, len(namespaces)); err != nil {
-			return PodListOutput{}, err
-		}
-	}
-	lists, err := fetchPods(ctx, client, namespaces, node)
+	sel, err := selectPods(ctx, client, namespaces, node, limit)
 	if err != nil {
 		return PodListOutput{}, err
 	}
-	out := PodListOutput{Namespaces: namespaces, Node: node, Pods: []PodListItem{}}
-	var missing []string
-	sizes := make([]int, len(lists))
-	for i, list := range lists {
-		if list.missing != "" {
-			missing = append(missing, list.missing)
-		}
-		sizes[i] = len(list.pods)
-		out.Total += sizes[i]
-	}
-	if len(missing) > 0 {
-		return PodListOutput{}, errors.New(strings.Join(missing, "; "))
-	}
-	// An even split keeps one large namespace from crowding out the others the caller asked for.
-	for i, share := range kube.FairShares(sizes, limit) {
-		out.Pods = append(out.Pods, lists[i].pods[:share]...)
-		if share < sizes[i] && len(lists) > 1 {
-			out.Cut = append(out.Cut, NamespaceCut{Namespace: namespaces[i], Shown: share, Total: sizes[i]})
-		}
-	}
-	return out, nil
-}
-
-// namespacePods is one namespace's pods, or a note when the namespace does not exist.
-type namespacePods struct {
-	pods    []PodListItem
-	missing string
-}
-
-// fetchPods returns one entry per namespace, or one for the whole cluster when namespaces is empty.
-func fetchPods(ctx context.Context, client k8s.Interface, namespaces []string, node string) ([]namespacePods, error) {
-	if len(namespaces) <= 1 {
-		namespace := ""
-		if len(namespaces) == 1 {
-			namespace = namespaces[0]
-		}
-		list, err := listNamespacePods(ctx, client, namespace, node)
-		return []namespacePods{list}, err
-	}
-	// One cluster-wide list beats a list per namespace, which the client's rate limit would serialize.
-	all, err := podItems(ctx, client, "", node)
-	if apierrors.IsForbidden(err) {
-		// Roles granted per namespace still allow a list in each.
-		return kube.FetchAll(ctx, namespaces, func(ctx context.Context, namespace string) (namespacePods, error) {
-			return listNamespacePods(ctx, client, namespace, node)
-		})
-	}
-	if err != nil {
-		return nil, err
-	}
-	byNamespace := make(map[string][]PodListItem)
-	for _, p := range all {
-		byNamespace[p.Namespace] = append(byNamespace[p.Namespace], p)
-	}
-	lists := make([]namespacePods, len(namespaces))
-	var empty []int
-	for i, namespace := range namespaces {
-		if lists[i].pods = byNamespace[namespace]; len(lists[i].pods) == 0 {
-			empty = append(empty, i)
-		}
-	}
-	if len(empty) == 0 {
-		return lists, nil
-	}
-	names := make([]string, len(empty))
-	for j, i := range empty {
-		names[j] = namespaces[i]
-	}
-	notes, err := kube.MissingNamespaces(ctx, client, names)
-	if err != nil {
-		return nil, err
-	}
-	for j, i := range empty {
-		lists[i].missing = notes[j]
-	}
-	return lists, nil
-}
-
-func listNamespacePods(ctx context.Context, client k8s.Interface, namespace, node string) (namespacePods, error) {
-	pods, err := podItems(ctx, client, namespace, node)
-	if err != nil {
-		return namespacePods{}, err
-	}
-	if len(pods) == 0 && namespace != "" {
-		missing, err := kube.MissingNamespace(ctx, client, namespace)
-		return namespacePods{missing: missing}, err
-	}
-	return namespacePods{pods: pods}, nil
-}
-
-// podItems lists one namespace's pods, or every namespace's when namespace is empty.
-func podItems(ctx context.Context, client k8s.Interface, namespace, node string) ([]PodListItem, error) {
-	opts := metav1.ListOptions{}
-	if node != "" {
-		opts.FieldSelector = fields.OneTermEqualSelector("spec.nodeName", node).String()
-	}
-	list, err := client.CoreV1().Pods(namespace).List(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-	pods := make([]PodListItem, 0, len(list.Items))
-	for i := range list.Items {
-		p := &list.Items[i]
+	out := PodListOutput{Namespaces: sel.namespaces, Node: sel.node, Pods: make([]PodListItem, 0, len(sel.pods)), Total: sel.total, Cut: sel.cut}
+	for _, p := range sel.pods {
 		s := kube.SummarizePod(p)
-		pods = append(pods, PodListItem{
+		out.Pods = append(out.Pods, PodListItem{
 			Namespace: p.Namespace, Name: p.Name, Ready: s.Ready, Containers: s.Containers, Status: s.Status,
 			Restarts: s.Restarts, Node: s.Node, Owner: owner(p), Created: s.Created,
 		})
 	}
-	return pods, nil
+	return out, nil
 }
 
 func owner(p *corev1.Pod) string {

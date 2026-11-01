@@ -40,7 +40,7 @@ func Test_capNote(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, tc.want, capNote(tc.out))
+			require.Equal(t, tc.want, capNote(len(tc.out.Pods), tc.out.Total, tc.out.Cut))
 		})
 	}
 }
@@ -102,4 +102,20 @@ func Test_humanMemory(t *testing.T) {
 	require.Equal(t, "1024Mi", humanMemory("1Gi"))
 	require.Equal(t, "", humanMemory(""))
 	require.Equal(t, "bad", humanMemory("bad"))
+}
+
+func Test_formatScopedResources(t *testing.T) {
+	out := PodResourcesOutput{Total: 3, Pods: []PodResources{
+		{Namespace: "argocd", Name: "server-1", Found: true, Containers: []ContainerResources{
+			{Container: "main", Requests: Amounts{CPU: "100m", Memory: "128Mi"}, Limits: Amounts{Memory: "512Mi"}, Usage: &Amounts{CPU: "50m", Memory: "256Mi"}},
+		}},
+		{Namespace: "other", Name: "web-1", Found: true, UsageNote: "no usage reported for this pod", Containers: []ContainerResources{{Container: "main"}}},
+	}}
+
+	text := formatScopedResources(out)
+	require.Regexp(t, `NAMESPACE\s+POD\s+CONTAINER\s+CPU REQUEST\s+CPU LIMIT\s+CPU USED\s+MEMORY REQUEST\s+MEMORY LIMIT\s+MEMORY USED`, text)
+	require.Regexp(t, `argocd\s+server-1\s+main\s+100m\s+n/a\s+50m \(50%\)\s+128Mi\s+512Mi\s+256Mi \(50%\)`, text)
+	require.Contains(t, text, "note: other/web-1: no usage reported for this pod")
+	require.Contains(t, text, "(showing the first 2 of 3 pods)")
+	require.Equal(t, `no pods in namespace "argocd"`, formatScopedResources(PodResourcesOutput{Namespaces: []string{"argocd"}}))
 }
